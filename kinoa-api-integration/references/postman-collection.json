@@ -1,0 +1,869 @@
+{
+  "info": {
+    "_postman_id": "244b704d-3cb6-436d-8eea-c29636272d33",
+    "name": "Kinoa integration",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "1218501"
+  },
+  "item": [
+    {
+      "name": "P2P",
+      "item": [
+        {
+          "name": "Send P2P request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "game",
+                "value": "{{game}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"event\" : {\n        \"target_player_id\": \"Illcko2\",\n        \"event_type\": \"gift\",\n        \"event_data\": {\n            \"field1\": \"field_value\",\n            \"field2\": \"field_value\"\n        }\n    }\n\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "https://gate.kinoa.io/playerevents/api/v3/p2p-events?player_id=Illcko",
+              "protocol": "https",
+              "host": [
+                "gate",
+                "kinoa",
+                "io"
+              ],
+              "path": [
+                "playerevents",
+                "api",
+                "v3",
+                "p2p-events"
+              ],
+              "query": [
+                {
+                  "key": "player_id",
+                  "value": "Illcko"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get P2P Events",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "game",
+                "value": "{{game}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "https://gate.kinoa.io/playerevents/api/v3/p2p-events?player_id=Illcko2",
+              "protocol": "https",
+              "host": [
+                "gate",
+                "kinoa",
+                "io"
+              ],
+              "path": [
+                "playerevents",
+                "api",
+                "v3",
+                "p2p-events"
+              ],
+              "query": [
+                {
+                  "key": "player_id",
+                  "value": "Illcko2"
+                }
+              ]
+            },
+            "description": "Get not readed P2P event for player. After read you have to delete them with delete request"
+          },
+          "response": []
+        },
+        {
+          "name": "Delete P2P Event",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "game",
+                "value": "{{game}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"f990cd5e-3b63-4124-8e1f-3bd197be2798\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "https://gate.kinoa.io/playerevents/api/v3/p2p-events?player_id=Illcko2",
+              "protocol": "https",
+              "host": [
+                "gate",
+                "kinoa",
+                "io"
+              ],
+              "path": [
+                "playerevents",
+                "api",
+                "v3",
+                "p2p-events"
+              ],
+              "query": [
+                {
+                  "key": "player_id",
+                  "value": "Illcko2"
+                }
+              ]
+            },
+            "description": "Delete P2P events from P2P inbox. Need to send message ids in body - { \"id\": \"f990cd5e-3b63-4124-8e1f-3bd197be2798\"}"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "InApp",
+      "item": [
+        {
+          "name": "Get InBox",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "game",
+                "value": "{{game}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "https://gate.kinoa.io/gameapi/api/v3/inbox-messages?player_id=Illcko",
+              "protocol": "https",
+              "host": [
+                "gate",
+                "kinoa",
+                "io"
+              ],
+              "path": [
+                "gameapi",
+                "api",
+                "v3",
+                "inbox-messages"
+              ],
+              "query": [
+                {
+                  "key": "player_id",
+                  "value": "Illcko"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete InApp from inbox",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "game",
+                "value": "{{game}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "https://gate.kinoa.io/gameapi/api/v3/inbox-messages?player_id=Illcko&id=IN_APP_UUID",
+              "protocol": "https",
+              "host": [
+                "gate",
+                "kinoa",
+                "io"
+              ],
+              "path": [
+                "gameapi",
+                "api",
+                "v3",
+                "inbox-messages"
+              ],
+              "query": [
+                {
+                  "key": "player_id",
+                  "value": "Illcko"
+                },
+                {
+                  "key": "id",
+                  "value": "IN_APP_UUID"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Delete all InApps",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "game",
+                "value": "{{game}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "https://gate.kinoa.io/gameapi/api/v3/inbox-messages/delete-all?player_id=Illcko",
+              "protocol": "https",
+              "host": [
+                "gate",
+                "kinoa",
+                "io"
+              ],
+              "path": [
+                "gameapi",
+                "api",
+                "v3",
+                "inbox-messages",
+                "delete-all"
+              ],
+              "query": [
+                {
+                  "key": "player_id",
+                  "value": "Illcko"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Collect Milestone",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "game",
+                "value": "{{game}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"milestones\": [\n    0,1,2\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "https://gate.kinoa.io/gameapi/api/v3/inbox-messages/collect-milestones?player_id=Illcko&id=e550f910-9022-476a-b6a9-ce982e77b421",
+              "protocol": "https",
+              "host": [
+                "gate",
+                "kinoa",
+                "io"
+              ],
+              "path": [
+                "gameapi",
+                "api",
+                "v3",
+                "inbox-messages",
+                "collect-milestones"
+              ],
+              "query": [
+                {
+                  "key": "player_id",
+                  "value": "Illcko"
+                },
+                {
+                  "key": "id",
+                  "value": "e550f910-9022-476a-b6a9-ce982e77b421"
+                }
+              ]
+            },
+            "description": "Need to specify in milestonew array section ids of milestones that should be collected. In response you will get status per each milestone collect. Milestone ids starts from 0"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Eligibility",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "game",
+                "value": "{{game}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "https://gate.kinoa.io/gameapi/api/v3/inbox-messages/use?player_id=Illcko&id=71fcce8d-7fcf-4a62-ba4d-a5d5d3a1db4f",
+              "protocol": "https",
+              "host": [
+                "gate",
+                "kinoa",
+                "io"
+              ],
+              "path": [
+                "gameapi",
+                "api",
+                "v3",
+                "inbox-messages",
+                "use"
+              ],
+              "query": [
+                {
+                  "key": "player_id",
+                  "value": "Illcko"
+                },
+                {
+                  "key": "id",
+                  "value": "71fcce8d-7fcf-4a62-ba4d-a5d5d3a1db4f"
+                }
+              ]
+            },
+            "description": "Use InApp UUID. When eligibility will come 0 InApp will be automatically deleted from an inbox"
+          },
+          "response": []
+        },
+        {
+          "name": "Update inApp instance params",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "game",
+                "value": "{{game}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messages\": [\n    {\n      \"uuid\": \"b9dc5433-8357-40ac-9070-0be6b81f57fd\",\n      \"inbox_stats\": {\n        \"views\": 5,\n        \"usage\": 1,\n        \"reminders\": 0\n      },\n      \"custom_params\": {\n        \"custom_params_cpt\": \"tttaaa\"\n      }\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "https://gate.kinoa.io/gameapi/api/v3/inbox-messages/update?player_id=Illcko&dto_version=2",
+              "protocol": "https",
+              "host": [
+                "gate",
+                "kinoa",
+                "io"
+              ],
+              "path": [
+                "gameapi",
+                "api",
+                "v3",
+                "inbox-messages",
+                "update"
+              ],
+              "query": [
+                {
+                  "key": "player_id",
+                  "value": "Illcko"
+                },
+                {
+                  "key": "dto_version",
+                  "value": "2"
+                }
+              ]
+            },
+            "description": "Needed to set and update custom params to in-app that is already in inbox directly from game"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Player",
+      "item": [
+        {
+          "name": "Get player state",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "game",
+                "value": "{{game}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "https://gate.kinoa.io/playerevents/api/v3/player-state?player_id=Illcko",
+              "protocol": "https",
+              "host": [
+                "gate",
+                "kinoa",
+                "io"
+              ],
+              "path": [
+                "playerevents",
+                "api",
+                "v3",
+                "player-state"
+              ],
+              "query": [
+                {
+                  "key": "player_id",
+                  "value": "Illcko"
+                }
+              ]
+            },
+            "description": "Is used to get Player State with calculated parameters by Kinoa. It is not recomended to use Kinoa as primary Player State storage but if you need to get calculated player properties this is right way."
+          },
+          "response": []
+        },
+        {
+          "name": "Approve Player State",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "game",
+                "value": "{{game}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "https://gate.kinoa.io/playerevents/api/v3/player-state/approve-state?player_id=Illcko",
+              "protocol": "https",
+              "host": [
+                "gate",
+                "kinoa",
+                "io"
+              ],
+              "path": [
+                "playerevents",
+                "api",
+                "v3",
+                "player-state",
+                "approve-state"
+              ],
+              "query": [
+                {
+                  "key": "player_id",
+                  "value": "Illcko"
+                }
+              ]
+            },
+            "description": "Need to use only in case if operator updated Player State and this changes should be merged with actual player state on client. Code need to take not approved player state and open session or send event with updated player state fields after"
+          },
+          "response": []
+        },
+        {
+          "name": "Update external fields in Player state",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "game",
+                "value": "{{game}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"additionalProp1\": {\n      \"some_key\":\"some_value\",\n      \"another_key\":\"some_other_value\"\n  },\n  \"additionalProp2\": \"just_value2\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "https://gate.kinoa.io/playerevents/api/v3/player/Illcko1/state/external-params",
+              "protocol": "https",
+              "host": [
+                "gate",
+                "kinoa",
+                "io"
+              ],
+              "path": [
+                "playerevents",
+                "api",
+                "v3",
+                "player",
+                "Illcko1",
+                "state",
+                "external-params"
+              ]
+            },
+            "description": "This request is used only if you want from server to update some params in Player State without sending an event from client. Don't use it for more than 100 players at one request. It should work per player. For many players Kinoa has better approack."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete player",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "game",
+                "value": "{{game}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "https://pevents.kinoa.io/api/v3/players?player_id=BvKLo17p2yQ0gv9FYuIVCvjsdH53",
+              "protocol": "https",
+              "host": [
+                "pevents",
+                "kinoa",
+                "io"
+              ],
+              "path": [
+                "api",
+                "v3",
+                "players"
+              ],
+              "query": [
+                {
+                  "key": "player_id",
+                  "value": "BvKLo17p2yQ0gv9FYuIVCvjsdH53"
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Feature Settings",
+      "item": [
+        {
+          "name": "Get Feature Setting",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "game",
+                "value": "{{game}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"settings\": [\n    {\n      \"key\": \"BoostersConfig\",\n      \"version\": \"1\",\n      \"getDefault\": false\n    }\n  ],\n  \"playerId\": \"e9d8040d-cc32-43d6-8ce4-bad29eddfe56a\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "https://featureset.kinoa.io/features-configurations",
+              "protocol": "https",
+              "host": [
+                "featureset",
+                "kinoa",
+                "io"
+              ],
+              "path": [
+                "features-configurations"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Bundles",
+      "item": [
+        {
+          "name": "Get Bundle",
+          "protocolProfileBehavior": {
+            "disableBodyPruning": true
+          },
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "game",
+                "value": "{{game}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "https://gate.kinoa.io/bundle/public/simple/bundles/some_id",
+              "protocol": "https",
+              "host": [
+                "gate",
+                "kinoa",
+                "io"
+              ],
+              "path": [
+                "bundle",
+                "public",
+                "simple",
+                "bundles",
+                "some_id"
+              ]
+            },
+            "description": "If feature configuration contains bundle key - that is a way to get bundle by its id."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Open session(OLD)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "game",
+            "value": "{{game}}",
+            "type": "text"
+          },
+          {
+            "key": "session_id",
+            "value": "session1",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"player_state\": {\n    \"player_identifiers\": {\n      \"player_id\": \"Illcko\"\n    },\n    \"level\": 1,\n    \"custom_field\": \"custom_value\"\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "https://gate.kinoa.io/playerevents/api/v3/players/session_start?player_id=Illcko",
+          "protocol": "https",
+          "host": [
+            "gate",
+            "kinoa",
+            "io"
+          ],
+          "path": [
+            "playerevents",
+            "api",
+            "v3",
+            "players",
+            "session_start"
+          ],
+          "query": [
+            {
+              "key": "player_id",
+              "value": "Illcko"
+            }
+          ]
+        },
+        "description": "All sessionst start from this call. If player doesn't exists Kinoa will create player with id that got from player_id param. Mandatory header - session_id. Any random String. UUID recomendet. After this game HAVE TO SEND sessiont_start event."
+      },
+      "response": []
+    },
+    {
+      "name": "Send async event",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "game",
+            "value": "{{game}}",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"event\": {\n    \"event_data\": {\n      \"name\": \"session_start\",\n      \"session_id\": \"session1\",\n      \"custom_params\": {\n        \"win_amount\": 50\n      }\n    },\n    \"player_state\": {\n        \"level\": 2\n    }\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "https://gate.kinoa.io/playerevents/api/v3/event?player_id=Illcko",
+          "protocol": "https",
+          "host": [
+            "gate",
+            "kinoa",
+            "io"
+          ],
+          "path": [
+            "playerevents",
+            "api",
+            "v3",
+            "event"
+          ],
+          "query": [
+            {
+              "key": "player_id",
+              "value": "Illcko"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Send sync event",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "game",
+            "value": "{{game}}",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"event\": {\n    \"event_data\": {\n      \"name\": \"random_event\",\n      \"session_id\": \"session1\"\n    },\n    \"player_state\": {\n        \"level\": 3\n    }\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "https://gate.kinoa.io/playerevents/api/v3/sync-event?player_id=Illcko",
+          "protocol": "https",
+          "host": [
+            "gate",
+            "kinoa",
+            "io"
+          ],
+          "path": [
+            "playerevents",
+            "api",
+            "v3",
+            "sync-event"
+          ],
+          "query": [
+            {
+              "key": "player_id",
+              "value": "Illcko"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Open Session with Session start event (New)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "game",
+            "value": "{{game}}",
+            "type": "text"
+          },
+          {
+            "key": "session_id",
+            "value": "session1",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"player_state\": {\n    \"player_identifiers\": {\n      \"player_id\": \"Illcko\"\n    },\n    \"level\": 1,\n    \"custom_field\": \"custom_value\"\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "https://gate.kinoa.io/playerevents/api/v3/player/session/start",
+          "protocol": "https",
+          "host": [
+            "gate",
+            "kinoa",
+            "io"
+          ],
+          "path": [
+            "playerevents",
+            "api",
+            "v3",
+            "player",
+            "session",
+            "start"
+          ]
+        },
+        "description": "All sessionst start from this call. If player doesn't exists Kinoa will create player with id that got from player_id param. Mandatory header - session_id. Any random String. UUID recomendet. This call will also send session_start event, so you not need to send it agan."
+      },
+      "response": []
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "requests": {},
+        "exec": [
+          ""
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "requests": {},
+        "exec": [
+          ""
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "game",
+      "value": "add game secret token here"
+    }
+  ]
+}

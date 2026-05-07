@@ -1,0 +1,41 @@
+---
+name: kinoa-open-session
+description: Open a Kinoa player session. Calls POST https://gate.kinoa.io/playerevents/api/v3/player/session/start, which also fires the session_start event automatically. Generates a UUID for session_id and persists it as KINOA_LAST_SESSION_ID for subsequent event calls. Use whenever the user wants to start a player session in Kinoa, log a session start, or open a Kinoa session for a player.
+argument-hint: [player_id] [level] [optional key=value fields]
+allowed-tools: Bash(python *) Bash(cat *) Read AskUserQuestion
+---
+
+This skill opens a Kinoa player session. The helper script `kinoa_open_session.py` lives in this skill's folder and has no external imports, so the skill is fully self-contained.
+
+Requires `KINOA_GAME_SECRET` in `~/.kinoa/session.env`. If it's missing, the script returns `error: missing_credentials` — tell the user to set up Kinoa credentials first.
+
+## Step 1: Collect inputs
+
+If `$ARGUMENTS` already supplies them, use those. Otherwise ask via `AskUserQuestion`:
+
+- **player_id** — required.
+- **level** — integer, default `1`.
+- **custom fields** — optional `key=value` pairs to merge into `player_state` (free-form via the "Other" input). Example: `custom_field=custom_value, region=eu`.
+
+## Step 2: Run open-session
+
+```
+python "${CLAUDE_SKILL_DIR}/kinoa_open_session.py" \
+    --player-id "<id>" --level <n> \
+    [--field key=value ...]
+```
+
+The script:
+- Generates a fresh UUID for the `session_id` header (override with `--session-id <uuid>` if needed).
+- POSTs to `https://gate.kinoa.io/playerevents/api/v3/player/session/start` with headers `{game: <secret>, session_id: <uuid>}` and a JSON body containing `player_state` (with `player_identifiers.player_id`, `level`, and any extra fields merged in).
+- Persists `KINOA_LAST_PLAYER_ID` and `KINOA_LAST_SESSION_ID` back into `~/.kinoa/session.env` so a follow-up sync-event call can reuse them.
+
+## Step 3: Report
+
+Read the JSON from stdout. If `ok: true`, tell the user:
+> "Session opened. session_id=`<uuid>`, player_id=`<id>`."
+
+If `ok: false`, surface `http_status` and `response`. Common cases:
+- 401 → game secret is wrong; tell the user to recheck their Kinoa credentials.
+- 400 → request body invalid; show `response` so they can fix the field name or type.
+- network/0 → connectivity issue; show `body` and stop.

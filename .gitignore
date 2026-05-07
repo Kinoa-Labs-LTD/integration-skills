@@ -1,0 +1,15 @@
+# Eval run artifacts (per CLAUDE.md)
+kinoa-api-integration-workspace/
+
+# IDE
+.idea/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# OS
+.DS_Store
