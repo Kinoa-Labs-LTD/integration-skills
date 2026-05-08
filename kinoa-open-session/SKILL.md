@@ -1,6 +1,6 @@
 ---
 name: kinoa-open-session
-description: Open a Kinoa player session. Calls POST https://gate.kinoa.io/playerevents/api/v3/player/session/start, which also fires the session_start event automatically. Generates a UUID for session_id and persists it as KINOA_LAST_SESSION_ID for subsequent event calls. Use whenever the user wants to start a player session in Kinoa, log a session start, or open a Kinoa session for a player.
+description: Open a Kinoa player session for verification/debugging. Calls POST https://gate.kinoa.io/playerevents/api/v3/player/session/start (the recommended endpoint) — that endpoint always auto-fires the session_start event server-side in hidden mode, so this helper effectively logs both "session opened" and "session_start event" in one call. Generates a UUID for session_id and persists it as KINOA_LAST_SESSION_ID for subsequent event calls. NOTE: this is a debugging helper, not the runtime open-session implementation. Apps using the legacy endpoint `/playerevents/api/v3/players/session_start` (note plural `players` and underscore) do NOT get the auto-fire and must emit session_start explicitly after each open-session call. Use whenever the user wants to start a player session in Kinoa, log a session start, verify the open-session endpoint works against a project, or open a Kinoa session for a player.
 argument-hint: [player_id] [level] [optional key=value fields]
 allowed-tools: Bash(python *) Bash(cat *) Read AskUserQuestion
 ---
@@ -33,7 +33,13 @@ The script:
 ## Step 3: Report
 
 Read the JSON from stdout. If `ok: true`, tell the user:
-> "Session opened. session_id=`<uuid>`, player_id=`<id>`."
+> "Session opened. session_id=`<uuid>`, player_id=`<id>`. The `session_start` event was auto-fired server-side by this endpoint."
+
+Then add a short orientation note. Quickly grep the current project for the **legacy** URL fragment `playerevents/api/v3/players/session_start` (note plural `players` and the underscore — distinct from the recommended URL):
+- **Not found** (the common case) → "Your app uses the recommended endpoint, which auto-fires `session_start` server-side. No need to emit `session_start` separately."
+- **Found** → "Heads-up: your app uses the legacy `players/session_start` endpoint, which does NOT auto-fire. The app must emit `session_start` explicitly right after each open-session call. `/kinoa-sync-event-integration` will check whether you already do, and set it up if not."
+
+If you can't tell from a quick grep, skip the note rather than guess.
 
 If `ok: false`, surface `http_status` and `response`. Common cases:
 - 401 → game secret is wrong; tell the user to recheck their Kinoa credentials.

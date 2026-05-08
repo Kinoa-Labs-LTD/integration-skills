@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
 Kinoa Init — capture credentials, persist to ~/.kinoa/session.env, and validate
-the project's integration_type against the Kinoa admin API.
+the project against the Kinoa admin API.
+
+Integration type is hardcoded to API (the only supported mode).
 
 Self-contained. Prints a single JSON object on stdout describing the result.
 
 Usage:
-  python kinoa_init.py --integration-type {API|SDK}
-                       --game-id GAME_UUID
+  python kinoa_init.py --game-id GAME_UUID
                        --game-secret SECRET
                        --bearer-token TOKEN
                        [--fix-integration-type]
@@ -24,7 +25,7 @@ SESSION_DIR = os.path.expanduser("~/.kinoa")
 SESSION_ENV_PATH = os.path.join(SESSION_DIR, "session.env")
 
 GAME_SETTINGS_URL = "https://dashboard.kinoa.io/gamemetaapi/api/game-settings"
-ALLOWED_INTEGRATION_TYPES = ("API", "SDK")
+INTEGRATION_TYPE = "API"
 
 
 def _load_session_env():
@@ -92,6 +93,7 @@ def validate_game_settings(bearer_token, game_id, expected_integration_type):
         GAME_SETTINGS_URL,
         headers={
             "Authorization": f"Bearer {bearer_token}",
+            "Game": game_id,
             "Game-Id": game_id,
         },
     )
@@ -127,6 +129,7 @@ def set_integration_type(bearer_token, game_id, integration_type):
         GAME_SETTINGS_URL,
         headers={
             "Authorization": f"Bearer {bearer_token}",
+            "Game": game_id,
             "Game-Id": game_id,
         },
         body={"integrationType": integration_type},
@@ -137,13 +140,7 @@ def set_integration_type(bearer_token, game_id, integration_type):
 def main(argv):
     parser = argparse.ArgumentParser(
         prog="kinoa_init",
-        description="Capture Kinoa credentials and validate the project's integration type.",
-    )
-    parser.add_argument(
-        "--integration-type",
-        required=True,
-        choices=ALLOWED_INTEGRATION_TYPES,
-        help="Expected integration type for this project: API or SDK.",
+        description="Capture Kinoa credentials and validate the project (API integration only).",
     )
     parser.add_argument("--game-id", required=True, help="Internal game UUID from the Kinoa dashboard.")
     parser.add_argument("--game-secret", required=True)
@@ -151,27 +148,27 @@ def main(argv):
     parser.add_argument(
         "--fix-integration-type",
         action="store_true",
-        help="If the project's integration_type doesn't match, POST to update it to the requested type.",
+        help="If the project's integration_type isn't API, POST to switch it to API.",
     )
     args = parser.parse_args(argv)
 
     _save_session_env({
-        "KINOA_INTEGRATION_TYPE": args.integration_type,
+        "KINOA_INTEGRATION_TYPE": INTEGRATION_TYPE,
         "KINOA_GAME_ID": args.game_id,
         "KINOA_GAME_SECRET": args.game_secret,
         "KINOA_BEARER_TOKEN": args.bearer_token,
     })
 
     result = {"saved": True, "session_env_path": SESSION_ENV_PATH}
-    validation = validate_game_settings(args.bearer_token, args.game_id, args.integration_type)
+    validation = validate_game_settings(args.bearer_token, args.game_id, INTEGRATION_TYPE)
     result.update(validation)
 
     if args.fix_integration_type and validation.get("reason") == "wrong_integration_type":
-        update = set_integration_type(args.bearer_token, args.game_id, args.integration_type)
+        update = set_integration_type(args.bearer_token, args.game_id, INTEGRATION_TYPE)
         result["fix_attempted"] = True
         result["fix_http_status"] = update["http_status"]
         if 200 <= update["http_status"] < 300:
-            recheck = validate_game_settings(args.bearer_token, args.game_id, args.integration_type)
+            recheck = validate_game_settings(args.bearer_token, args.game_id, INTEGRATION_TYPE)
             result.update(recheck)
             result["fix_succeeded"] = recheck["ok"]
         else:

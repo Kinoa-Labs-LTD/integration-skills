@@ -15,7 +15,7 @@ This skill makes calls against **two distinct surfaces**, and they must not be c
 
 | Surface | Host | Auth | Caller |
 |---|---|---|---|
-| **Admin / dashboard API** | `dashboard.kinoa.io` | `Authorization: Bearer <token>` + `Game-Id: <uuid>` | **Skill only.** Delegated to `kinoa-dashboard-player-fields` (CLI: `python ../kinoa-dashboard-player-fields/kinoa_dashboard_player_fields.py ...`) for list, activate, create, delete, plus the public-API `get-player-state` read used during verification. |
+| **Admin / dashboard API** | `dashboard.kinoa.io` | `Authorization: Bearer <token>` + `Game: <uuid>` + `Game-Id: <uuid>` (both headers carry the same UUID) | **Skill only.** Delegated to `kinoa-dashboard-player-fields` (CLI: `python ../kinoa-dashboard-player-fields/kinoa_dashboard_player_fields.py ...`) for list, activate, create, delete, plus the public-API `get-player-state` read used during verification. |
 | **Public Player Events API** | `gate.kinoa.io`, `pevents.kinoa.io`, `featureset.kinoa.io` | `game: <game_secret>` (no bearer) | **App code.** Runtime calls from the application — open session, send events, fetch player state, etc. The Postman collection at `../kinoa-api-integration/references/postman-collection.json` is the canonical spec. |
 
 **Hard rule when generating code into the application:** never emit code that calls `dashboard.kinoa.io` or sends an `Authorization: Bearer` header. The bearer token is admin-tier and must not ship in application binaries, configs, or runtime calls. If a Phase asks you to add code to the app, only use endpoints from the Postman collection (game-secret header).
@@ -156,7 +156,7 @@ The goal: confirm the application can populate every `KinoaPlayerState` field th
   - `DELETE https://dashboard.kinoa.io/gamemetaapi/api/player_fields/<id>` — soft delete (sets `state: deleted`, returns 204).
   - `GET    https://gate.kinoa.io/playerevents/api/v3/player-state?player_id=<id>` — fetch full state.
 - Headers:
-  - `dashboard.kinoa.io/gamemetaapi/...` → `Authorization: Bearer <bearer>` + `Game-Id: <uuid>`.
+  - `dashboard.kinoa.io/gamemetaapi/...` → `Authorization: Bearer <bearer>` + `Game: <uuid>` + `Game-Id: <uuid>` (both headers carry the same game UUID).
   - `gate.kinoa.io/playerevents/...` → `game: <game_secret>`.
 - Allowed kinds for custom field creation: `number`, `boolean`, `string`, `enumeration`, `version`.
 - Predefined fields may use additional kinds (`date`, `long_string`); the skill reads them but does not create new fields with those kinds.

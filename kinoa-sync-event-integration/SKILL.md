@@ -15,7 +15,7 @@ Same rule as for player fields:
 
 | Surface | Host | Auth | Caller |
 |---|---|---|---|
-| **Admin** | `dashboard.kinoa.io` | `Authorization: Bearer <token>` + `Game-Id: <uuid>` | **Skill only.** Delegated to `kinoa-dashboard-event` (CLI: `python ../kinoa-dashboard-event/kinoa_dashboard_event.py ...`) for list, publish, create, and delete operations during the integration session. |
+| **Admin** | `dashboard.kinoa.io` | `Authorization: Bearer <token>` + `Game: <uuid>` + `Game-Id: <uuid>` (both headers carry the same UUID) | **Skill only.** Delegated to `kinoa-dashboard-event` (CLI: `python ../kinoa-dashboard-event/kinoa_dashboard_event.py ...`) for list, publish, create, and delete operations during the integration session. |
 | **Runtime** | `gate.kinoa.io` | `game: <game_secret>` | **App code.** When the application emits an event at runtime, it `POST`s to `gate.kinoa.io/playerevents/api/v3/sync-event` (or the async variant) using the `game` secret. The Postman collection at `../kinoa-api-integration/references/postman-collection.json` is the spec. |
 
 Never emit code into the application that calls `dashboard.kinoa.io` or carries an `Authorization: Bearer` header.
@@ -37,13 +37,23 @@ The skill works in four phases. Drive each phase to completion with the develope
    - Confirm which predefined matches are real (vs. coincidental string usage).
    - Confirm any non-predefined event names — those become custom-event candidates.
 5. Build the canonical list: `{event_name → list_of_param_names}` for everything the app emits.
-6. **Detect whether the app implements open-session.** Grep the source tree for any of these markers:
-   - URL fragment `playerevents/api/v3/player/session/start`
-   - URL fragment `player/session/start`
-   - SDK methods like `openSession(`, `startSession(`, `kinoa.session.start(`
-   Set a flag `OPEN_SESSION_IMPLEMENTED = True` if any match. If unsure, ask the developer directly.
+6. **Decide how `session_start` reaches Kinoa.** Two open-session endpoints exist; only one auto-fires `session_start` server-side:
 
-   This matters because `POST .../player/session/start` **automatically fires the `session_start` event** server-side — the developer never sends `session_start` as a separate event. So if open-session is implemented, treat `session_start` as if the app emits it (even if grep doesn't find a literal `"session_start"` string).
+   | Endpoint | Auto-fires `session_start`? |
+   |---|---|
+   | `gate.kinoa.io/playerevents/api/v3/player/session/start` (**recommended / default**) | **Yes** — server emits the event in hidden mode on each POST. App does not emit `session_start`. |
+   | `gate.kinoa.io/playerevents/api/v3/players/session_start` (legacy) | **No** — app must emit `session_start` explicitly after opening a session. |
+
+   **Default assumption — do NOT ask the developer:** apps use the recommended endpoint, so `SESSION_START_AUTO_FIRES = True`. Treat `session_start` as in-app via auto-fire (🔄). Don't add it to `KinoaEvents` and don't wire an emission site.
+
+   **Only override when the legacy endpoint is in use.** Grep the source for the URL fragment `playerevents/api/v3/players/session_start` (note the plural `players` and the underscore — distinct from the recommended URL):
+
+   - **Found** → set `SESSION_START_AUTO_FIRES = False`. Then grep for a literal `"session_start"` emission to see whether the app already fires it explicitly:
+     - Already emits → leave it alone, classify normally (will likely fall into 🟢 publish).
+     - Does not emit → 🔁 explicit emit needed: instruct the developer to add `session_start` to `KinoaEvents` and wire an emission site immediately after the legacy open-session call returns.
+   - **Not found** → keep the default `True`. Move on without prompting.
+
+   Greenfield integrations (no session-open code yet) keep the default `True`, because `kinoa-open-session` and the canonical pattern in the Postman collection both use the recommended endpoint. No dialog needed.
 
 If you can't identify event emission with confidence (no obvious framework, no clear call-site pattern), stop and ask the developer to point you at a known emission site.
 
@@ -78,7 +88,9 @@ Each response is `{ http_status, ok, response: { totalCount, elements: [...] } }
 
 **Two pre-rules apply before normal classification:**
 
-- **`session_start` auto-fires from open-session.** If `OPEN_SESSION_IMPLEMENTED == True` (from Phase A), treat `session_start` as **in app** even if grep didn't find a literal `"session_start"` string. The `POST .../player/session/start` endpoint emits it server-side. Do not require the developer to add `session_start` to `KinoaEvents` as a separately-emitted event.
+- **`session_start` handling depends on `SESSION_START_AUTO_FIRES`** (set in Phase A):
+  - `True` (app uses the direct `/player/session/start` endpoint) → treat `session_start` as **in app** even if grep didn't find a literal `"session_start"` string. The endpoint emits it server-side. Do not add `session_start` to `KinoaEvents` as a separately-emitted event.
+  - `False` (app opens sessions some other way) → treat `session_start` as a **regular event** that the app must emit explicitly after opening a session. Classify it normally (it will typically land in 🟡 Implement+pub if `status == NOT_IMPLEMENTED`).
 - **Highly-recommended events.** The set `{watch_ad, install, payment}` is *load-bearing* for Kinoa's calculated properties (ad-revenue analytics, install attribution, monetization / LTV / ARPU). Without these, large parts of the dashboard's analytics simply don't compute. **Mark them with a leading ⭐ in whatever bucket they fall into**, and tell the developer explicitly: *"Without watch_ad / install / payment, Kinoa cannot calculate ad revenue, install attribution, or monetization metrics. These should be prioritized."*
 
 For every predefined event, classify by comparing its `name` to the names the app emits (with the auto-publish rule above applied):
@@ -136,13 +148,20 @@ Execute in order. After each call, read the JSON; if `ok == false`, surface `htt
   1. Quick sanity-check with the developer that the app code really does emit the event — otherwise this might be coming from an old/legacy integration.
   2. If confirmed, publish with the same command.
 
-- 🔄 **`session_start` auto-publish** (when `OPEN_SESSION_IMPLEMENTED == True`):
-  - The application emits this implicitly via the open-session call. The developer doesn't add `session_start` to `KinoaEvents` as a separately-emitted event.
-  - Always publish `session_start` once open-session is wired up — same `publish` command:
+- 🔄 **`session_start` auto-publish** (when `SESSION_START_AUTO_FIRES == True` — the app calls the direct `/player/session/start` endpoint):
+  - The server fires `session_start` on every open-session call; the app must not also emit it from a regular event call site (would double-count).
+  - Publish `session_start` once open-session is wired up:
     ```
     python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-event/kinoa_dashboard_event.py" publish --event-id <session_start_uuid>
     ```
-  - If `OPEN_SESSION_IMPLEMENTED == False`, downgrade to a 🟡 (recommend implementing open-session first) and stop here.
+
+- 🔁 **`session_start` explicit emit** (when `SESSION_START_AUTO_FIRES == False` — the app opens sessions without hitting the direct endpoint):
+  - The app must emit `session_start` like any other event, immediately after its session-open code runs.
+  - Treat it as a normal 🟡 implement+publish item: add `session_start` to `KinoaEvents`, wire an emission call site right after the session-open step, then publish:
+    ```
+    python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-event/kinoa_dashboard_event.py" publish --event-id <session_start_uuid>
+    ```
+  - Place the call so it cannot run before the session is open — `session_start` with no active session is a usage error.
 
 - 🟣 **Implement existing custom** (active custom event not yet in code):
   1. Use `Edit` to add the event to `KinoaEvents` and to the application's emission code.
@@ -256,9 +275,16 @@ The following predefined events are required for Kinoa's calculated properties t
 
 When any of these are not yet integrated, the skill prefixes their checklist row with ⭐ and shows a callout above the checklist explaining the consequence.
 
-### Auto-published events
+### `session_start` — auto-fire vs explicit emit
 
-`session_start` is **not emitted as a separate event** by the application. It fires server-side every time the app calls `POST .../playerevents/api/v3/player/session/start` (the open-session endpoint, wrapped by `kinoa-open-session`). When the skill detects `OPEN_SESSION_IMPLEMENTED == True` (Phase A), it treats `session_start` as in-app and publishes it without requiring a separate emission site.
+Two open-session endpoints exist; only the recommended one auto-fires `session_start`:
+
+| Endpoint | Auto-fires `session_start`? | Skill action |
+|---|---|---|
+| `gate.kinoa.io/playerevents/api/v3/player/session/start` (**recommended / default**) | **Yes** — server emits the event in hidden mode on each open-session POST. | 🔄 Publish only — no `KinoaEvents` entry, no emission site. |
+| `gate.kinoa.io/playerevents/api/v3/players/session_start` (legacy — note plural + underscore) | **No** | 🔁 Implement + publish (only if the app doesn't already emit `session_start`) — add to `KinoaEvents`, wire an emission site after the legacy call returns, then publish. |
+
+The decision is made in Phase A. **Default assumption is the recommended endpoint** (`SESSION_START_AUTO_FIRES = True`); the skill only overrides to `False` when grep finds the legacy URL fragment `players/session_start` in the source. `kinoa-open-session` (the debugging helper in this repo) always hits the recommended endpoint, so it consistently demonstrates the auto-fire path.
 
 ### Runtime emission contract
 

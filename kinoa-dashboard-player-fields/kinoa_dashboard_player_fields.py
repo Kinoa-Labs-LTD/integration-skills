@@ -91,7 +91,7 @@ def _admin_headers():
             "hint": "Run /kinoa-init first.",
         }, indent=2))
         sys.exit(2)
-    return {"Authorization": f"Bearer {bearer}", "Game-Id": game_id}
+    return {"Authorization": f"Bearer {bearer}", "Game": game_id, "Game-Id": game_id}
 
 
 def _public_headers():

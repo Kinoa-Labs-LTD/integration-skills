@@ -42,7 +42,7 @@ Every subcommand prints a single JSON object: `{ http_status, ok, response | req
 
 ## Security boundary
 
-`list-predefined` / `list-custom` / `activate` / `create` / `delete` call `dashboard.kinoa.io` with `Authorization: Bearer <token>` + `Game-Id: <uuid>` — **skill-only / admin**. Never embed these calls in application runtime code.
+`list-predefined` / `list-custom` / `activate` / `create` / `delete` call `dashboard.kinoa.io` with `Authorization: Bearer <token>` + `Game: <uuid>` + `Game-Id: <uuid>` (both headers carry the same UUID) — **skill-only / admin**. Never embed these calls in application runtime code.
 
 `get-player-state` calls `gate.kinoa.io` with `game: <secret>` (public). This is the same surface application code uses for player-state reads, so it's a faithful end-to-end check.
 
