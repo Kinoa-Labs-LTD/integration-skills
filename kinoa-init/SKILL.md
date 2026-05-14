@@ -1,6 +1,6 @@
 ---
 name: kinoa-init
-description: Initialize Kinoa credentials for the current session. Integration type is always API — the only supported mode. Asks only for the internal game UUID, the game secret, and the bearer token; persists them to ~/.kinoa/session.env; validates the project against dashboard.kinoa.io; and offers to switch the project's integration_type to API if it isn't already. Use whenever the user wants to start a Kinoa session, set up Kinoa credentials, or wire up Kinoa for a project.
+description: Internal sub-skill of kinoa-api-integration — do NOT trigger directly. Invoked as the orchestrator's `init` dispatch (Phase 0 of onboarding). Initializes Kinoa credentials: asks for game UUID, game secret, and bearer token; persists to ~/.kinoa/session.env; validates against dashboard.kinoa.io; offers to switch integration_type to API if needed. When the user wants to set up Kinoa, start a Kinoa session, configure Kinoa credentials, or wire Kinoa into a project, route via kinoa-api-integration init rather than triggering this skill standalone — the orchestrator owns the sequence (init → player fields → open-session → events) and skipping ahead leads to silently broken integrations.
 argument-hint: [optional: game_id=… game_secret=… bearer=…]
 allowed-tools: Bash(python *) Bash(cat *) Read AskUserQuestion
 ---

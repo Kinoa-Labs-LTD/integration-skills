@@ -1,6 +1,6 @@
 ---
 name: kinoa-sync-player-fields-integration
-description: Synchronize the application's player model with Kinoa — the integration/code-side half of the player-fields pair. Discover the existing player class in the app code, generate a KinoaPlayerState class mirroring it, then orchestrate a sync against Kinoa (activating predefined, creating custom) by delegating every admin call to the sibling kinoa-dashboard-player-fields skill. Includes a test scenario verifying every field appears in the returned player_state. Use whenever the user wants to onboard application code with Kinoa, generate KinoaPlayerState, sync player fields with the dashboard, or verify the integration end-to-end.
+description: Internal sub-skill of kinoa-api-integration — do NOT trigger directly. Invoked as the orchestrator's `sync-player-fields-integration` dispatch. Owns the player-fields workflow: discover the app's player class, generate KinoaPlayerState mirroring it, wire local storage (B.1), sync against Kinoa (activating predefined, creating custom) by delegating admin calls to kinoa-dashboard-player-fields, then produce a four-bucket HTML integration report (C.5). When the user wants to onboard app code with Kinoa, generate KinoaPlayerState, or sync player fields, route via kinoa-api-integration sync-player-fields-integration — the orchestrator enforces the init → player-fields → open-session → events order, and triggering this directly without prior init or with events already partly-done can silently corrupt the integration.
 argument-hint: [optional: app source path]
 allowed-tools: Bash(python *) Bash(cat *) Read Write Edit Glob Grep AskUserQuestion
 ---
@@ -50,6 +50,23 @@ If you cannot identify a single player class with confidence, stop and ask the d
 3. Save the file with `Write`.
 
 `KinoaPlayerState` is a **pure data class** — fields only, no methods that call Kinoa. The application's existing integration code (or new code following the Postman collection) is responsible for serializing this class onto session-start / sync-event payloads using the public `gate.kinoa.io` endpoints with the game-secret header. Do not embed admin/bearer endpoints in this class or anywhere else in app code.
+
+### B.1 Wire up storage on the game side
+
+Kinoa treats the **application as the source of truth** for player state. Kinoa stores what the app sends; it doesn't recompute it. That means there must be exactly one authoritative `KinoaPlayerState` instance the app maintains, updated whenever a field changes, and read on every event payload. Skipping this step is the most common reason fields appear as ❌ Missing in Phase D — the activation succeeded server-side but the app never sent a value.
+
+1. **Look for existing player-state storage.** Common patterns: `PlayerRepository`, `PlayerStateManager`, `SaveManager`, a singleton holding the current `Player`. Use `Glob` / `Grep` for these.
+   - If found: prefer extending it. Either store a `KinoaPlayerState` alongside the existing model, or add a method (`buildKinoaPlayerState()` / `toKinoaPlayerState()`) that snapshots the existing player-data into a `KinoaPlayerState` on demand. Reusing existing storage avoids state drift between two parallel models.
+   - If not found, or the existing model can't cleanly be mapped: generate a minimal store appropriate to the platform. Confirm the platform with the developer first if it isn't obvious from the codebase. Reasonable defaults:
+     - **Unity (C#)** → singleton + `JsonUtility` + `PlayerPrefs` or persistent file.
+     - **Android (Java/Kotlin)** → singleton + Gson/Moshi + `SharedPreferences` or Room.
+     - **iOS (Swift)** → `Codable` + `UserDefaults` or Core Data.
+     - **Web (TS/JS)** → module-level singleton + `localStorage`.
+     - **Server (any language)** → the existing DB / cache layer, keyed by `player_id`.
+2. **Persist across launches** for fields whose value can't be recomputed from gameplay (progression, currency balances, achievements, region/country once chosen). Volatile fields (current session length, last-action timestamp) can live in memory only.
+3. **Update sites** — after Phase C.4 finishes there will be N fields in `KinoaPlayerState`. Tell the developer plainly: each field must be written to storage whenever its in-game value changes. Don't silently inject update calls into gameplay code; surface a checklist so the developer wires them deliberately. The Phase C.5 report serves as that checklist.
+
+This step adds **no** Kinoa API calls. Storage is purely local; the existing emission code (or code from the Postman collection) reads `KinoaPlayerState` from storage and POSTs it to `gate.kinoa.io` with the game-secret header.
 
 ---
 
@@ -124,6 +141,59 @@ Execute in order. After each call, read the JSON; if `ok == false`, surface `htt
      ```
 
 After the loop completes, summarize: how many activated, how many created, how many failed.
+
+---
+
+## Phase C.5 — Generate the sync report
+
+Once Phase C.4 has finished (or has been skipped because nothing needed applying), produce a human-readable HTML report so the developer has a durable record of the sync state. This runs unconditionally — even with zero changes the report is useful as a snapshot of "what's wired up vs. what isn't."
+
+The report has four buckets, mirroring how a developer thinks about the sync afterwards:
+
+1. **Predefined fields — integrated** — every predefined element with `state == "active"` whose `path` appears in `KinoaPlayerState`. Includes both fields activated this run (🟢, 🟡) and any that were already active before. The `note` distinguishes them ("newly activated", "implemented + activated", "already active before this run").
+2. **Predefined fields — NOT integrated** — every predefined element with `state == "not_implemented"` (regardless of `KinoaPlayerState`), plus any `state == "active"` predefined whose path is **not** in `KinoaPlayerState` (the 🟠 warning case). Include the `state` column so the developer can tell them apart. The `note` should explain the situation: "skipped by developer", "recommended but skipped", or "active in Kinoa but missing in code (warning)".
+3. **Custom fields — integrated** — every active USER field whose `path` appears in `KinoaPlayerState`. Includes 🔵 newly created, 🟣 mirrored-from-existing, and ✅ already-in-sync. The `note` distinguishes them.
+4. **Custom fields — NOT integrated** — every active USER field whose `path` is **not** in `KinoaPlayerState` and the developer didn't approve mirroring. These are dashboard-only custom fields the app currently ignores.
+
+### Building the JSON
+
+Assemble the payload from data already in hand:
+- `predefined` and `custom` element lists from C.1.
+- The set of `KinoaPlayerState` paths from Phase A (re-read the file if it was edited in C.4).
+- The list of actions actually applied in C.4 (whether each succeeded), so notes are accurate.
+
+Schema:
+
+```json
+{
+  "generated_at": "<ISO 8601 UTC>",
+  "game_id": "<KINOA_GAME_ID>",
+  "kinoa_player_state_path": "<path written in Phase B>",
+  "predefined_integrated":     [{"name", "path", "kind", "note"}, ...],
+  "predefined_not_integrated": [{"name", "path", "kind", "state", "note"}, ...],
+  "custom_integrated":         [{"name", "path", "kind", "note"}, ...],
+  "custom_not_integrated":     [{"name", "path", "kind", "note"}, ...]
+}
+```
+
+### Render and save
+
+Pipe the JSON into the bundled script. Output path: `./kinoa-player-fields-integration-report-<YYYYMMDD-HHMMSS>.html` in the project's current working directory (timestamped so repeated syncs don't clobber each other).
+
+```bash
+echo '<json>' | python "${CLAUDE_SKILL_DIR}/generate_report.py" --output ./kinoa-player-fields-integration-report-<ts>.html
+```
+
+The script prints `{"ok": true, "output": "...", "bytes": N}`. Surface the absolute path to the developer and tell them they can open it in a browser. If the project has a `.gitignore`, suggest they add `kinoa-player-fields-integration-report-*.html` to it — the report is a local artifact, not source.
+
+### Review loop
+
+Once the developer has had a chance to look at the report, ask via `AskUserQuestion` whether they want to integrate more fields now. The four-bucket layout often surfaces things the developer didn't think to add on the first pass — predefined fields they skipped, custom fields sitting in the dashboard from a previous teammate's work, or new custom fields they realize they need.
+
+- **Yes** — re-run C.1 (lists may have changed if anyone else has been editing the dashboard), recompute the diff in C.2, present a fresh checklist in C.3, apply in C.4, regenerate the report in C.5. The previous report file stays on disk; the new one gets a new timestamp.
+- **No** — proceed to Phase D.
+
+Don't loop without asking. The developer might be done, and the report itself is the durable answer to "what's still missing."
 
 ---
 

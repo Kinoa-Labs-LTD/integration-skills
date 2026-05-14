@@ -1,6 +1,6 @@
 ---
 name: kinoa-sync-event-integration
-description: Synchronize the application's emitted events with Kinoa's game_event registry — the integration/code-side half of the events pair. Discover which events the app code emits, generate a KinoaEvents class mirroring them, then orchestrate a sync against Kinoa (publishing predefined, creating custom) by delegating every admin call to the sibling kinoa-dashboard-event skill. Includes a test scenario verifying events land. Use whenever the user wants to integrate events with Kinoa, set up event tracking in code, generate KinoaEvents, sync game events with the dashboard, or verify event integration end-to-end.
+description: Internal sub-skill of kinoa-api-integration — do NOT trigger directly. Invoked as the orchestrator's `sync-event-integration` dispatch. Owns the events workflow: discover which events the app emits, generate KinoaEvents mirroring them, sync against Kinoa (publishing predefined, creating custom) by delegating admin calls to kinoa-dashboard-event, pick the player_state strategy (full vs diff), then produce a four-bucket HTML integration report with a red callout for critical events (session_start/payment/watch_ad/install). When the user wants to integrate events with Kinoa, generate KinoaEvents, or sync game events, route via kinoa-api-integration sync-event-integration — the orchestrator enforces the prerequisite ordering (init done, player-fields done so KinoaPlayerState exists for event.player_state), and triggering this directly without those can silently produce KinoaEvents referencing nonexistent classes.
 argument-hint: [optional: app source path]
 allowed-tools: Bash(python *) Bash(cat *) Read Write Edit Glob Grep AskUserQuestion
 ---
@@ -212,6 +212,69 @@ If they pick **full**:
 ```
 
 The skill does not generate the runtime emission code itself (that belongs to the application's existing event-emission layer), but the comment makes the contract explicit.
+
+### C.6 Generate the sync report
+
+After C.4 applies and C.5 picks the strategy, produce a human-readable HTML report — same idea as the player-fields report, adapted for events. The report is durable evidence of what's wired up and what isn't, and it surfaces critical events prominently so the developer leaves Phase C with a clear picture.
+
+The report has a **top critical-events section** plus the standard four buckets:
+
+- **🔴 Critical events** — `session_start`, `payment`, `watch_ad`, `install`. These four power Kinoa's calculated properties (session lifecycle, monetization/LTV/ARPU, ad-revenue, install attribution). When **any** of them is not integrated, the section renders red with a "missing" callout. When all four are integrated, it renders green with a confirmation. `session_start` counts as integrated when `SESSION_START_AUTO_FIRES = True` (server fires it on the recommended open-session endpoint) — record this nuance in the row's `note`.
+- **Predefined events — integrated** — `status == "ACTIVE"` and the app emits the event (or it's auto-fired for `session_start`).
+- **Predefined events — NOT integrated** — `status == "NOT_IMPLEMENTED"` regardless of in-app, plus active-but-unmemitted (🟠 WARNING). Include the `status` column.
+- **Custom events — integrated** — active USER events the app emits.
+- **Custom events — NOT integrated** — active USER events the app doesn't emit.
+
+### Building the JSON
+
+Assemble from data already in hand: `predefined`/`custom` lists from C.1, the canonical app-emission set from Phase A, the actions actually applied in C.4, and the strategy chosen in C.5.
+
+Each row carries the **full parameter list** for the event — pass through `game_event_parameters` directly from the dashboard list calls (system + custom together, in their natural order). The script renders them comma-separated as `name:kind`, with enumeration values in parens, e.g. `level:number, place:string, tier:enumeration(bronze,silver,gold)`. Don't pre-format or pre-filter — let the script handle the rendering.
+
+Notes should be short and accurate ("newly published", "auto-fired by server", "skipped by developer", "active in Kinoa, app doesn't emit", etc.).
+
+Schema:
+
+```json
+{
+  "generated_at":              "<ISO 8601 UTC>",
+  "game_id":                   "<KINOA_GAME_ID>",
+  "kinoa_events_path":         "<path written in Phase B>",
+  "player_state_strategy":     "FULL" | "DIFF",
+  "session_start_auto_fires":  true | false,
+  "critical_events": [
+    {"name": "session_start",  "integrated": true|false, "note": "..."},
+    {"name": "payment",        "integrated": true|false, "note": "..."},
+    {"name": "watch_ad",       "integrated": true|false, "note": "..."},
+    {"name": "install",        "integrated": true|false, "note": "..."}
+  ],
+  "predefined_integrated":     [{"name", "status", "params", "note"}, ...],
+  "predefined_not_integrated": [{"name", "status", "params", "note"}, ...],
+  "custom_integrated":         [{"name", "params", "note"}, ...],
+  "custom_not_integrated":     [{"name", "params", "note"}, ...]
+}
+```
+
+Each `params` entry is `{"name", "kind", "system": bool, "extra"?}` — exactly the shape returned by `kinoa_dashboard_event.py list-*`. `extra` is required only for `kind == "enumeration"` (a comma-separated string of allowed values).
+
+### Render and save
+
+Pipe the JSON into the bundled script. Output path: `./kinoa-event-integration-report-<YYYYMMDD-HHMMSS>.html` in the project's current working directory.
+
+```bash
+echo '<json>' | python "${CLAUDE_SKILL_DIR}/generate_report.py" --output ./kinoa-event-integration-report-<ts>.html
+```
+
+The script prints `{"ok": true, "output": "...", "bytes": N}`. Surface the absolute path; tell the developer to open it in a browser. Suggest adding `kinoa-event-integration-report-*.html` to `.gitignore` — it's a local artifact, not source.
+
+### Review loop
+
+After surfacing the report path, ask via `AskUserQuestion` whether the developer wants to integrate more events now. The critical-events callout often nudges them — if `payment` or `watch_ad` is sitting in the red section because they ran out of time, this is the moment to come back and finish.
+
+- **Yes** — re-run C.1, recompute the diff, present a fresh checklist (C.3), apply (C.4), reconfirm strategy (C.5), regenerate the report (C.6). Each report file gets its own timestamp.
+- **No** — proceed to Phase D.
+
+Don't loop without asking; the developer might be done.
 
 ---
 
