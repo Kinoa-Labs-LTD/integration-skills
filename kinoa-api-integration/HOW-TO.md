@@ -9,21 +9,21 @@ integration-skills/
 │   ├── HOW-TO.md                                ← you are here
 │   ├── evals/
 │   └── references/
-├── kinoa-init/                                  ← Phase 0 (self-contained)
+├── kinoa-init/                                  ← Phase 1 (self-contained)
 │   ├── SKILL.md
 │   └── kinoa_init.py
-├── kinoa-sync-player-fields-integration/        ← Phase 1 workflow (no helper)
+├── kinoa-sync-player-fields-integration/        ← Phase 2 workflow (no helper)
 │   └── SKILL.md   ← delegates admin calls to kinoa-dashboard-player-fields
-├── kinoa-dashboard-player-fields/               ← admin CLI wrapper for Phase 1
+├── kinoa-dashboard-player-fields/               ← admin CLI wrapper for Phase 2
 │   ├── SKILL.md
 │   └── kinoa_dashboard_player_fields.py
-├── kinoa-open-session/                          ← Phase 2 (self-contained)
+├── kinoa-open-session/                          ← Phase 3 (self-contained)
 │   ├── SKILL.md
 │   └── kinoa_open_session.py
-├── kinoa-sync-event-integration/                ← Phase 3 workflow (with local runtime helper)
+├── kinoa-sync-event-integration/                ← Phase 4 workflow (with local runtime helper)
 │   ├── SKILL.md   ← delegates admin calls to kinoa-dashboard-event
-│   └── kinoa_send_event.py   ← runtime test helper used by Phase D (mirrors what the app does at runtime)
-└── kinoa-dashboard-event/                       ← admin CLI wrapper for Phase 3
+│   └── kinoa_send_event.py   ← runtime test helper used by Phase 4 (mirrors what the app does at runtime)
+└── kinoa-dashboard-event/                       ← admin CLI wrapper for Phase 4
     ├── SKILL.md
     └── kinoa_dashboard_event.py
 ```

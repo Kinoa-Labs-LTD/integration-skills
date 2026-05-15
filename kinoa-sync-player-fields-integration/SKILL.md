@@ -1,6 +1,6 @@
 ---
 name: kinoa-sync-player-fields-integration
-description: Internal sub-skill of kinoa-api-integration — do NOT trigger directly. Invoked as the orchestrator's `sync-player-fields-integration` dispatch. Owns the player-fields workflow: discover the app's player class, generate KinoaPlayerState mirroring it, wire local storage (B.1), sync against Kinoa (activating predefined, creating custom) by delegating admin calls to kinoa-dashboard-player-fields, then produce a four-bucket HTML integration report (C.5). When the user wants to onboard app code with Kinoa, generate KinoaPlayerState, or sync player fields, route via kinoa-api-integration sync-player-fields-integration — the orchestrator enforces the init → player-fields → open-session → events order, and triggering this directly without prior init or with events already partly-done can silently corrupt the integration.
+description: Internal sub-skill of kinoa-api-integration — do NOT trigger directly. Invoked as the orchestrator's `sync-player-fields-integration` dispatch. Owns the player-fields workflow: discover the app's player class, generate KinoaPlayerState mirroring it, wire local storage (2.1), sync against Kinoa (activating predefined, creating custom) by delegating admin calls to kinoa-dashboard-player-fields, then produce a four-bucket HTML integration report (3.5). When the user wants to onboard app code with Kinoa, generate KinoaPlayerState, or sync player fields, route via kinoa-api-integration sync-player-fields-integration — the orchestrator enforces the init → player-fields → open-session → events order, and triggering this directly without prior init or with events already partly-done can silently corrupt the integration.
 argument-hint: [optional: app source path]
 allowed-tools: Bash(python *) Bash(cat *) Read Write Edit Glob Grep AskUserQuestion
 ---
@@ -20,13 +20,13 @@ This skill makes calls against **two distinct surfaces**, and they must not be c
 
 **Hard rule when generating code into the application:** never emit code that calls `dashboard.kinoa.io` or sends an `Authorization: Bearer` header. The bearer token is admin-tier and must not ship in application binaries, configs, or runtime calls. If a Phase asks you to add code to the app, only use endpoints from the Postman collection (game-secret header).
 
-When `Phase D` verifies the integration, the skill itself calls `gate.kinoa.io/playerevents/api/v3/player-state` with the public game-secret header — same surface the app uses, so it's a faithful end-to-end check.
+When `Phase 4` verifies the integration, the skill itself calls `gate.kinoa.io/playerevents/api/v3/player-state` with the public game-secret header — same surface the app uses, so it's a faithful end-to-end check.
 
 The skill works in four phases. Drive each phase to completion with the developer before moving to the next; they are sequential and each builds on the previous.
 
 ---
 
-## Phase A — Discover the application's player class
+## Phase 1 — Discover the application's player class
 
 1. Use `Glob` and `Grep` to find candidate classes representing the player model. Scan for: class names like `Player`, `PlayerState`, `User`, `UserState`, `Profile`, `GameProfile`, and for source files containing fields like `player_id` / `playerId`. Search the project root the user names (default: current working directory).
 2. If multiple candidates emerge, present them via `AskUserQuestion` and let the developer pick.
@@ -40,20 +40,20 @@ If you cannot identify a single player class with confidence, stop and ask the d
 
 ---
 
-## Phase B — Generate `KinoaPlayerState`
+## Phase 2 — Generate `KinoaPlayerState`
 
 1. Propose a path for the new class file. Default: same directory/package as the existing player class, file name `KinoaPlayerState.<ext>` matching the language. Confirm with the developer via `AskUserQuestion` (option to override path/name).
 2. Write the class:
    - One field: a `player_id` whose type matches the existing player's `player_id` (or its closest analogue).
    - Mirror the existing player's naming convention.
-   - **Empty body otherwise** — fields will be added in Phase C as the developer approves them.
+   - **Empty body otherwise** — fields will be added in Phase 3 as the developer approves them.
 3. Save the file with `Write`.
 
 `KinoaPlayerState` is a **pure data class** — fields only, no methods that call Kinoa. The application's existing integration code (or new code following the Postman collection) is responsible for serializing this class onto session-start / sync-event payloads using the public `gate.kinoa.io` endpoints with the game-secret header. Do not embed admin/bearer endpoints in this class or anywhere else in app code.
 
-### B.1 Wire up storage on the game side
+### 2.1 Wire up storage on the game side
 
-Kinoa treats the **application as the source of truth** for player state. Kinoa stores what the app sends; it doesn't recompute it. That means there must be exactly one authoritative `KinoaPlayerState` instance the app maintains, updated whenever a field changes, and read on every event payload. Skipping this step is the most common reason fields appear as ❌ Missing in Phase D — the activation succeeded server-side but the app never sent a value.
+Kinoa treats the **application as the source of truth** for player state. Kinoa stores what the app sends; it doesn't recompute it. That means there must be exactly one authoritative `KinoaPlayerState` instance the app maintains, updated whenever a field changes, and read on every event payload. Skipping this step is the most common reason fields appear as ❌ Missing in Phase 4 — the activation succeeded server-side but the app never sent a value.
 
 1. **Look for existing player-state storage.** Common patterns: `PlayerRepository`, `PlayerStateManager`, `SaveManager`, a singleton holding the current `Player`. Use `Glob` / `Grep` for these.
    - If found: prefer extending it. Either store a `KinoaPlayerState` alongside the existing model, or add a method (`buildKinoaPlayerState()` / `toKinoaPlayerState()`) that snapshots the existing player-data into a `KinoaPlayerState` on demand. Reusing existing storage avoids state drift between two parallel models.
@@ -64,15 +64,15 @@ Kinoa treats the **application as the source of truth** for player state. Kinoa 
      - **Web (TS/JS)** → module-level singleton + `localStorage`.
      - **Server (any language)** → the existing DB / cache layer, keyed by `player_id`.
 2. **Persist across launches** for fields whose value can't be recomputed from gameplay (progression, currency balances, achievements, region/country once chosen). Volatile fields (current session length, last-action timestamp) can live in memory only.
-3. **Update sites** — after Phase C.4 finishes there will be N fields in `KinoaPlayerState`. Tell the developer plainly: each field must be written to storage whenever its in-game value changes. Don't silently inject update calls into gameplay code; surface a checklist so the developer wires them deliberately. The Phase C.5 report serves as that checklist.
+3. **Update sites** — after Phase 3.4 finishes there will be N fields in `KinoaPlayerState`. Tell the developer plainly: each field must be written to storage whenever its in-game value changes. Don't silently inject update calls into gameplay code; surface a checklist so the developer wires them deliberately. The Phase 3.5 report serves as that checklist.
 
 This step adds **no** Kinoa API calls. Storage is purely local; the existing emission code (or code from the Postman collection) reads `KinoaPlayerState` from storage and POSTs it to `gate.kinoa.io` with the game-secret header.
 
 ---
 
-## Phase C — Sync field definitions with Kinoa
+## Phase 3 — Sync field definitions with Kinoa
 
-### C.1 Fetch existing field definitions
+### 3.1 Fetch existing field definitions
 
 Two calls — predefined (system) and custom (USER) — so the diff knows about both kinds of fields already in Kinoa:
 
@@ -85,7 +85,7 @@ Each response is `{ http_status, ok, response: { totalCount, elements: [...] } }
 
 `list-custom` defaults to `state: active` only (excludes soft-deleted fields). For predefined fields the relevant states are `active` and `not_implemented`.
 
-### C.2 Compute the diff
+### 3.2 Compute the diff
 
 For every predefined element, classify by comparing its `path` to the paths in `KinoaPlayerState`:
 
@@ -99,7 +99,7 @@ For every `KinoaPlayerState` field whose path is **not** among the predefined or
 
 If a `KinoaPlayerState` path matches an existing active custom field → ✅ **ALREADY CUSTOM** — already wired up on both sides, no action needed.
 
-### C.3 Present the checklist
+### 3.3 Present the checklist
 
 Show a numbered list grouped by severity. Each row: icon, action, name, path, kind. Example:
 
@@ -113,7 +113,7 @@ Show a numbered list grouped by severity. Each row: icon, action, name, path, ki
 
 Ask the developer which actions to apply: comma-separated indices, `all`, or `none`.
 
-### C.4 Apply approved actions
+### 3.4 Apply approved actions
 
 Execute in order. After each call, read the JSON; if `ok == false`, surface `http_status` and `response`, then ask whether to retry, skip, or stop the whole phase.
 
@@ -144,9 +144,9 @@ After the loop completes, summarize: how many activated, how many created, how m
 
 ---
 
-## Phase C.5 — Generate the sync report
+## Phase 3.5 — Generate the sync report
 
-Once Phase C.4 has finished (or has been skipped because nothing needed applying), produce a human-readable HTML report so the developer has a durable record of the sync state. This runs unconditionally — even with zero changes the report is useful as a snapshot of "what's wired up vs. what isn't."
+Once Phase 3.4 has finished (or has been skipped because nothing needed applying), produce a human-readable HTML report so the developer has a durable record of the sync state. This runs unconditionally — even with zero changes the report is useful as a snapshot of "what's wired up vs. what isn't."
 
 The report has four buckets, mirroring how a developer thinks about the sync afterwards:
 
@@ -158,9 +158,9 @@ The report has four buckets, mirroring how a developer thinks about the sync aft
 ### Building the JSON
 
 Assemble the payload from data already in hand:
-- `predefined` and `custom` element lists from C.1.
-- The set of `KinoaPlayerState` paths from Phase A (re-read the file if it was edited in C.4).
-- The list of actions actually applied in C.4 (whether each succeeded), so notes are accurate.
+- `predefined` and `custom` element lists from 3.1.
+- The set of `KinoaPlayerState` paths from Phase 1 (re-read the file if it was edited in 3.4).
+- The list of actions actually applied in 3.4 (whether each succeeded), so notes are accurate.
 
 Schema:
 
@@ -168,7 +168,7 @@ Schema:
 {
   "generated_at": "<ISO 8601 UTC>",
   "game_id": "<KINOA_GAME_ID>",
-  "kinoa_player_state_path": "<path written in Phase B>",
+  "kinoa_player_state_path": "<path written in Phase 2>",
   "predefined_integrated":     [{"name", "path", "kind", "note"}, ...],
   "predefined_not_integrated": [{"name", "path", "kind", "state", "note"}, ...],
   "custom_integrated":         [{"name", "path", "kind", "note"}, ...],
@@ -184,35 +184,76 @@ Pipe the JSON into the bundled script. Output path: `./kinoa-player-fields-integ
 echo '<json>' | python "${CLAUDE_SKILL_DIR}/generate_report.py" --output ./kinoa-player-fields-integration-report-<ts>.html
 ```
 
-The script prints `{"ok": true, "output": "...", "bytes": N}`. Surface the absolute path to the developer and tell them they can open it in a browser. If the project has a `.gitignore`, suggest they add `kinoa-player-fields-integration-report-*.html` to it — the report is a local artifact, not source.
+The script prints `{"ok": true, "output": "...", "bytes": N, "opened_in_browser": true|false}`. **The script also auto-opens the file in the developer's default browser** via `webbrowser.open()` — that is the intended UX, so the developer can review the report immediately without copy-pasting paths. If `opened_in_browser` comes back `false` (rare — headless environment, browser not available), surface the absolute path so they can open it manually. If the project has a `.gitignore`, suggest they add `kinoa-player-fields-integration-report-*.html` to it — the report is a local artifact, not source.
 
 ### Review loop
 
 Once the developer has had a chance to look at the report, ask via `AskUserQuestion` whether they want to integrate more fields now. The four-bucket layout often surfaces things the developer didn't think to add on the first pass — predefined fields they skipped, custom fields sitting in the dashboard from a previous teammate's work, or new custom fields they realize they need.
 
-- **Yes** — re-run C.1 (lists may have changed if anyone else has been editing the dashboard), recompute the diff in C.2, present a fresh checklist in C.3, apply in C.4, regenerate the report in C.5. The previous report file stays on disk; the new one gets a new timestamp.
-- **No** — proceed to Phase D.
+- **Yes** — re-run 3.1 (lists may have changed if anyone else has been editing the dashboard), recompute the diff in 3.2, present a fresh checklist in 3.3, apply in 3.4, regenerate the report in 3.5. The previous report file stays on disk; the new one gets a new timestamp.
+- **No** — proceed to Phase 4.
 
 Don't loop without asking. The developer might be done, and the report itself is the durable answer to "what's still missing."
 
 ---
 
-## Phase D — Test scenario
+## Phase 4 — Integration test in the application's codebase
 
-The goal: confirm the application can populate every `KinoaPlayerState` field through Kinoa and read it back. The honest test is to run the developer's own integration code — that is, the code that calls Kinoa's public Player Events API with `KinoaPlayerState` as the source of `player_state`.
+The goal: confirm the application can populate every `KinoaPlayerState` field through Kinoa and read it back. The honest way to do this is from the application's real code path, expressed as an **integration test in the project's own test suite** — not from a synthetic POST.
 
-1. Tell the developer:
-   > "Run the code path in your application that opens a Kinoa session and populates `KinoaPlayerState` for a known player. Use a unique test player_id (e.g., `kinoa_sync_test_<short-uuid>`) so you can identify it later. Confirm here when the session has been opened."
-2. Once the developer confirms, ask for the test `player_id` they used.
-3. Pull the resulting state:
+The application is Kinoa's source of truth for player state (see Phase 2.1). An integration test running through the project's storage layer, session-open code, and emission layer proves the whole chain works end-to-end, and leaves the team a worked example in their own tests that they can extend.
+
+### 4.1 Detect the test framework
+
+Look for project markers to guess the test stack, and skim one or two existing test files to mirror their conventions:
+
+- `pom.xml` / `build.gradle(.kts)` → JUnit (Java / Kotlin), tests under `src/test/...`.
+- `package.json` with `jest` / `vitest` / `mocha` in dependencies → JS/TS test runner.
+- `requirements*.txt` / `pyproject.toml` with `pytest` → pytest, tests under `tests/`.
+- `*.csproj` → xUnit / NUnit.
+- Unity `*.asmdef` files referencing `nunit` → Unity Test Runner.
+
+If multiple stacks exist, ask via `AskUserQuestion` where the developer wants the test placed.
+
+### 4.2 Generate the integration test
+
+Create one test file in the project's existing test directory, alongside the existing tests for the player-state code. Keep it minimal: one player, one session, one assertion per field. The test should:
+
+1. **Build a fixture** — generate a unique `player_id` (e.g., `kinoa_player_test_<short-uuid>`).
+2. **Open a Kinoa session via the application's own session-open path** — not by calling `gate.kinoa.io` directly from the test.
+3. **Populate `KinoaPlayerState`** with a non-default value for every field synced in Phase 3, using the storage layer wired in Phase 2.1 (`PlayerRepository` / state singleton / etc.).
+4. **Trigger whatever the application normally does to send state to Kinoa** — typically the next event emission, or a periodic sync. The test exercises the real call path.
+5. **Read back the player state via the public API** and assert every field arrived:
    ```
    python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-player-fields/kinoa_dashboard_player_fields.py" get-player-state --player-id <id>
    ```
    This GETs `https://gate.kinoa.io/playerevents/api/v3/player-state?player_id=<id>` with the public `game: <secret>` header. The response body holds the player's full state.
-4. For every field in `KinoaPlayerState`, walk its dot-path through the response (start at `response.player_state`; if absent, fall back to `response`). Report:
-   - ✅ **Found** — path resolved to a non-null value. Show the value.
-   - ❌ **Missing** — path doesn't resolve, or resolved to `null`. Likely cause: the application code didn't populate it, or activation hasn't propagated yet.
-5. End with a one-line summary: `<n>/<total> KinoaPlayerState fields verified in Kinoa.` If anything is missing, recommend re-running Phase C to verify activations and rechecking that the application code actually sets the field on the session payload, then retry the test.
+6. **Print one line to stdout** naming `player_id` and `session_id` so the developer can find the record in the Kinoa dashboard if the assertion fails.
+
+Skeleton (adapt to the project's framework):
+
+```java
+@Test
+void allKinoaPlayerStateFieldsLandInKinoa() throws Exception {
+    String playerId = "kinoa_player_test_" + UUID.randomUUID().toString().substring(0, 8);
+    KinoaSession session = sessionOpener.openForPlayer(playerId);
+    playerRepository.update(p -> p.setLevel(7).setProfile(new PersonalInfo("US")));
+    sender.flush();  // whatever the app does to push state
+    System.out.printf("populated: player_id=%s session_id=%s%n", playerId, session.getSessionId());
+    assertPlayerStateFieldsPresent(playerId, "level", "personal_info.country_code");
+}
+```
+
+For each field in `KinoaPlayerState`, the assertion helper walks its dot-path through the response (start at `response.player_state`; if absent, fall back to `response`) and reports:
+
+- ✅ **Found** — path resolved to a non-null value. Show the value.
+- ❌ **Missing** — path doesn't resolve, or resolved to `null`. Likely causes: the application code didn't populate it, activation hasn't propagated yet, or the storage layer wired in 2.1 isn't being flushed before the test reads.
+
+### 4.3 Run it and verify
+
+Tell the developer to run the test using the project's normal command (`mvn test`, `gradle test`, `npm test`, `pytest`, etc.). They confirm here once it passes — or paste any failure so you can help diagnose. End with a one-line summary: `<n>/<total> KinoaPlayerState fields verified in Kinoa.`
+
+If anything is missing, recommend re-running Phase 3 to verify activations, re-checking that the application code actually writes the field to storage and pushes it on the session payload, then retry the test.
 
 ---
 

@@ -28,13 +28,15 @@ Plus three standalone pieces:
 - `kinoa-api-integration` — orchestrator dispatching `/kinoa-api-integration <subcommand>` (or `all` for end-to-end).
 
 ```
-kinoa-init                                (Phase 0 — setup)
-kinoa-sync-player-fields-integration      (Phase 1 — workflow)  ─┐
-kinoa-dashboard-player-fields             (Phase 1 — admin CLI) ─┘ delegates
-kinoa-open-session                        (Phase 2 — runtime helper)
-kinoa-sync-event-integration              (Phase 3 — workflow + kinoa_send_event.py for Phase D)
-kinoa-dashboard-event                     (Phase 3 — admin CLI) ← delegates
+kinoa-init                                (Phase 1 — setup)
+kinoa-sync-player-fields-integration      (Phase 2 — workflow)  ─┐
+kinoa-dashboard-player-fields             (Phase 2 — admin CLI) ─┘ delegates
+kinoa-open-session                        (Phase 3 — runtime helper)
+kinoa-sync-event-integration              (Phase 4 — workflow)  ─┐
+kinoa-dashboard-event                     (Phase 4 — admin CLI) ─┘ delegates
 kinoa-api-integration                     (orchestrator)
+
+**Phase numbers:** Outer phases (1 → 4) name the orchestrator's chain (init / player-fields / open-session / events). Each workflow skill *also* has its own internal phases numbered 1 → 4 (Discover → Generate → Sync → Test), with sub-steps written `<phase>.<step>` (e.g., `3.5`, `4.2`). Always refer to phases by number, never by letter.
 ```
 
 ## Typical integration flow
@@ -42,7 +44,7 @@ kinoa-api-integration                     (orchestrator)
 1. `/kinoa-init` — capture game ID + tokens, validate against Kinoa admin API.
 2. `/kinoa-sync-player-fields-integration` — generate `KinoaPlayerState`, diff vs Kinoa, apply.
 3. `/kinoa-open-session` — verify the runtime session-open call.
-4. `/kinoa-sync-event-integration` — generate `KinoaEvents`, drive publishes/creations, run Phase D.
+4. `/kinoa-sync-event-integration` — generate `KinoaEvents`, drive publishes/creations, run Phase 4.
 
 Dashboard helpers aren't usually invoked directly during a fresh integration — workflows delegate. Use them directly for one-off admin tasks (e.g., "publish event X" or "delete a stale custom field").
 
@@ -78,7 +80,7 @@ allowed-tools: Bash(python *) Bash(cat *) Read Write Edit Glob Grep AskUserQuest
 
 **Python helpers are self-contained** — no imports from sibling folders, no shared library. Boilerplate (`_load_session_env`, `_request`, `_parse_json`, `_parse_kv_pairs`) is **deliberately duplicated** so any sub-skill can be installed in isolation. Don't extract a shared module. Each helper auto-loads `~/.kinoa/session.env` at import; each subcommand makes one HTTP call and prints one JSON object: `{ http_status, ok, response | request_body, …context }`. HTTP errors are caught and serialized — never raised onto stdout.
 
-**Workflow skills follow Phase A → B → C → D**: A discover (Glob/Grep), B generate empty data class, C sync (C.1 fetch defs, C.2 diff, C.3 checklist for approval, C.4 apply, C.5 player_state strategy [events only]), D test against the public API.
+**Workflow skills follow Phase 1 → 2 → 3 → 4**: 1 discover (Glob/Grep), 2 generate empty data class, 3 sync (3.1 fetch defs, 3.2 diff, 3.3 checklist for approval, 3.4 apply, 3.5 player_state strategy [events only], 3.6 generate HTML integration report), 4 integration test in the application's codebase.
 
 **Adding a new sub-skill**: create the folder, decide flavor (workflow / dashboard helper / runtime helper / setup), update the orchestrator's dispatcher table, update [`HOW-TO.md`](kinoa-api-integration/HOW-TO.md) and [`evals.json`](kinoa-api-integration/evals/evals.json), re-run the install loop. Runtime helpers belong **inside** the workflow skill that uses them, not as standalone slash commands (per the consolidation that folded `kinoa-send-event` into `kinoa-sync-event-integration`).
 
@@ -103,7 +105,7 @@ Bearer tokens expire (~24h JWT). On a 401 from any admin endpoint, ask the user 
 
 ## Domain rules
 
-**Highly-recommended events** — the set `{watch_ad, install, payment}` is required for Kinoa's calculated properties (ad-revenue analytics, install attribution, monetization / LTV / ARPU). The event sync skill flags these with ⭐ in the C.3 checklist regardless of bucket, with a callout explaining the consequence of leaving them unintegrated.
+**Highly-recommended events** — the set `{watch_ad, install, payment}` is required for Kinoa's calculated properties (ad-revenue analytics, install attribution, monetization / LTV / ARPU). The event sync skill flags these with ⭐ in the 3.3 checklist regardless of bucket, with a callout explaining the consequence of leaving them unintegrated.
 
 **`session_start` — auto-fire vs explicit emit.** Integration is always **API** mode. Two open-session endpoints exist; only one auto-fires:
 
@@ -112,9 +114,9 @@ Bearer tokens expire (~24h JWT). On a 401 from any admin endpoint, ask the user 
 | `.../playerevents/api/v3/player/session/start` (**recommended / default**) | Yes (hidden mode) | `True` | 🔄 publish only — no `KinoaEvents` entry, no emission site. |
 | `.../playerevents/api/v3/players/session_start` (legacy — plural + underscore) | No | `False` | 🔁 implement + publish (only if app doesn't already emit) — add to `KinoaEvents`, wire emission after the legacy call. |
 
-**Default is `True`.** Phase A does NOT ask the developer up front — it assumes the recommended endpoint and only overrides to `False` when grep finds the legacy URL fragment `players/session_start` in the source. Greenfield projects keep the default.
+**Default is `True`.** Phase 1 does NOT ask the developer up front — it assumes the recommended endpoint and only overrides to `False` when grep finds the legacy URL fragment `players/session_start` in the source. Greenfield projects keep the default.
 
-**`player_state` emission strategy** — every event must include `event.player_state`. Two strategies, picked at C.5:
+**`player_state` emission strategy** — every event must include `event.player_state`. Two strategies, picked at 3.5:
 
 - **Full** — every event carries the entire `KinoaPlayerState`. Simpler runtime, larger payloads.
 - **Diff** — only fields whose value changed since last sent. To clear a field, include it with value `null` (explicit-`null` = "remove"; omitted = unchanged). Requires a "last sent" snapshot per player.
@@ -137,7 +139,7 @@ The chosen strategy is documented as a header comment in the generated `KinoaEve
 }
 ```
 
-Predefined params (Kinoa marks `system: true`) sit at the top of `event_data`. Operator-added params (`system: false`) nest under `event_data.custom_params`. The local `kinoa_send_event.py` helper (Phase D) exposes both via `--system-param key=value` and `--param key=value`.
+Predefined params (Kinoa marks `system: true`) sit at the top of `event_data`. Operator-added params (`system: false`) nest under `event_data.custom_params`. The local `kinoa_send_event.py` helper (Phase 4) exposes both via `--system-param key=value` and `--param key=value`.
 
 ---
 

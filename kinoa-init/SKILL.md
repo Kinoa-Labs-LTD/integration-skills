@@ -1,6 +1,6 @@
 ---
 name: kinoa-init
-description: Internal sub-skill of kinoa-api-integration — do NOT trigger directly. Invoked as the orchestrator's `init` dispatch (Phase 0 of onboarding). Initializes Kinoa credentials: asks for game UUID, game secret, and bearer token; persists to ~/.kinoa/session.env; validates against dashboard.kinoa.io; offers to switch integration_type to API if needed. When the user wants to set up Kinoa, start a Kinoa session, configure Kinoa credentials, or wire Kinoa into a project, route via kinoa-api-integration init rather than triggering this skill standalone — the orchestrator owns the sequence (init → player fields → open-session → events) and skipping ahead leads to silently broken integrations.
+description: Internal sub-skill of kinoa-api-integration — do NOT trigger directly. Invoked as the orchestrator's `init` dispatch (Phase 1 of onboarding). Initializes Kinoa credentials: asks for game UUID, game secret, and bearer token; persists to ~/.kinoa/session.env; validates against dashboard.kinoa.io; offers to switch integration_type to API if needed. When the user wants to set up Kinoa, start a Kinoa session, configure Kinoa credentials, or wire Kinoa into a project, route via kinoa-api-integration init rather than triggering this skill standalone — the orchestrator owns the sequence (init → player fields → open-session → events) and skipping ahead leads to silently broken integrations.
 argument-hint: [optional: game_id=… game_secret=… bearer=…]
 allowed-tools: Bash(python *) Bash(cat *) Read AskUserQuestion
 ---
@@ -9,7 +9,31 @@ This skill captures three values, persists them (along with a hardcoded `KINOA_I
 
 **Integration type is always API.** Do not ask the developer; do not offer SDK as an option. Every other Kinoa skill assumes API mode.
 
-## Step 1: Collect three values
+## Step 1: Check for existing credentials
+
+Before asking the developer for anything, look for `~/.kinoa/session.env`. If it exists, parse out the three values and surface them — bearer tokens expire ~24h, so the developer often *wants* to keep `KINOA_GAME_ID` and `KINOA_GAME_SECRET` but rotate the bearer. Asking them every time is annoying; asking once with the current values shown is the right ergonomic.
+
+```bash
+[ -f ~/.kinoa/session.env ] && cat ~/.kinoa/session.env
+```
+
+If the file exists, present the current values via `AskUserQuestion`. **Mask the secret and bearer** so the values don't leak into the Claude transcript in plain text — show the first 4 chars and the last 4 chars only, with `…` in the middle. The `KINOA_GAME_ID` is a UUID and not sensitive; show it in full so the developer can confirm they're pointing at the right project.
+
+Example masked rendering:
+```
+Existing credentials in ~/.kinoa/session.env:
+  KINOA_GAME_ID     = aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
+  KINOA_GAME_SECRET = abcd…wxyz
+  KINOA_BEARER_TOKEN = eyJhbGci…X9ig
+```
+
+Then ask: **Reuse the existing values, or replace them with new ones?**
+- **Reuse** — Continue to Step 2 with the existing values (the dashboard validation step will catch an expired bearer cleanly, in which case loop back here and ask for a fresh token only). No prompt for new values.
+- **Replace** — Drop into the new-values flow below.
+
+If `~/.kinoa/session.env` does **not** exist, skip the question and go straight to "Collect new values" below.
+
+### Collect new values
 
 If `$ARGUMENTS` or the conversation already contains them, reuse those values and skip to Step 2.
 
@@ -20,6 +44,8 @@ Otherwise ask via `AskUserQuestion`:
 - **Bearer token** — "Paste the bearer token from Kinoa → Integration menu."
 
 Free-text values come through the "Other" input on each question.
+
+When the developer just wants to **rotate only the bearer** (Reuse-but-bearer-expired branch above), reuse the existing `KINOA_GAME_ID` and `KINOA_GAME_SECRET` and only ask for the new bearer token.
 
 ## Step 2: Run init
 

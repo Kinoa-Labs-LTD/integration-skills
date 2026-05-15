@@ -24,7 +24,7 @@ The skill works in four phases. Drive each phase to completion with the develope
 
 ---
 
-## Phase A — Discover which events the application emits
+## Phase 1 — Discover which events the application emits
 
 1. Use `Glob` and `Grep` to scan the project for string literals that match the predefined Kinoa event names. To get the predefined names, run:
    ```
@@ -59,7 +59,7 @@ If you can't identify event emission with confidence (no obvious framework, no c
 
 ---
 
-## Phase B — Generate `KinoaEvents`
+## Phase 2 — Generate `KinoaEvents`
 
 1. Propose a path for the new file. Default: same package/directory as the application's existing event-emission code, file name `KinoaEvents.<ext>` matching the language (Java/Kotlin: `KinoaEvents.java`; Python: `kinoa_events.py`; etc.). Confirm with the developer via `AskUserQuestion`.
 2. Generate a class/enum/module that lists every event the app emits, alongside its parameter names and kinds. Mirror the application's naming convention.
@@ -68,9 +68,9 @@ If you can't identify event emission with confidence (no obvious framework, no c
 
 ---
 
-## Phase C — Sync event definitions with Kinoa
+## Phase 3 — Sync event definitions with Kinoa
 
-### C.1 Fetch existing event definitions
+### 3.1 Fetch existing event definitions
 
 ```
 python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-event/kinoa_dashboard_event.py" list-predefined
@@ -84,11 +84,11 @@ Each response is `{ http_status, ok, response: { totalCount, elements: [...] } }
 - `activity_status`: `active` / `inactive` / `unknown`. Reflects whether events are actually being received. Independent from `status` — sometimes events flow in even though the integration definition isn't published yet (a drift state worth surfacing).
 - `game_event_parameters`: list of `{id, name, kind, system, extra?}`. `system: true` params come from Kinoa's predefined schema; `system: false` are operator-added custom params.
 
-### C.2 Compute the diff
+### 3.2 Compute the diff
 
 **Two pre-rules apply before normal classification:**
 
-- **`session_start` handling depends on `SESSION_START_AUTO_FIRES`** (set in Phase A):
+- **`session_start` handling depends on `SESSION_START_AUTO_FIRES`** (set in Phase 1):
   - `True` (app uses the direct `/player/session/start` endpoint) → treat `session_start` as **in app** even if grep didn't find a literal `"session_start"` string. The endpoint emits it server-side. Do not add `session_start` to `KinoaEvents` as a separately-emitted event.
   - `False` (app opens sessions some other way) → treat `session_start` as a **regular event** that the app must emit explicitly after opening a session. Classify it normally (it will typically land in 🟡 Implement+pub if `status == NOT_IMPLEMENTED`).
 - **Highly-recommended events.** The set `{watch_ad, install, payment}` is *load-bearing* for Kinoa's calculated properties (ad-revenue analytics, install attribution, monetization / LTV / ARPU). Without these, large parts of the dashboard's analytics simply don't compute. **Mark them with a leading ⭐ in whatever bucket they fall into**, and tell the developer explicitly: *"Without watch_ad / install / payment, Kinoa cannot calculate ad revenue, install attribution, or monetization metrics. These should be prioritized."*
@@ -108,7 +108,7 @@ For every active **custom (USER)** event whose name is **NOT** in the app → �
 
 For every event the app emits whose name is **not** in any predefined or active custom list → 🔵 **CREATE CUSTOM** — propose a POST to register a new custom event in Kinoa.
 
-### C.3 Present the checklist — this is the final-list confirmation step
+### 3.3 Present the checklist — this is the final-list confirmation step
 
 This is where the developer commits to **the canonical list of events the app will emit**. Show a numbered list grouped by severity, **with `⭐ HIGHLY RECOMMENDED` rows pulled to the top** (regardless of bucket) and a one-line callout explaining why they matter:
 
@@ -130,7 +130,7 @@ This is where the developer commits to **the canonical list of events the app wi
 
 Ask the developer which actions to apply: comma-separated indices, `all`, or `none`. Be explicit that the items they tick (combined with the silent ✅ already-integrated events) form the **final emission contract** — those are the events `KinoaEvents` will list and the events the application is expected to fire at runtime. Anything not ticked stays out of `KinoaEvents`; they can re-run the skill later to add more.
 
-### C.4 Apply approved actions
+### 3.4 Apply approved actions
 
 Execute in order. After each call, read the JSON; if `ok == false`, surface `http_status` and `response`, then ask whether to retry, skip, or stop.
 
@@ -181,7 +181,7 @@ Execute in order. After each call, read the JSON; if `ok == false`, surface `htt
 
 After the loop completes, summarize: how many published, how many implemented+published, how many created, how many failed.
 
-### C.5 Decide the player_state emission strategy
+### 3.5 Decide the player_state emission strategy
 
 Every event the app sends to Kinoa **must include `event.player_state`** — Kinoa relies on it to keep the player record up to date alongside the event itself. Before declaring the integration done, ask the developer how they want to populate it:
 
@@ -213,9 +213,9 @@ If they pick **full**:
 
 The skill does not generate the runtime emission code itself (that belongs to the application's existing event-emission layer), but the comment makes the contract explicit.
 
-### C.6 Generate the sync report
+### 3.6 Generate the sync report
 
-After C.4 applies and C.5 picks the strategy, produce a human-readable HTML report — same idea as the player-fields report, adapted for events. The report is durable evidence of what's wired up and what isn't, and it surfaces critical events prominently so the developer leaves Phase C with a clear picture.
+After 3.4 applies and 3.5 picks the strategy, produce a human-readable HTML report — same idea as the player-fields report, adapted for events. The report is durable evidence of what's wired up and what isn't, and it surfaces critical events prominently so the developer leaves Phase 3 with a clear picture.
 
 The report has a **top critical-events section** plus the standard four buckets:
 
@@ -227,7 +227,7 @@ The report has a **top critical-events section** plus the standard four buckets:
 
 ### Building the JSON
 
-Assemble from data already in hand: `predefined`/`custom` lists from C.1, the canonical app-emission set from Phase A, the actions actually applied in C.4, and the strategy chosen in C.5.
+Assemble from data already in hand: `predefined`/`custom` lists from 3.1, the canonical app-emission set from Phase 1, the actions actually applied in 3.4, and the strategy chosen in 3.5.
 
 Each row carries the **full parameter list** for the event — pass through `game_event_parameters` directly from the dashboard list calls (system + custom together, in their natural order). The script renders them comma-separated as `name:kind`, with enumeration values in parens, e.g. `level:number, place:string, tier:enumeration(bronze,silver,gold)`. Don't pre-format or pre-filter — let the script handle the rendering.
 
@@ -239,7 +239,7 @@ Schema:
 {
   "generated_at":              "<ISO 8601 UTC>",
   "game_id":                   "<KINOA_GAME_ID>",
-  "kinoa_events_path":         "<path written in Phase B>",
+  "kinoa_events_path":         "<path written in Phase 2>",
   "player_state_strategy":     "FULL" | "DIFF",
   "session_start_auto_fires":  true | false,
   "critical_events": [
@@ -265,39 +265,93 @@ Pipe the JSON into the bundled script. Output path: `./kinoa-event-integration-r
 echo '<json>' | python "${CLAUDE_SKILL_DIR}/generate_report.py" --output ./kinoa-event-integration-report-<ts>.html
 ```
 
-The script prints `{"ok": true, "output": "...", "bytes": N}`. Surface the absolute path; tell the developer to open it in a browser. Suggest adding `kinoa-event-integration-report-*.html` to `.gitignore` — it's a local artifact, not source.
+The script prints `{"ok": true, "output": "...", "bytes": N, "opened_in_browser": true|false}`. **The script also auto-opens the file in the developer's default browser** via `webbrowser.open()` — that is the intended UX. If `opened_in_browser` comes back `false` (rare — headless environment, browser not available), surface the absolute path so they can open it manually. Suggest adding `kinoa-event-integration-report-*.html` to `.gitignore` — it's a local artifact, not source.
 
 ### Review loop
 
 After surfacing the report path, ask via `AskUserQuestion` whether the developer wants to integrate more events now. The critical-events callout often nudges them — if `payment` or `watch_ad` is sitting in the red section because they ran out of time, this is the moment to come back and finish.
 
-- **Yes** — re-run C.1, recompute the diff, present a fresh checklist (C.3), apply (C.4), reconfirm strategy (C.5), regenerate the report (C.6). Each report file gets its own timestamp.
-- **No** — proceed to Phase D.
+- **Yes** — re-run 3.1, recompute the diff, present a fresh checklist (3.3), apply (3.4), reconfirm strategy (3.5), regenerate the report (3.6). Each report file gets its own timestamp.
+- **No** — proceed to Phase 4.
 
 Don't loop without asking; the developer might be done.
 
 ---
 
-## Phase D — Test scenario
+## Phase 4 — Integration test in the application's codebase
 
-The honest test is to run the developer's own code that emits the event (same principle as `kinoa-sync-player-fields-integration` Phase D — the app's runtime is the source of truth for whether parameters are shaped right).
+The honest way to verify the events you just published is to **fire them from the application's real code path**, not from a synthetic POST. So in this phase you help the developer write (or extend) an integration test in their own project that exercises the production emission code, then read the event record back from Kinoa to confirm it landed.
 
-1. Pick one event the developer just published or created.
-2. Tell the developer:
-   > "Run your code path that emits `<event_name>`. After it fires, come back and confirm here."
-3. Verify the event was received by Kinoa:
+This is a stronger signal than the dashboard helper could give on its own:
+- It proves the application's emission layer shapes the payload correctly (system params vs custom params, the `event.player_state` strategy picked in 3.5).
+- It proves the session-id wiring from open-session flows through end-to-end.
+- It leaves the team a worked example in their own test suite that they can extend with their own coverage.
+
+A standalone synthetic POST (e.g., `kinoa_send_event.py`) is **only a fallback** for environments where you cannot run the application's tests — see 4.4. Prefer the integration test wherever feasible.
+
+### 4.1 Detect the test framework
+
+Look for project markers to guess the test stack, and read one or two existing test files to mirror their conventions (imports, fixture style, assertion library):
+
+- `pom.xml` / `build.gradle(.kts)` → JUnit (Java / Kotlin), tests under `src/test/...`.
+- `package.json` with `jest` / `vitest` / `mocha` in dependencies → JS/TS test runner.
+- `requirements*.txt` / `pyproject.toml` with `pytest` → pytest, tests under `tests/`.
+- `*.csproj` → xUnit / NUnit.
+- Unity `*.asmdef` files referencing `nunit` → Unity Test Runner.
+
+If multiple stacks exist, ask via `AskUserQuestion` where the developer wants the test placed.
+
+### 4.2 Generate an integration test stub
+
+Create a single test file in the project's existing test directory, in the same package as the application's event-emission code. Keep the stub minimal — **one event, one assertion** — so it's clear what it does and easy for the developer to extend. The skill is generating a worked example, not a full test suite.
+
+The test should:
+
+1. **Build a fixture** — generate a unique `player_id` (e.g., `kinoa_event_test_<short-uuid>`) so test runs don't collide.
+2. **Open a Kinoa session via the application's own session-open path** — not by calling `gate.kinoa.io` directly from the test. Whatever class/function the app uses to start a session, the test should call it. This exercises the real wiring and (in API-mode projects) auto-fires `session_start`.
+3. **Populate `KinoaPlayerState`** — set at least one field to a non-default value via the same storage layer wired in Phase 2.1 (the developer's `PlayerRepository` / state singleton / etc.).
+4. **Emit one of the events published in 3.4** through the application's emission code — pick a meaningful one (preferably a critical event from {`watch_ad`, `install`, `payment`} if any are integrated, otherwise something like `level_up`).
+5. **Read back the event definition from Kinoa** using the dashboard helper to assert `last_event_at` advanced within the last few seconds:
    ```
    python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-event/kinoa_dashboard_event.py" get --event-id <uuid>
    ```
-   - `last_event_at` — should be very recent (within seconds of the test fire).
-   - `activity_status` — typically transitions to `active` once events are flowing.
-4. Optionally also fetch the player's state to confirm any `player_state` updates the event carried:
+6. **Optionally read back the player_state** to confirm the strategy chosen in 3.5 propagated correctly:
    ```
-   python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-player-fields/kinoa_dashboard_player_fields.py" get-player-state --player-id <test_player>
+   python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-player-fields/kinoa_dashboard_player_fields.py" get-player-state --player-id <id>
    ```
-5. Report: ✅ confirmed received OR ❌ not received (recommend re-checking the emission code shapes the body correctly — system params at top of `event_data`, custom params nested under `event_data.custom_params`).
+7. **Print one line to stdout** naming `player_id`, `session_id`, and event name, so the developer can find the record in the Kinoa dashboard if the assertion fails.
 
-If you don't have a way to invoke the app's emission, the skill can do a one-off synthetic send via `kinoa_send_event.py`. Important: when constructing the call, route each parameter using its `system` flag from the event's `game_event_parameters`:
+Skeleton (adapt to the project's framework and language — the exact API of the app's emission code varies):
+
+```java
+// JUnit example — adapt to the project's conventions.
+@Test
+void publishedEventIsReceivedByKinoa() throws Exception {
+    String playerId = "kinoa_event_test_" + UUID.randomUUID().toString().substring(0, 8);
+    KinoaSession session = sessionOpener.openForPlayer(playerId);    // app's session-open code
+    playerRepository.update(p -> p.setLevel(5));                     // touch a real KinoaPlayerState field
+    eventEmitter.emit(KinoaEvents.LEVEL_UP, Map.of("level", 5, "place", "arena"));
+    System.out.printf("emitted: player_id=%s session_id=%s event=level_up%n",
+        playerId, session.getSessionId());
+    awaitEventLandedRecently("level_up");                            // helper hitting kinoa_dashboard_event.py get
+}
+```
+
+The test uses the project's real Kinoa credentials (the same `~/.kinoa/session.env` or the project's existing config-loading path). It hits the same `gate.kinoa.io` endpoints production code will hit.
+
+### 4.3 Run it and verify
+
+Tell the developer to run the test using the project's normal command (`mvn test`, `gradle test`, `npm test`, `pytest`, etc.). They confirm here once it passes — or paste any failure so you can help diagnose. Common failures:
+
+- Test 401s against Kinoa → credentials not loaded in the test JVM/process; check the project's env-loading.
+- Test passes locally but `last_event_at` never updates → event isn't reaching `gate.kinoa.io`; check the app's emission code's URL/headers.
+- `last_event_at` updates but `player_state` lookup is empty → 3.5 strategy not implemented (the `KinoaEvents` file's strategy comment is the contract; emission code must follow it).
+
+### 4.4 Fallback — synthetic send (only when 4.2 is not feasible)
+
+If the developer genuinely cannot run their test framework here (CI-only environment, code not yet buildable, exploratory smoke check), the skill can do a one-off synthetic send via `kinoa_send_event.py`. Treat this as a debug tool, not the Phase 4 test. It proves the *endpoint* works, not that the *application's code* shapes the payload correctly.
+
+Route each parameter using its `system` flag from the event's `game_event_parameters`:
 
 - `system: true` → `--system-param key=value` (lands in `event_data` directly)
 - `system: false` → `--param key=value` (lands in `event_data.custom_params`)
@@ -309,7 +363,7 @@ python "${CLAUDE_SKILL_DIR}/kinoa_send_event.py" \
     --param my_custom=42
 ```
 
-Then re-run the `get` to confirm `last_event_at` updated.
+Then re-run the dashboard `get` to confirm `last_event_at` updated. **Flag clearly to the developer that this is not a substitute for the integration test in 4.2** — schedule the real test for as soon as the project's test runner is available.
 
 ---
 
@@ -347,7 +401,7 @@ Two open-session endpoints exist; only the recommended one auto-fires `session_s
 | `gate.kinoa.io/playerevents/api/v3/player/session/start` (**recommended / default**) | **Yes** — server emits the event in hidden mode on each open-session POST. | 🔄 Publish only — no `KinoaEvents` entry, no emission site. |
 | `gate.kinoa.io/playerevents/api/v3/players/session_start` (legacy — note plural + underscore) | **No** | 🔁 Implement + publish (only if the app doesn't already emit `session_start`) — add to `KinoaEvents`, wire an emission site after the legacy call returns, then publish. |
 
-The decision is made in Phase A. **Default assumption is the recommended endpoint** (`SESSION_START_AUTO_FIRES = True`); the skill only overrides to `False` when grep finds the legacy URL fragment `players/session_start` in the source. `kinoa-open-session` (the debugging helper in this repo) always hits the recommended endpoint, so it consistently demonstrates the auto-fire path.
+The decision is made in Phase 1. **Default assumption is the recommended endpoint** (`SESSION_START_AUTO_FIRES = True`); the skill only overrides to `False` when grep finds the legacy URL fragment `players/session_start` in the source. `kinoa-open-session` (the debugging helper in this repo) always hits the recommended endpoint, so it consistently demonstrates the auto-fire path.
 
 ### Runtime emission contract
 
@@ -375,6 +429,6 @@ Every event the application emits at runtime is a `POST` to `https://gate.kinoa.
 - **Full** — `event.player_state` contains every field of `KinoaPlayerState` on every event. No in-app state tracking required.
 - **Diff** — `event.player_state` contains only fields whose value differs from the last event sent for this player+session. To clear a field, include it with value `null` (Kinoa interprets explicit-`null` as "remove this field"). A field omitted entirely means "unchanged".
 
-The selected strategy is documented at the top of `KinoaEvents` (see Phase C.5).
+The selected strategy is documented at the top of `KinoaEvents` (see Phase 3.5).
 
 For ad-hoc testing from the command line, `kinoa_send_event.py` exposes `--system-param key=value` (top-level `event_data`) and `--param key=value` (nested `event_data.custom_params`) plus `--player-state key=value` (diff-style; the helper does not currently support sending `null` literals — that's a runtime-app concern).

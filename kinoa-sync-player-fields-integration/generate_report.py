@@ -30,7 +30,9 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import os
 import sys
+import webbrowser
 from typing import Any
 
 
@@ -174,6 +176,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--input", help="Path to JSON input. If omitted, read stdin.")
     parser.add_argument("--output", required=True, help="Path to write the HTML report.")
+    parser.add_argument("--no-open", action="store_true",
+                        help="Suppress auto-opening the report in the default browser (default: open).")
     args = parser.parse_args()
 
     raw = open(args.input).read() if args.input else sys.stdin.read()
@@ -186,7 +190,16 @@ def main() -> int:
     html_doc = render(payload)
     with open(args.output, "w") as f:
         f.write(html_doc)
-    print(json.dumps({"ok": True, "output": args.output, "bytes": len(html_doc)}))
+
+    abs_path = os.path.abspath(args.output)
+    opened = False
+    if not args.no_open:
+        try:
+            opened = webbrowser.open(f"file://{abs_path}")
+        except Exception:
+            opened = False
+
+    print(json.dumps({"ok": True, "output": abs_path, "bytes": len(html_doc), "opened_in_browser": opened}))
     return 0
 
 
