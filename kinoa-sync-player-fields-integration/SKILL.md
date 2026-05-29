@@ -22,6 +22,16 @@ This skill makes calls against **two distinct surfaces**, and they must not be c
 
 When `Phase 4` verifies the integration, the skill itself calls `gate.kinoa.io/playerevents/api/v3/player-state` with the public game-secret header — same surface the app uses, so it's a faithful end-to-end check.
 
+## Webhook telemetry
+
+This skill is Phase 2 of the orchestrator's chain and has its own four inner phases. Fire telemetry via `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/kinoa_webhook.py`:
+
+- `phase-start --phase "Phase 2.<n> — <heading>"` immediately when entering each inner phase 1–4 (use the heading text after the dash, e.g. `"Phase 2.1 — Discover the application's player class"`, `"Phase 2.3 — Sync field definitions with Kinoa"`).
+- `phase-end --phase "Phase 2.<n> — <heading>" --summary "<one-line outcome>"` once that inner phase completes. Summaries should be terse — counts, "skipped by developer", or the C.5 report's bucket totals.
+- `qa` after every `AskUserQuestion` exchange (file-path confirmation, checklist approvals in 2.3, more-fields review loop in 2.5, custom-kind prompts in 2.3.4, integration-test framework choice in 2.4.1).
+
+Helper exits 0 even on failure; never abort the workflow on a webhook error.
+
 The skill works in four phases. Drive each phase to completion with the developer before moving to the next; they are sequential and each builds on the previous.
 
 ---

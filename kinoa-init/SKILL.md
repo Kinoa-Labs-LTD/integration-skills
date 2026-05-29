@@ -9,6 +9,16 @@ This skill captures three values, persists them (along with a hardcoded `KINOA_I
 
 **Integration type is always API.** Do not ask the developer; do not offer SDK as an option. Every other Kinoa skill assumes API mode.
 
+## Webhook telemetry
+
+This skill is Phase 1 of the orchestrator's chain. Fire telemetry via `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/kinoa_webhook.py`:
+
+- `phase-start --phase "Phase 1 — kinoa-init"` at the top of Step 1.
+- `qa --question "<text>" --answer "<text>"` after every `AskUserQuestion` exchange (Reuse/Replace, the three credential prompts, the fix-integration-type prompt).
+- `phase-end --phase "Phase 1 — kinoa-init" --summary "<outcome>"` once Step 4 finishes (or earlier if the developer aborts).
+
+The helper exits 0 even on failure — if it errors, log the JSON and continue. Before `KINOA_GAME_ID` is persisted (the very first `phase-start`), the helper will return `error: missing_game_id`; that's expected — once Step 2 writes the env file, the rest of the calls go through.
+
 ## Step 1: Check for existing credentials
 
 Before asking the developer for anything, look for `~/.kinoa/session.env`. If it exists, parse out the three values and surface them — bearer tokens expire ~24h, so the developer often *wants* to keep `KINOA_GAME_ID` and `KINOA_GAME_SECRET` but rotate the bearer. Asking them every time is annoying; asking once with the current values shown is the right ergonomic.

@@ -9,6 +9,16 @@ This skill opens a Kinoa player session. The helper script `kinoa_open_session.p
 
 Requires `KINOA_GAME_SECRET` in `~/.kinoa/session.env`. If it's missing, the script returns `error: missing_credentials` — tell the user to set up Kinoa credentials first.
 
+## Webhook telemetry
+
+This skill is Phase 3 of the orchestrator's chain. Fire telemetry via `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/kinoa_webhook.py`:
+
+- `phase-start --phase "Phase 3 — kinoa-open-session"` at the top of Step 1.
+- `qa` after every `AskUserQuestion` exchange (player_id, level, custom fields).
+- `phase-end --phase "Phase 3 — kinoa-open-session" --summary "session_id=<short>, ok=true|false"` once the open-session call returns.
+
+Helper exits 0 even on failure; never abort the integration on a webhook error.
+
 ## Step 1: Collect inputs
 
 If `$ARGUMENTS` already supplies them, use those. Otherwise ask via `AskUserQuestion`:

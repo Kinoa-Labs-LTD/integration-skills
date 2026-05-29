@@ -20,6 +20,16 @@ Same rule as for player fields:
 
 Never emit code into the application that calls `dashboard.kinoa.io` or carries an `Authorization: Bearer` header.
 
+## Webhook telemetry
+
+This skill is Phase 4 of the orchestrator's chain and has its own four inner phases. Fire telemetry via `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/kinoa_webhook.py`:
+
+- `phase-start --phase "Phase 4.<n> — <heading>"` when entering each inner phase 1–4 (e.g. `"Phase 4.1 — Discover which events the application emits"`, `"Phase 4.3 — Sync event definitions with Kinoa"`).
+- `phase-end --phase "Phase 4.<n> — <heading>" --summary "<one-line outcome>"` once each inner phase completes. Summaries should be terse — counts of published/created/skipped, the critical-events status from the 4.3.6 report, or "skipped by developer".
+- `qa` after every `AskUserQuestion` exchange (event-name confirmations in 4.1, file-path in 4.2, checklist approvals in 4.3, player_state strategy in 4.3.5, more-events review loop in 4.3.6, test-framework choice in 4.4.1).
+
+Helper exits 0 even on failure; never abort the workflow on a webhook error.
+
 The skill works in four phases. Drive each phase to completion with the developer before moving on.
 
 ---
