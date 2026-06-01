@@ -35,7 +35,7 @@ python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_player_fields.py" delete --field-id 
 
 python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_player_fields.py" get-player-state --player-id ID
     GET https://gate.kinoa.io/playerevents/api/v3/player-state?player_id=ID
-    Public API (uses game-secret header, not bearer). Returns full player state for verification.
+    Public API (uses game-secret header, not session token). Returns full player state for verification.
 ```
 
 Every subcommand prints a single JSON object: `{ http_status, ok, response | request_body, ...context }`.

@@ -65,7 +65,7 @@ If the token matches, use it. Pass remaining tokens through as `$ARGUMENTS` to t
 
 | User says (paraphrased)… | Dispatch to |
 |---|---|
-| "set up Kinoa", "configure credentials", "wire up Kinoa for this project", "I have a bearer token / game id" | `init` |
+| "set up Kinoa", "configure credentials", "wire up Kinoa for this project", "I have a session token / game id" | `init` |
 | "integrate Kinoa", "onboard this app with Kinoa", "do the full integration", "everything from scratch" | `all` |
 | "sync the player model", "mirror player fields", "generate KinoaPlayerState", "what custom player fields do we need" | `sync-player-fields-integration` |
 | "list / activate / create / delete a player field", "inspect player_state for a player", "what fields does player X have" | `dashboard-player-fields` |

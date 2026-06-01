@@ -59,7 +59,7 @@ Two distinct API surfaces. **Mixing them up is a security mistake.**
 | **Admin** | `dashboard.kinoa.io` | `Authorization: Bearer <token>` + `Game: <uuid>` + `Game-Id: <uuid>` (both same UUID) | Skill only — `kinoa-init` and `kinoa-dashboard-*` helpers. |
 | **Runtime / public** | `gate.kinoa.io`, `pevents.kinoa.io`, `featureset.kinoa.io` | `game: <game_secret>` (no bearer) | App runtime code. [`kinoa-api-integration/references/postman-collection.json`](kinoa-api-integration/references/postman-collection.json) is the canonical spec — public hosts only. |
 
-**Hard rule when generating code into the application** (`KinoaPlayerState`, `KinoaEvents`, etc.): never emit code that calls `dashboard.kinoa.io` or carries `Authorization: Bearer`. The bearer is admin-tier and must not ship in app binaries, configs, or runtime calls. Generated artifacts are **pure data classes** — no API calls embedded. The app's own emission code (or new code following the Postman collection) handles runtime calls with the game-secret header.
+**Hard rule when generating code into the application** (`KinoaPlayerState`, `KinoaEvents`, etc.): never emit code that calls `dashboard.kinoa.io` or carries `Authorization: Bearer`. The session token is admin-tier and must not ship in app binaries, configs, or runtime calls. Generated artifacts are **pure data classes** — no API calls embedded. The app's own emission code (or new code following the Postman collection) handles runtime calls with the game-secret header.
 
 ---
 
@@ -99,7 +99,7 @@ KINOA_LAST_PLAYER_ID    = <set by kinoa-open-session>
 KINOA_LAST_SESSION_ID   = <set by kinoa-open-session>
 ```
 
-Bearer tokens expire (~24h JWT). On a 401 from any admin endpoint, ask the user to grab a fresh bearer from the Kinoa dashboard → Integration menu and re-run `/kinoa-init`.
+Session tokens expire (~24h JWT). On a 401 from any admin endpoint, ask the user to grab a fresh session token from the Kinoa dashboard → Integration menu and re-run `/kinoa-init`.
 
 ---
 

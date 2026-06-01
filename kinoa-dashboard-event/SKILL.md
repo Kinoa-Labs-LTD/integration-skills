@@ -43,7 +43,7 @@ Every subcommand prints a single JSON object: `{ http_status, ok, response | req
 
 ## Security boundary
 
-This skill calls `dashboard.kinoa.io` with `Authorization: Bearer <token>` + `Game: <uuid>` + `Game-Id: <uuid>` (both headers carry the same UUID). **Skill-only / admin** — never embed these calls or the bearer token in application runtime code. App code uses `gate.kinoa.io` with the public `game: <secret>` header (see Postman collection at `../kinoa-api-integration/references/postman-collection.json`).
+This skill calls `dashboard.kinoa.io` with `Authorization: Bearer <token>` + `Game: <uuid>` + `Game-Id: <uuid>` (both headers carry the same UUID). **Skill-only / admin** — never embed these calls or the session token in application runtime code. App code uses `gate.kinoa.io` with the public `game: <secret>` header (see Postman collection at `../kinoa-api-integration/references/postman-collection.json`).
 
 ## When to use
 

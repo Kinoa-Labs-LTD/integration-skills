@@ -63,7 +63,7 @@ These skills talk to **two distinct surfaces**. Mixing them up is a security mis
 
 | Surface | Host | Auth header | Who calls it |
 |---|---|---|---|
-| **Admin / dashboard** | `dashboard.kinoa.io` | `Authorization: Bearer <token>` + `Game: <uuid>` + `Game-Id: <uuid>` (both headers carry the same UUID) | **Skill only**, during integration setup. Used by `kinoa-init` (validate project) and the dashboard helpers (`kinoa-dashboard-player-fields`, `kinoa-dashboard-event`) which the workflow skills (`kinoa-sync-*-integration`) delegate to. The bearer token is admin-tier and must never ship in application binaries, configs, or runtime calls. |
+| **Admin / dashboard** | `dashboard.kinoa.io` | `Authorization: Bearer <token>` + `Game: <uuid>` + `Game-Id: <uuid>` (both headers carry the same UUID) | **Skill only**, during integration setup. Used by `kinoa-init` (validate project) and the dashboard helpers (`kinoa-dashboard-player-fields`, `kinoa-dashboard-event`) which the workflow skills (`kinoa-sync-*-integration`) delegate to. The session token is admin-tier and must never ship in application binaries, configs, or runtime calls. |
 | **Public Player Events API** | `gate.kinoa.io`, `pevents.kinoa.io`, `featureset.kinoa.io` | `game: <game_secret>` (no bearer) | **Application runtime code.** Open session, send events, read player state. The Postman collection at `references/postman-collection.json` is the canonical spec — it deliberately contains only public hosts. |
 
 When `kinoa-sync-player-fields-integration` writes code into your application (e.g., `KinoaPlayerState`), or `kinoa-sync-event-integration` writes `KinoaEvents`, the result is a pure data class. The application's existing integration code is responsible for the runtime API calls using the game-secret header.
@@ -76,7 +76,7 @@ Both tokens come from the **Integration** screen in the Kinoa dashboard.
 2. In the left sidebar, click **Integration**.
 3. Copy:
    - **Game secret** — used as the `game` header on the public Player Events API. Identifies your game to `gate.kinoa.io`.
-   - **Bearer token** — used as `Authorization: Bearer …` against `dashboard.kinoa.io/gamemetaapi/api/game-settings`. Identifies your project for admin actions.
+   - **Session token** — used as `Authorization: Bearer …` against `dashboard.kinoa.io/gamemetaapi/api/game-settings`. Identifies your project for admin actions.
 
 Keep both private — they grant write access to your Kinoa project.
 
@@ -94,7 +94,7 @@ The skill prompts for three values (integration type is always `API` — hardcod
 
 - **game ID** — internal game UUID (from the Kinoa dashboard URL when viewing the project).
 - **game secret** — public Player Events API auth.
-- **bearer token** — admin API auth.
+- **session token** — admin API auth.
 
 It then validates them by calling `GET dashboard.kinoa.io/gamemetaapi/api/game-settings`. On success it writes the values to `~/.kinoa/session.env` (mode `0600`); every other Kinoa skill (`/kinoa-sync-player-fields-integration`, `/kinoa-dashboard-player-fields`, `/kinoa-open-session`, `/kinoa-sync-event-integration`, `/kinoa-dashboard-event`) reads from that file automatically.
 

@@ -5,7 +5,7 @@ argument-hint: [optional: app source path]
 allowed-tools: Bash(python *) Bash(cat *) Read Write Edit Glob Grep AskUserQuestion
 ---
 
-This skill is the **integration / code-side** half of the player-fields pair. It owns the discover → generate → diff → apply → verify workflow but does no admin API calls itself; for every admin call it delegates to the sibling skill `kinoa-dashboard-player-fields` (whose helper `kinoa_dashboard_player_fields.py` wraps the bearer-token API on `dashboard.kinoa.io` plus the public `get-player-state` read on `gate.kinoa.io`). When both skills are installed as siblings under `~/.claude/skills/`, the relative path `${CLAUDE_SKILL_DIR}/../kinoa-dashboard-player-fields/kinoa_dashboard_player_fields.py` resolves correctly.
+This skill is the **integration / code-side** half of the player-fields pair. It owns the discover → generate → diff → apply → verify workflow but does no admin API calls itself; for every admin call it delegates to the sibling skill `kinoa-dashboard-player-fields` (whose helper `kinoa_dashboard_player_fields.py` wraps the session-token API on `dashboard.kinoa.io` plus the public `get-player-state` read on `gate.kinoa.io`). When both skills are installed as siblings under `~/.claude/skills/`, the relative path `${CLAUDE_SKILL_DIR}/../kinoa-dashboard-player-fields/kinoa_dashboard_player_fields.py` resolves correctly.
 
 Requires `KINOA_BEARER_TOKEN`, `KINOA_GAME_ID`, and `KINOA_GAME_SECRET` in `~/.kinoa/session.env`. If any are missing, the dashboard helper returns `error: missing_credentials` — tell the user to set up Kinoa credentials first.
 
@@ -18,7 +18,7 @@ This skill makes calls against **two distinct surfaces**, and they must not be c
 | **Admin / dashboard API** | `dashboard.kinoa.io` | `Authorization: Bearer <token>` + `Game: <uuid>` + `Game-Id: <uuid>` (both headers carry the same UUID) | **Skill only.** Delegated to `kinoa-dashboard-player-fields` (CLI: `python ../kinoa-dashboard-player-fields/kinoa_dashboard_player_fields.py ...`) for list, activate, create, delete, plus the public-API `get-player-state` read used during verification. |
 | **Public Player Events API** | `gate.kinoa.io`, `pevents.kinoa.io`, `featureset.kinoa.io` | `game: <game_secret>` (no bearer) | **App code.** Runtime calls from the application — open session, send events, fetch player state, etc. The Postman collection at `../kinoa-api-integration/references/postman-collection.json` is the canonical spec. |
 
-**Hard rule when generating code into the application:** never emit code that calls `dashboard.kinoa.io` or sends an `Authorization: Bearer` header. The bearer token is admin-tier and must not ship in application binaries, configs, or runtime calls. If a Phase asks you to add code to the app, only use endpoints from the Postman collection (game-secret header).
+**Hard rule when generating code into the application:** never emit code that calls `dashboard.kinoa.io` or sends an `Authorization: Bearer` header. The session token is admin-tier and must not ship in application binaries, configs, or runtime calls. If a Phase asks you to add code to the app, only use endpoints from the Postman collection (game-secret header).
 
 When `Phase 4` verifies the integration, the skill itself calls `gate.kinoa.io/playerevents/api/v3/player-state` with the public game-secret header — same surface the app uses, so it's a faithful end-to-end check.
 
@@ -59,7 +59,7 @@ If you cannot identify a single player class with confidence, stop and ask the d
    - **Empty body otherwise** — fields will be added in Phase 3 as the developer approves them.
 3. Save the file with `Write`.
 
-`KinoaPlayerState` is a **pure data class** — fields only, no methods that call Kinoa. The application's existing integration code (or new code following the Postman collection) is responsible for serializing this class onto session-start / sync-event payloads using the public `gate.kinoa.io` endpoints with the game-secret header. Do not embed admin/bearer endpoints in this class or anywhere else in app code.
+`KinoaPlayerState` is a **pure data class** — fields only, no methods that call Kinoa. The application's existing integration code (or new code following the Postman collection) is responsible for serializing this class onto session-start / sync-event payloads using the public `gate.kinoa.io` endpoints with the game-secret header. Do not embed admin / session-token endpoints in this class or anywhere else in app code.
 
 ### 2.1 Wire up storage on the game side
 
@@ -277,7 +277,7 @@ If anything is missing, recommend re-running Phase 3 to verify activations, re-c
   - `DELETE https://dashboard.kinoa.io/gamemetaapi/api/player_fields/<id>` — soft delete (sets `state: deleted`, returns 204).
   - `GET    https://gate.kinoa.io/playerevents/api/v3/player-state?player_id=<id>` — fetch full state.
 - Headers:
-  - `dashboard.kinoa.io/gamemetaapi/...` → `Authorization: Bearer <bearer>` + `Game: <uuid>` + `Game-Id: <uuid>` (both headers carry the same game UUID).
+  - `dashboard.kinoa.io/gamemetaapi/...` → `Authorization: Bearer <session_token>` + `Game: <uuid>` + `Game-Id: <uuid>` (both headers carry the same game UUID).
   - `gate.kinoa.io/playerevents/...` → `game: <game_secret>`.
 - Allowed kinds for custom field creation: `number`, `boolean`, `string`, `enumeration`, `version`.
 - Predefined fields may use additional kinds (`date`, `long_string`); the skill reads them but does not create new fields with those kinds.
