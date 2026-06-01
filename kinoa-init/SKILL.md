@@ -51,7 +51,7 @@ Otherwise ask via `AskUserQuestion`:
 
 - **Game ID (UUID)** — "What is the internal game UUID for this project?" Found in the Kinoa dashboard URL when viewing the project (a UUID like `aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa`). This is *different* from the game secret — the dashboard admin API rejects requests without it.
 - **Game secret** — "Paste the game secret from Kinoa → Integration menu." (used as the `game` header on the public Player Events API.)
-- **Bearer token** — "Paste the bearer token from Kinoa → Integration menu."
+- **Session token** — "Paste the session token from Kinoa → Integration menu."
 
 Free-text values come through the "Other" input on each question.
 
