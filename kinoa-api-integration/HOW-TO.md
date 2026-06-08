@@ -23,27 +23,38 @@ integration-skills/
 ├── kinoa-sync-event-integration/                ← Phase 4 workflow (with local runtime helper)
 │   ├── SKILL.md   ← delegates admin calls to kinoa-dashboard-event
 │   └── kinoa_send_event.py   ← runtime test helper used by Phase 4 (mirrors what the app does at runtime)
-└── kinoa-dashboard-event/                       ← admin CLI wrapper for Phase 4
+├── kinoa-dashboard-event/                       ← admin CLI wrapper for Phase 4
+│   ├── SKILL.md
+│   └── kinoa_dashboard_event.py
+├── kinoa-sync-feature-settings-integration/     ← Phase 5 workflow (optional; with HTML report)
+│   ├── SKILL.md   ← delegates admin calls to kinoa-dashboard-feature-settings, CSV inference to kinoa-csv-schema-infer
+│   └── generate_report.py
+├── kinoa-dashboard-feature-settings/            ← admin CLI wrapper for Phase 5 (schemas/settings/configs + runtime get-config)
+│   ├── SKILL.md
+│   └── kinoa_dashboard_feature_settings.py
+└── kinoa-csv-schema-infer/                       ← utility — CSV → feature-schema type inference (no API)
     ├── SKILL.md
-    └── kinoa_dashboard_event.py
+    └── kinoa_csv_schema_infer.py
 ```
 
 The split between `*-integration` (workflow) and `kinoa-dashboard-*` (admin CLI wrapper) keeps each role single-purpose: the integration skill owns the discover→diff→apply prompts, the dashboard skill owns one HTTP call per subcommand. Integration skills delegate admin calls via `${CLAUDE_SKILL_DIR}/../kinoa-dashboard-*/...`, so both must be installed as siblings.
 
-Each sub-skill ships its own Python helper and has no cross-skill imports — you can install one sub-skill in isolation if a future skill only needs that one piece. The orchestrator skill bundles the four together for convenience but is not required for the sub-skills to work on their own.
+Each sub-skill ships its own Python helper and has no cross-skill imports — you can install one sub-skill in isolation if a future skill only needs that one piece. The orchestrator skill bundles them together for convenience but is not required for the sub-skills to work on their own.
 
-## Install all four skills globally
+## Install all skills globally
 
 From the repo root:
 
 ```bash
 mkdir -p ~/.claude/skills
 for d in /Users/illia/IdeaProjects/kinoa-github/integration-skills/*/; do
-  ln -sf "$d" ~/.claude/skills/$(basename "$d")
+  base=$(basename "$d")
+  case "$base" in *-workspace) continue ;; esac
+  ln -sfn "$d" ~/.claude/skills/"$base"
 done
 ```
 
-Adjust the source path if your checkout lives elsewhere. Restart Claude Code; the seven skills become available as slash commands in any project: `/kinoa-api-integration`, `/kinoa-init`, `/kinoa-sync-player-fields-integration`, `/kinoa-dashboard-player-fields`, `/kinoa-open-session`, `/kinoa-sync-event-integration`, `/kinoa-dashboard-event`.
+Adjust the source path if your checkout lives elsewhere. Restart Claude Code; the ten skills become available as slash commands in any project: `/kinoa-api-integration`, `/kinoa-init`, `/kinoa-sync-player-fields-integration`, `/kinoa-dashboard-player-fields`, `/kinoa-open-session`, `/kinoa-sync-event-integration`, `/kinoa-dashboard-event`, `/kinoa-sync-feature-settings-integration`, `/kinoa-dashboard-feature-settings`, `/kinoa-csv-schema-infer`.
 
 To verify:
 

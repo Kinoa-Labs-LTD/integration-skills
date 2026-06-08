@@ -19,12 +19,13 @@ Restart Claude Code. Walkthrough: [`kinoa-api-integration/HOW-TO.md`](kinoa-api-
 
 ## Architecture
 
-Player-fields and events each split along two axes — a workflow skill (`kinoa-sync-*-integration`) that drives discover → diff → apply → verify but makes no API calls, and a dashboard helper (`kinoa-dashboard-*`) that's a pure admin-API CLI wrapper. Workflows delegate every admin call via `${CLAUDE_SKILL_DIR}/../kinoa-dashboard-<X>/kinoa_dashboard_<X>.py`; siblings must be co-installed.
+Player-fields, events, and feature-settings each split along two axes — a workflow skill (`kinoa-sync-*-integration`) that drives discover → generate → sync → verify but makes no API calls, and a dashboard helper (`kinoa-dashboard-<X>`) that's a pure admin-API CLI wrapper. Workflows delegate every admin call via `${CLAUDE_SKILL_DIR}/../kinoa-dashboard-<X>/kinoa_dashboard_<X>.py`; siblings must be co-installed.
 
-Plus three standalone pieces:
+Plus standalone pieces:
 
 - `kinoa-init` — credential capture + project validation.
 - `kinoa-open-session` — runtime helper mirroring `POST /player/session/start` (auto-fires `session_start` server-side).
+- `kinoa-csv-schema-infer` — pure-parser utility turning a CSV into a feature-schema (used by the feature-settings workflow; no API calls).
 - `kinoa-api-integration` — orchestrator dispatching `/kinoa-api-integration <subcommand>` (or `all` for end-to-end).
 
 ```
@@ -34,9 +35,12 @@ kinoa-dashboard-player-fields             (Phase 2 — admin CLI) ─┘ delegat
 kinoa-open-session                        (Phase 3 — runtime helper)
 kinoa-sync-event-integration              (Phase 4 — workflow)  ─┐
 kinoa-dashboard-event                     (Phase 4 — admin CLI) ─┘ delegates
+kinoa-sync-feature-settings-integration   (Phase 5 — workflow)  ─┐ delegates (admin)
+kinoa-dashboard-feature-settings          (Phase 5 — admin CLI) ─┘
+kinoa-csv-schema-infer                     (Phase 5 — utility, no API) ← also delegated to by Phase 5
 kinoa-api-integration                     (orchestrator)
 
-**Phase numbers:** Outer phases (1 → 4) name the orchestrator's chain (init / player-fields / open-session / events). Each workflow skill *also* has its own internal phases numbered 1 → 4 (Discover → Generate → Sync → Test), with sub-steps written `<phase>.<step>` (e.g., `3.5`, `4.2`). Always refer to phases by number, never by letter.
+**Phase numbers:** Outer phases (1 → 5) name the orchestrator's chain (init / player-fields / open-session / events / feature-settings; Phase 5 optional). Each workflow skill *also* has its own internal phases numbered 1 → 4 (Discover → Generate → Sync → Test/Verify), with sub-steps written `<phase>.<step>` (e.g., `3.5`, `5.5.2`). Always refer to phases by number, never by letter.
 ```
 
 ## Typical integration flow
@@ -45,8 +49,9 @@ kinoa-api-integration                     (orchestrator)
 2. `/kinoa-sync-player-fields-integration` — generate `KinoaPlayerState`, diff vs Kinoa, apply.
 3. `/kinoa-open-session` — verify the runtime session-open call.
 4. `/kinoa-sync-event-integration` — generate `KinoaEvents`, drive publishes/creations, run Phase 4.
+5. `/kinoa-sync-feature-settings-integration` *(optional)* — build/activate a schema (reuse or infer from CSV), create a setting + test config, generate a `FeatureSettingsFacade`, verify a player resolves the config at runtime.
 
-Dashboard helpers aren't usually invoked directly during a fresh integration — workflows delegate. Use them directly for one-off admin tasks (e.g., "publish event X" or "delete a stale custom field").
+Dashboard helpers aren't usually invoked directly during a fresh integration — workflows delegate. Use them directly for one-off admin tasks (e.g., "publish event X", "delete a stale custom field", "publish a configuration").
 
 ---
 
@@ -56,8 +61,8 @@ Two distinct API surfaces. **Mixing them up is a security mistake.**
 
 | Surface | Host | Auth | Caller |
 |---|---|---|---|
-| **Admin** | `dashboard.kinoa.io` | `Authorization: Bearer <token>` + `Game: <uuid>` + `Game-Id: <uuid>` (both same UUID) | Skill only — `kinoa-init` and `kinoa-dashboard-*` helpers. |
-| **Runtime / public** | `gate.kinoa.io`, `pevents.kinoa.io`, `featureset.kinoa.io` | `game: <game_secret>` (no bearer) | App runtime code. [`kinoa-api-integration/references/postman-collection.json`](kinoa-api-integration/references/postman-collection.json) is the canonical spec — public hosts only. |
+| **Admin** | `dashboard.kinoa.io` (`/gamemetaapi`, `/featuresettingsapi`) | `Authorization: Bearer <token>` + `Game: <uuid>` + `Game-Id: <uuid>` (both same UUID) | Skill only — `kinoa-init` and the `kinoa-dashboard-*` helpers. |
+| **Runtime / public** | `gate.kinoa.io`, `pevents.kinoa.io`, `featureset.kinoa.io` | `game: <game_secret>` (no bearer) | App runtime code (incl. the generated `FeatureSettingsFacade`, which calls `featureset.kinoa.io`). [`kinoa-api-integration/references/postman-collection.json`](kinoa-api-integration/references/postman-collection.json) is the canonical spec — public hosts only. |
 
 **Hard rule when generating code into the application** (`KinoaPlayerState`, `KinoaEvents`, etc.): never emit code that calls `dashboard.kinoa.io` or carries `Authorization: Bearer`. The session token is admin-tier and must not ship in app binaries, configs, or runtime calls. Generated artifacts are **pure data classes** — no API calls embedded. The app's own emission code (or new code following the Postman collection) handles runtime calls with the game-secret header.
 
@@ -82,7 +87,7 @@ allowed-tools: Bash(python *) Bash(cat *) Read Write Edit Glob Grep AskUserQuest
 
 **Workflow skills follow Phase 1 → 2 → 3 → 4**: 1 discover (Glob/Grep), 2 generate empty data class, 3 sync (3.1 fetch defs, 3.2 diff, 3.3 checklist for approval, 3.4 apply, 3.5 player_state strategy [events only], 3.6 generate HTML integration report), 4 integration test in the application's codebase.
 
-**Adding a new sub-skill**: create the folder, decide flavor (workflow / dashboard helper / runtime helper / setup), update the orchestrator's dispatcher table, update [`HOW-TO.md`](kinoa-api-integration/HOW-TO.md) and [`evals.json`](kinoa-api-integration/evals/evals.json), re-run the install loop. Runtime helpers belong **inside** the workflow skill that uses them, not as standalone slash commands (per the consolidation that folded `kinoa-send-event` into `kinoa-sync-event-integration`).
+**Adding a new sub-skill**: create the folder, decide flavor (workflow / dashboard helper / utility / runtime helper / setup), update the orchestrator's dispatcher table, update [`HOW-TO.md`](kinoa-api-integration/HOW-TO.md) and [`evals.json`](kinoa-api-integration/evals/evals.json), re-run the install loop. Runtime helpers belong **inside** the workflow skill that uses them, not as standalone slash commands (per the consolidation that folded `kinoa-send-event` into `kinoa-sync-event-integration`).
 
 ---
 
@@ -140,6 +145,8 @@ The chosen strategy is documented as a header comment in the generated `KinoaEve
 ```
 
 Predefined params (Kinoa marks `system: true`) sit at the top of `event_data`. Operator-added params (`system: false`) nest under `event_data.custom_params`. The local `kinoa_send_event.py` helper (Phase 4) exposes both via `--system-param key=value` and `--param key=value`.
+
+**Feature-settings (Phase 5) — three nested resources.** A **schema** (typed columns; status `DRAFT → ACTIVE` via `POST /schemas/{id}/publish`) owns **versions** (numbered `"1"`, `"2"`, …; newest = largest number — used by the `latest-version` helper). A **setting** binds a runtime `key` to one `schemaId` (no version, no status). A **configuration** holds the data rows for one schema version under a setting and has its own lifecycle: **`DRAFT → IN_REVIEW` (PATCH `/status`, `submit-config`) → `SCHEDULED` (`POST /configurations/{id}/publish`) → auto-`ACTIVE`** once the start time passes. A config must carry one `tableColumn` per schema field (the `create-config` helper builds these from the schema) and must be `--default` or carry segmentation to leave DRAFT. At runtime the app fetches by **setting key + schema version number** (version is required) at `POST featureset.kinoa.io/features-configurations` (response `settings[].status` ∈ `OK / KEY_NOT_FOUND / VERSION_NOT_FOUND / DEFAULT_NOT_FOUND`); expect a brief propagation lag after publish. The Phase 5 default visibility path is **`create-config --default` → submit → publish** (any player with `getDefault:true` resolves it; `mark-as-default` only promotes an already-published config). The generated `FeatureSettingsFacade` is the only generated artifact that *does* make a (runtime, game-secret) API call — never a `dashboard.kinoa.io`/bearer call. Column types: `integer, number, long, boolean, string, long_string, bundle_key, date, enumeration, version, object`.
 
 ---
 
