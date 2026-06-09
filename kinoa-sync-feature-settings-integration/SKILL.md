@@ -175,22 +175,48 @@ the rest of the app calls, e.g. `featureSettings.get("BoostersConfig")`.
    `https://featureset.kinoa.io/features-configurations` with header
    `game: <game_secret>` and body:
    ```json
-   { "settings": [ { "key": "<settingKey>", "version": "<n>", "getDefault": true } ],
+   { "settings": [ { "key": "<settingKey>", "version": "<n>", "getDefault": false,
+                     "checksums": [ "<last-known-checksum-or-omitted>" ] } ],
      "playerId": "<playerId>" }
    ```
-   It parses the response `settings[0]` → `{ status, configurationName, data: [ {col: value} ], … }`
-   and returns the `data` rows (or an empty/typed result when `status != "OK"`).
-   Expose a small, clear surface, e.g.:
-   - `get(settingKey, playerId)` → list of row objects (or a typed model)
-   - a typed row record mirroring the schema fields (name + Kinoa type → language type)
-     so callers get `row.reward()` not `row.get("reward")`.
-3. **Keep config out of the binary.** The game secret comes from the app's
+   - **`getDefault` is `false`** — that is normal client usage; a published default
+     config still resolves. Don't send `true`.
+   - It parses the response `settings[0]` → `{ status, configurationName, data: [ {col: value} ], checksum, … }`
+     and returns the `data` rows (or an empty/typed result when `status != "OK"`).
+   - Expose a small, clear surface, e.g. `get(settingKey, playerId)` → list of typed
+     row records (a record mirroring the schema fields, name + Kinoa type → language
+     type) so callers get `row.reward()` not `row.get("reward")`.
+3. **Checksum caching — this is the point of the facade, not an extra.** The
+   facade keeps a client-side cache per `(settingKey, version)` of the last
+   `{checksum, rows}` it received (in memory, or persisted like the player-state
+   store from Phase 2). On each call:
+   - send the cached `checksum` in the request's `checksums` (omit on first call);
+   - the response returns **only the settings whose checksum CHANGED**. A setting
+     that's unchanged is **absent** from `settings[]` — for it, return the cached
+     rows. A present setting carries new `data` + a new `checksum`: update the cache
+     and return the new rows.
+   This makes repeat fetches cheap (no payload when nothing changed) and is the
+   contract the backend is built around — implement it, don't just fetch fresh
+   every time. Sketch:
+   ```
+   resolve(key, version, playerId):
+     cached = cache[(key, version)]              # {checksum, rows} or null
+     body = { settings: [ { key, version, getDefault: false,
+                            checksums: cached ? [cached.checksum] : [] } ],
+              playerId }
+     resp = POST featureset.kinoa.io/features-configurations (game header)
+     s = resp.settings.firstWhere(key, version)  # may be ABSENT if unchanged
+     if s == null or s.status != "OK": return cached?.rows ?? emptyTyped()
+     cache[(key, version)] = { checksum: s.checksum, rows: parse(s.data) }
+     return cache[(key, version)].rows
+   ```
+4. **Keep config out of the binary.** The game secret comes from the app's
    existing config/secret mechanism (the same place open-session/events read it) —
    **do not** hardcode it. Read the secret from wherever the app already keeps it.
-4. **Map types** schema→language: `integer/long`→int/long, `number`→double/float,
+5. **Map types** schema→language: `integer/long`→int/long, `number`→double/float,
    `boolean`→bool, `string/long_string/version/date/bundle_key`→string,
    `object`→a parsed JSON object/map. Document any lossy mapping in a comment.
-5. Save with `Write`. The facade is runtime code — pure of any admin/bearer call.
+6. Save with `Write`. The facade is runtime code — pure of any admin/bearer call.
 
 ---
 
@@ -295,12 +321,21 @@ HTTP mocked.
 ### 5.5.1 Live smoke check
 
 Use the real player from open-session (`KINOA_LAST_PLAYER_ID`; mint a fresh UUID
-if absent — with a default config either resolves):
+if absent — a published default config resolves for any player):
 ```
-python "$H" get-config --setting-key <RuntimeKey> --version <n> --player-id <player_id> --get-default
+python "$H" get-config --setting-key <RuntimeKey> --version <n> --player-id <player_id>
 ```
-Always pass `--version` — omitting it yields `VERSION_NOT_FOUND`. Confirm
-`response.settings[0].status == "OK"` and `data` carries the rows.
+Always pass `--version` — omitting it yields `VERSION_NOT_FOUND`. Do **not** pass
+`--get-default` (getDefault is false in normal use). Confirm
+`response.settings[0].status == "OK"`, `data` carries the rows, and note the
+returned `checksum`. Then prove the checksum delta — repeat the call passing that
+checksum:
+```
+python "$H" get-config --setting-key <RuntimeKey> --version <n> --player-id <player_id> --checksum <checksum>
+```
+Since nothing changed, the setting should come back unchanged (absent from
+`settings[]`, or returned with no fresh data) — that's the caching path the facade
+relies on.
 
 **Expect a brief propagation lag.** A freshly published config can take a few
 seconds before the runtime serves it — the first `get-config` may return
@@ -334,23 +369,38 @@ Generate **one** focused test on the `FeatureSettingsFacade` that:
 3. **Asserts** the facade parsed the rows into the typed model — at least one field
    value equals what the mock returned (e.g. `assertEquals(2.5, rows.get(0).reward())`).
    Also assert the request the facade sent carried the `game` header and the right
-   `{key, version, playerId}` body — that's what2 proves the facade builds the call
-   correctly.
-4. **Prints one line** with the setting key + player id so a failure is traceable.
+   `{key, version, playerId}` body with `getDefault:false` — that proves the facade
+   builds the call correctly.
+4. **Covers the checksum cache** — enqueue a second response in which the setting
+   is unchanged (absent from `settings[]`, the real "nothing changed" shape), call
+   the facade again, and assert it (a) sent the stored `checksum` in the second
+   request's `checksums`, and (b) still returned the cached rows without fresh data.
+   This is the behavior the backend is built around, so it's worth pinning.
+5. **Prints one line** with the setting key + player id so a failure is traceable.
 
 Skeleton (adapt to the project's framework/language):
 ```java
 // JUnit + MockWebServer example — adapt to the project's conventions.
 @Test
-void facadeResolvesConfigForPlayer() throws Exception {
+void facadeResolvesConfigForPlayerAndCachesByChecksum() throws Exception {
+    // 1st fetch: full config + a checksum
     server.enqueue(new MockResponse().setBody("""
-      {"settings":[{"request":{"key":"BoostersConfig"},"status":"OK",
-        "configurationName":"v1 defaults","data":[{"id":1,"reward":2.5}]}]}"""));
+      {"settings":[{"request":{"key":"BoostersConfig","version":"1"},"status":"OK",
+        "configurationName":"v1 defaults","data":[{"id":1,"reward":2.5}],"checksum":"abc123"}]}"""));
+    // 2nd fetch: unchanged → setting omitted from settings[]
+    server.enqueue(new MockResponse().setBody("""{"settings":[]}"""));
+
     var facade = new FeatureSettingsFacade(server.url("/").toString(), GAME_SECRET);
-    List<BoostersRow> rows = facade.get("BoostersConfig", "player-123");
-    assertEquals(2.5, rows.get(0).reward());
-    var sent = server.takeRequest();
-    assertEquals("game", /* header present */ , sent.getHeader("game") != null);
+
+    List<BoostersRow> first = facade.get("BoostersConfig", "player-123");
+    assertEquals(2.5, first.get(0).reward());
+    var req1 = server.takeRequest();
+    assertNotNull(req1.getHeader("game"));               // game-secret auth, not bearer
+
+    List<BoostersRow> second = facade.get("BoostersConfig", "player-123");
+    assertEquals(2.5, second.get(0).reward());           // served from cache, unchanged
+    var req2 = server.takeRequest();
+    assertTrue(req2.getBody().readUtf8().contains("abc123"));  // sent the stored checksum
 }
 ```
 
@@ -384,7 +434,7 @@ Admin (`https://dashboard.kinoa.io/featuresettingsapi`):
 - `PATCH /configurations/{id}/mark-as-default` (promote a published config), `POST /configurations/{id}/test-players`, `GET /configurations/{id}/test/{playerId}` — scoped visibility / admin resolve.
 
 Runtime (`https://featureset.kinoa.io`, public game-secret auth — the facade + verify):
-- `POST /features-configurations` — body `{settings:[{key,version,getDefault}], playerId}`; response `settings[].status` ∈ `OK / KEY_NOT_FOUND / VERSION_NOT_FOUND / DEFAULT_NOT_FOUND`, with `data` rows.
+- `POST /features-configurations` — body `{settings:[{key,version,getDefault:false,checksums:[…]}], playerId}`; response `settings[].status` ∈ `OK / KEY_NOT_FOUND / VERSION_NOT_FOUND / DEFAULT_NOT_FOUND`, with `data` rows + a `checksum`. Send the client's held checksums; only settings whose checksum changed come back (unchanged ones are omitted → reuse the cache). `getDefault` is false in normal use.
 
 Schema column types: `integer, number, long, boolean, string, long_string,
 bundle_key, date, enumeration, version, object`.

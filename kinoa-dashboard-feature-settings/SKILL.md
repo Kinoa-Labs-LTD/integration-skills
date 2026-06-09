@@ -110,7 +110,7 @@ date, enumeration, version, object`.
 ### Runtime read
 | Command | Call | Notes |
 |---|---|---|
-| `get-config --setting-key K --player-id ID [--version V] [--get-default]` | `POST featureset.kinoa.io/features-configurations` | the real runtime call; response `settings[].status` is `OK` / `KEY_NOT_FOUND` / `VERSION_NOT_FOUND` / `DEFAULT_NOT_FOUND` |
+| `get-config --setting-key K --player-id ID --version V [--checksum VAL ...] [--checksum-only] [--include-filters] [--get-default]` | `POST featureset.kinoa.io/features-configurations` | the real runtime call; `--version` is effectively required; response `settings[].status` is `OK` / `KEY_NOT_FOUND` / `VERSION_NOT_FOUND` / `DEFAULT_NOT_FOUND`, plus a `checksum`. `getDefault` is false in normal use (omit `--get-default`). **Checksum caching:** pass the checksum(s) the client holds via `--checksum`; the response returns only the settings whose checksum CHANGED (unchanged ones are omitted — the client reuses its cache). |
 
 ## Typical one-off sequence
 
@@ -130,7 +130,9 @@ python "$H" import-config-data --config-id <CONFIG_ID> --csv boosters.csv
 python "$H" submit-config --config-id <CONFIG_ID>     # DRAFT → IN_REVIEW
 python "$H" publish-config --config-id <CONFIG_ID>    # IN_REVIEW → SCHEDULED → ACTIVE
 # 4. verify exactly as the app would (allow a few seconds / retry — the runtime caches briefly)
-python "$H" get-config --setting-key BoostersConfig --version 1 --player-id <PLAYER_ID> --get-default
+python "$H" get-config --setting-key BoostersConfig --version 1 --player-id <PLAYER_ID>
+# 4b. checksum delta — pass the checksum from step 4; unchanged settings drop out of the response
+python "$H" get-config --setting-key BoostersConfig --version 1 --player-id <PLAYER_ID> --checksum <checksum>
 ```
 
 Lifecycle that the chain encodes (learned the hard way, validated live):
