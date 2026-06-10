@@ -75,7 +75,7 @@ These skills talk to **two distinct surfaces**. Mixing them up is a security mis
 | Surface | Host | Auth header | Who calls it |
 |---|---|---|---|
 | **Admin / dashboard** | `dashboard.kinoa.io` | `Authorization: Bearer <token>` + `Game: <uuid>` + `Game-Id: <uuid>` (both headers carry the same UUID) | **Skill only**, during integration setup. Used by `kinoa-init` (validate project) and the dashboard helpers (`kinoa-dashboard-player-fields`, `kinoa-dashboard-event`) which the workflow skills (`kinoa-sync-*-integration`) delegate to. The session token is admin-tier and must never ship in application binaries, configs, or runtime calls. |
-| **Public Player Events API** | `gate.kinoa.io`, `pevents.kinoa.io`, `featureset.kinoa.io` | `game: <game_secret>` (no bearer) | **Application runtime code.** Open session, send events, read player state. The Postman collection at `references/postman-collection.json` is the canonical spec — it deliberately contains only public hosts. |
+| **Public Player Events API** | `gate.kinoa.io`, `pevents.kinoa.io`, `gate.kinoa.io/featureset` | `game: <game_secret>` (no bearer) | **Application runtime code.** Open session, send events, read player state. The Postman collection at `references/postman-collection.json` is the canonical spec — it deliberately contains only public hosts. |
 
 When `kinoa-sync-player-fields-integration` writes code into your application (e.g., `KinoaPlayerState`), or `kinoa-sync-event-integration` writes `KinoaEvents`, the result is a pure data class. The application's existing integration code is responsible for the runtime API calls using the game-secret header.
 

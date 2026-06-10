@@ -2,12 +2,12 @@
 """
 Kinoa Dashboard Feature Settings — admin-API wrapper for the feature-settings
 domain: schemas, settings, and configurations. Plus the public runtime read
-(featureset.kinoa.io) used to verify that a player actually resolves a config.
+(gate.kinoa.io/featureset) used to verify that a player actually resolves a config.
 
 Self-contained. Reads bearer token, game id, and game secret from
 ~/.kinoa/session.env (written by kinoa-init). Mixing admin (bearer) and runtime
 (game secret) auth is intentional: admin subcommands talk to dashboard.kinoa.io,
-the single `get-config` read talks to the public featureset.kinoa.io host.
+the single `get-config` read talks to the public gate.kinoa.io/featureset host.
 
 Three resources stack up: a SCHEMA (typed columns) has one or more VERSIONS; a
 SETTING binds a runtime `key` to a schema; a CONFIGURATION holds the actual data
@@ -74,17 +74,16 @@ Configurations (https://dashboard.kinoa.io/featuresettingsapi/configurations):
   delete-config --config-id UUID
       DELETE /configurations/{id}
 
-Runtime read (https://featureset.kinoa.io, public game-secret auth):
+Runtime read (https://gate.kinoa.io/featureset, public game-secret auth):
   get-config --setting-key KEY --player-id UUID --version V
              [--checksum VAL ...] [--checksum-only] [--include-filters] [--get-default]
       POST /features-configurations — exactly what the application does at
       runtime. Returns the resolved config (or status KEY_NOT_FOUND /
       VERSION_NOT_FOUND / DEFAULT_NOT_FOUND). `--version` is effectively required.
       getDefault is false in normal use (omit --get-default). Checksum caching:
-      pass the checksum(s) the client already holds via --checksum; the response
-      includes only the settings whose checksum CHANGED — unchanged settings are
-      omitted and the client reuses its cached data. Each response setting carries
-      a `checksum` to store for next time.
+      pass the checksum(s) the client already holds via --checksum; an unchanged config comes back with status OK and `data: null` (the same
+      checksum echoed); a CHANGED config carries fresh `data` + a new `checksum`.
+      The client reuses its cache on data:null and updates it on fresh data.
 
 Schema column types (for --fields-json / kinoa-csv-schema-infer):
   integer, number, long, boolean, string, long_string, bundle_key, date,
@@ -106,7 +105,7 @@ BASE = "https://dashboard.kinoa.io/featuresettingsapi"
 SCHEMAS_URL = f"{BASE}/schemas"
 SETTINGS_URL = f"{BASE}/settings"
 CONFIGURATIONS_URL = f"{BASE}/configurations"
-FEATURE_CONFIGURATIONS_URL = "https://featureset.kinoa.io/features-configurations"
+FEATURE_CONFIGURATIONS_URL = "https://gate.kinoa.io/featureset/features-configurations"
 
 SCHEMA_COLUMN_TYPES = (
     "integer",
@@ -491,9 +490,9 @@ def cmd_delete_config(args):
 def cmd_get_config(args):
     # getDefault is false in normal client usage — a published default config still
     # resolves without it. The checksum mechanism is the real efficiency lever: the
-    # client sends the checksum(s) it already holds for a setting, and the response
-    # includes only the settings whose checksum changed (unchanged ones are omitted,
-    # and the client keeps using its cached data for those).
+    # client sends the checksum(s) it already holds for a setting. An unchanged
+    # config returns status OK with data:null (same checksum echoed); a changed one
+    # returns fresh data + a new checksum. The client caches on the data:null reply.
     setting = {"key": args.setting_key, "getDefault": bool(args.get_default)}
     if args.version:
         setting["version"] = args.version
@@ -609,12 +608,12 @@ def main(argv):
     p.set_defaults(func=cmd_delete_config)
 
     # Runtime read
-    p = sub.add_parser("get-config", help="POST featureset.kinoa.io — resolve a config for a player (public auth).")
+    p = sub.add_parser("get-config", help="POST gate.kinoa.io/featureset — resolve a config for a player (public auth).")
     p.add_argument("--setting-key", required=True)
     p.add_argument("--player-id", required=True)
     p.add_argument("--version", default=None, help="Schema version number, e.g. 1. Effectively required — omitting it yields VERSION_NOT_FOUND.")
     p.add_argument("--get-default", action="store_true", help="Normally OMIT this — getDefault is false in real client usage; a published default still resolves.")
-    p.add_argument("--checksum", action="append", help="A checksum the client already holds for this setting (repeatable). The response omits the setting if its checksum is unchanged.")
+    p.add_argument("--checksum", action="append", help="A checksum the client already holds for this setting (repeatable). If unchanged, the response returns status OK with data:null (same checksum echoed).")
     p.add_argument("--checksum-only", action="store_true", help="Request-level: return only checksums, no data payload.")
     p.add_argument("--include-filters", action="store_true", help="Include the configuration's filters in the response.")
     p.set_defaults(func=cmd_get_config)

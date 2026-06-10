@@ -139,7 +139,7 @@ A first-time integration runs through these phases. Phases 1–4 are the core on
 2. `/kinoa-sync-player-fields-integration` — discover the app's player class, generate `KinoaPlayerState`, drive the diff & apply (delegates each admin call to `kinoa-dashboard-player-fields`), verify.
 3. `/kinoa-open-session` — verify the open-session endpoint works against this project. **Important nuance**: this helper always hits `gate.kinoa.io/playerevents/api/v3/player/session/start` directly, which always auto-fires `session_start` server-side. That tells you the *endpoint* is wired up — but it does NOT mean the app's runtime path will auto-fire. Whether the app's runtime path auto-fires depends on whether it calls this exact endpoint (API integrations may or may not; SDK integrations definitely do not).
 4. `/kinoa-sync-event-integration` — discover events the app emits, generate `KinoaEvents`, decide `session_start` handling per the `SESSION_START_AUTO_FIRES` branch, drive publishes / creations (delegates each admin call to `kinoa-dashboard-event`), verify. Phase 4 includes a runtime test send via the local `kinoa_send_event.py` helper.
-5. `/kinoa-sync-feature-settings-integration` *(optional)* — discover a schema (reuse by id/link or infer from a CSV via `kinoa-csv-schema-infer`), activate it, create a setting + test configuration, load its data, mark-default & publish (delegates each admin call to `kinoa-dashboard-feature-settings`), generate a `FeatureSettingsFacade` in the app, and verify a player resolves the config via the public `featureset.kinoa.io` runtime endpoint (covered by tests with mocked HTTP).
+5. `/kinoa-sync-feature-settings-integration` *(optional)* — discover a schema (reuse by id/link or infer from a CSV via `kinoa-csv-schema-infer`), activate it, create a setting + test configuration, load its data, mark-default & publish (delegates each admin call to `kinoa-dashboard-feature-settings`), generate a `FeatureSettingsFacade` in the app, and verify a player resolves the config via the public `gate.kinoa.io/featureset` runtime endpoint (covered by tests with mocked HTTP).
 
 The dashboard helpers (`kinoa-dashboard-player-fields`, `kinoa-dashboard-event`, `kinoa-dashboard-feature-settings`) aren't usually invoked directly during a fresh integration — they're called by the integration skills above. Use them directly when you need a one-off admin operation (e.g., "publish event X by id", "delete a stale custom field", "publish a configuration") without running the full workflow.
 
@@ -153,6 +153,6 @@ Each sub-skill is also independently invokable with its own slash command — th
   - Admin (feature settings): `GET / POST https://dashboard.kinoa.io/featuresettingsapi/{schemas,settings,configurations}`
   - Session start (new): `POST https://gate.kinoa.io/playerevents/api/v3/player/session/start`
   - Sync event: `POST https://gate.kinoa.io/playerevents/api/v3/sync-event?player_id=…`
-  - Feature configurations (runtime): `POST https://featureset.kinoa.io/features-configurations`
+  - Feature configurations (runtime): `POST https://gate.kinoa.io/featureset/features-configurations`
 
 Installation and how to obtain the two tokens are documented in `HOW-TO.md`.

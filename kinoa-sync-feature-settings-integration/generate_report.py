@@ -63,7 +63,7 @@ def _verification_section(v: dict[str, Any]) -> str:
     if resolved:
         callout = (
             "<p class='callout-good'>The configuration resolves end-to-end. A real "
-            "<code>POST featureset.kinoa.io/features-configurations</code> for this player returned "
+            "<code>POST gate.kinoa.io/featureset/features-configurations</code> for this player returned "
             "the published config — exactly the path the shipped application takes.</p>"
         )
         css = "critical critical-ok"

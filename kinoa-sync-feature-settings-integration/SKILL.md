@@ -1,6 +1,6 @@
 ---
 name: kinoa-sync-feature-settings-integration
-description: Internal sub-skill of kinoa-api-integration — do NOT trigger directly. Invoked as the orchestrator's `sync-feature-settings-integration` dispatch (Phase 5, after init → player-fields → open-session → events). Owns the feature-settings workflow: discover the schema (reuse an existing one by id/link, or infer a new one from a CSV via kinoa-csv-schema-infer), activate it, create a setting bound to it, create a test configuration and load its data, mark-as-default and publish, generate a single FeatureSettingsFacade in the app that fetches the config for a player from featureset.kinoa.io, then verify end-to-end that the previously-created player resolves the config — covered by tests with mocked HTTP. Delegates every dashboard call to kinoa-dashboard-feature-settings. When the user wants to integrate feature settings / feature schema / remote config with Kinoa, build a feature-schema from a CSV, or wire a feature-settings facade into their app, route via kinoa-api-integration sync-feature-settings-integration — the orchestrator enforces the prerequisite ordering (init/player-fields/open-session/events done, so credentials and a real player exist).
+description: Internal sub-skill of kinoa-api-integration — do NOT trigger directly. Invoked as the orchestrator's `sync-feature-settings-integration` dispatch (Phase 5, after init → player-fields → open-session → events). Owns the feature-settings workflow: discover the schema (reuse an existing one by id/link, or infer a new one from a CSV via kinoa-csv-schema-infer), activate it, create a setting bound to it, create a test configuration and load its data, mark-as-default and publish, generate a single FeatureSettingsFacade in the app that fetches the config for a player from gate.kinoa.io/featureset, then verify end-to-end that the previously-created player resolves the config — covered by tests with mocked HTTP. Delegates every dashboard call to kinoa-dashboard-feature-settings. When the user wants to integrate feature settings / feature schema / remote config with Kinoa, build a feature-schema from a CSV, or wire a feature-settings facade into their app, route via kinoa-api-integration sync-feature-settings-integration — the orchestrator enforces the prerequisite ordering (init/player-fields/open-session/events done, so credentials and a real player exist).
 argument-hint: [optional: app source path]
 allowed-tools: Bash(python *) Bash(cat *) Read Write Edit Glob Grep AskUserQuestion
 ---
@@ -90,10 +90,10 @@ Phase 5.1 → 5.5 in order.
 | Surface | Host | Auth | Caller |
 |---|---|---|---|
 | **Admin** | `dashboard.kinoa.io/featuresettingsapi` | `Authorization: Bearer` + `Game` + `Game-Id` | **Skill only.** Delegated to `kinoa-dashboard-feature-settings`. |
-| **Runtime** | `featureset.kinoa.io` | `game: <game_secret>` | **App code.** The generated `FeatureSettingsFacade` POSTs to `featureset.kinoa.io/features-configurations` with the game-secret header. |
+| **Runtime** | `gate.kinoa.io/featureset` | `game: <game_secret>` | **App code.** The generated `FeatureSettingsFacade` POSTs to `gate.kinoa.io/featureset/features-configurations` with the game-secret header. |
 
 **Hard rule:** the `FeatureSettingsFacade` you generate must call **only**
-`featureset.kinoa.io` with the `game` secret. Never emit code that hits
+`gate.kinoa.io/featureset` with the `game` secret. Never emit code that hits
 `dashboard.kinoa.io` or carries `Authorization: Bearer` — that's an admin token
 and must not ship in an application.
 
@@ -172,7 +172,7 @@ the rest of the app calls, e.g. `featureSettings.get("BoostersConfig")`.
    class name to the project's casing if it differs. Propose the path via
    `AskUserQuestion`.
 2. **The facade does exactly one network thing** — `POST` to
-   `https://featureset.kinoa.io/features-configurations` with header
+   `https://gate.kinoa.io/featureset/features-configurations` with header
    `game: <game_secret>` and body:
    ```json
    { "settings": [ { "key": "<settingKey>", "version": "<n>", "getDefault": false,
@@ -191,11 +191,13 @@ the rest of the app calls, e.g. `featureSettings.get("BoostersConfig")`.
    `{checksum, rows}` it received (in memory, or persisted like the player-state
    store from Phase 2). On each call:
    - send the cached `checksum` in the request's `checksums` (omit on first call);
-   - the response returns **only the settings whose checksum CHANGED**. A setting
-     that's unchanged is **absent** from `settings[]` — for it, return the cached
-     rows. A present setting carries new `data` + a new `checksum`: update the cache
-     and return the new rows.
-   This makes repeat fetches cheap (no payload when nothing changed) and is the
+   - when the config is **unchanged**, the server replies with the setting still
+     present, `status: "OK"`, **`data: null`**, and the **same `checksum`** echoed
+     back — return the cached rows. When it **changed**, the setting carries fresh
+     `data` + a new `checksum`: update the cache and return the new rows. (Verified
+     live — the unchanged signal is `data == null`, NOT the setting being dropped
+     from `settings[]`.)
+   This makes repeat fetches cheap (no data payload when nothing changed) and is the
    contract the backend is built around — implement it, don't just fetch fresh
    every time. Sketch:
    ```
@@ -204,9 +206,10 @@ the rest of the app calls, e.g. `featureSettings.get("BoostersConfig")`.
      body = { settings: [ { key, version, getDefault: false,
                             checksums: cached ? [cached.checksum] : [] } ],
               playerId }
-     resp = POST featureset.kinoa.io/features-configurations (game header)
-     s = resp.settings.firstWhere(key, version)  # may be ABSENT if unchanged
+     resp = POST gate.kinoa.io/featureset/features-configurations (game header)
+     s = resp.settings.firstWhere(key, version)
      if s == null or s.status != "OK": return cached?.rows ?? emptyTyped()
+     if s.data == null: return cached?.rows ?? emptyTyped()   # unchanged -> cache
      cache[(key, version)] = { checksum: s.checksum, rows: parse(s.data) }
      return cache[(key, version)].rows
    ```
@@ -314,7 +317,7 @@ Suggest adding `kinoa-feature-settings-integration-report-*.html` to `.gitignore
 ## Phase 5.5 — Verify end-to-end + cover with tests
 
 The honest proof is: the **previously-created player resolves the configuration
-through the same runtime path the app uses** — `featureset.kinoa.io`. Do it twice:
+through the same runtime path the app uses** — `gate.kinoa.io/featureset`. Do it twice:
 once live (a smoke check), once as a repeatable test in the app's suite with the
 HTTP mocked.
 
@@ -333,9 +336,9 @@ checksum:
 ```
 python "$H" get-config --setting-key <RuntimeKey> --version <n> --player-id <player_id> --checksum <checksum>
 ```
-Since nothing changed, the setting should come back unchanged (absent from
-`settings[]`, or returned with no fresh data) — that's the caching path the facade
-relies on.
+Since nothing changed, the setting comes back with `status:"OK"` and **`data: null`**
+(the same `checksum` echoed) — not dropped from `settings[]`. That `data: null` is
+the "unchanged" signal the facade's cache relies on.
 
 **Expect a brief propagation lag.** A freshly published config can take a few
 seconds before the runtime serves it — the first `get-config` may return
@@ -361,7 +364,7 @@ ask where to place it.
 Generate **one** focused test on the `FeatureSettingsFacade` that:
 
 1. **Mocks the runtime HTTP** so the test is deterministic and offline — stub the
-   `POST featureset.kinoa.io/features-configurations` response with a canned body
+   `POST gate.kinoa.io/featureset/features-configurations` response with a canned body
    shaped like the real one (status `OK`, a `data` array of rows matching the
    schema fields). Use the project's usual HTTP-mock (WireMock/MockWebServer,
    `nock`/`msw`, `responses`/`respx`, `HttpMessageHandler` stub, etc.).
@@ -371,11 +374,12 @@ Generate **one** focused test on the `FeatureSettingsFacade` that:
    Also assert the request the facade sent carried the `game` header and the right
    `{key, version, playerId}` body with `getDefault:false` — that proves the facade
    builds the call correctly.
-4. **Covers the checksum cache** — enqueue a second response in which the setting
-   is unchanged (absent from `settings[]`, the real "nothing changed" shape), call
-   the facade again, and assert it (a) sent the stored `checksum` in the second
-   request's `checksums`, and (b) still returned the cached rows without fresh data.
-   This is the behavior the backend is built around, so it's worth pinning.
+4. **Covers the checksum cache** — enqueue a second response in the real
+   "nothing changed" shape (the setting present with `status:"OK"`, **`data: null`**,
+   and the same `checksum` echoed back), call the facade again, and assert it
+   (a) sent the stored `checksum` in the second request's `checksums`, and (b) still
+   returned the cached rows. This is the behavior the backend is built around, so
+   it's worth pinning.
 5. **Prints one line** with the setting key + player id so a failure is traceable.
 
 Skeleton (adapt to the project's framework/language):
@@ -387,8 +391,10 @@ void facadeResolvesConfigForPlayerAndCachesByChecksum() throws Exception {
     server.enqueue(new MockResponse().setBody("""
       {"settings":[{"request":{"key":"BoostersConfig","version":"1"},"status":"OK",
         "configurationName":"v1 defaults","data":[{"id":1,"reward":2.5}],"checksum":"abc123"}]}"""));
-    // 2nd fetch: unchanged → setting omitted from settings[]
-    server.enqueue(new MockResponse().setBody("""{"settings":[]}"""));
+    // 2nd fetch: unchanged → setting present, status OK, data null, same checksum
+    server.enqueue(new MockResponse().setBody("""
+      {"settings":[{"request":{"key":"BoostersConfig","version":"1"},"status":"OK",
+        "data":null,"checksum":"abc123"}]}"""));
 
     var facade = new FeatureSettingsFacade(server.url("/").toString(), GAME_SECRET);
 
@@ -405,7 +411,7 @@ void facadeResolvesConfigForPlayerAndCachesByChecksum() throws Exception {
 ```
 
 Optionally add a second, **live** test (no mock, real credentials, hitting
-`featureset.kinoa.io`) guarded so it's skipped in CI without secrets — it mirrors
+`gate.kinoa.io/featureset`) guarded so it's skipped in CI without secrets — it mirrors
 5.5.1 but lives in the suite. Keep the mocked test as the primary one: it runs
 anywhere and pins the facade's parsing + request shape.
 
@@ -433,8 +439,8 @@ Admin (`https://dashboard.kinoa.io/featuresettingsapi`):
 - `PATCH /configurations/{id}` status→IN_REVIEW (`submit-config`), then `POST /configurations/{id}/publish` (IN_REVIEW → SCHEDULED → auto-ACTIVE).
 - `PATCH /configurations/{id}/mark-as-default` (promote a published config), `POST /configurations/{id}/test-players`, `GET /configurations/{id}/test/{playerId}` — scoped visibility / admin resolve.
 
-Runtime (`https://featureset.kinoa.io`, public game-secret auth — the facade + verify):
-- `POST /features-configurations` — body `{settings:[{key,version,getDefault:false,checksums:[…]}], playerId}`; response `settings[].status` ∈ `OK / KEY_NOT_FOUND / VERSION_NOT_FOUND / DEFAULT_NOT_FOUND`, with `data` rows + a `checksum`. Send the client's held checksums; only settings whose checksum changed come back (unchanged ones are omitted → reuse the cache). `getDefault` is false in normal use.
+Runtime (`https://gate.kinoa.io/featureset`, public game-secret auth — the facade + verify):
+- `POST /features-configurations` — body `{settings:[{key,version,getDefault:false,checksums:[…]}], playerId}`; response `settings[].status` ∈ `OK / KEY_NOT_FOUND / VERSION_NOT_FOUND / DEFAULT_NOT_FOUND`, with `data` rows + a `checksum`. Send the client's held checksums; an unchanged config comes back with `status:"OK"` + `data:null` (same checksum echoed → reuse the cache), a changed one with fresh `data` + a new `checksum`. `getDefault` is false in normal use.
 
 Schema column types: `integer, number, long, boolean, string, long_string,
 bundle_key, date, enumeration, version, object`.

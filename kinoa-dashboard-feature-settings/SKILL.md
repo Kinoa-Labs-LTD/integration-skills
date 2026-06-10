@@ -9,7 +9,7 @@ allowed-tools: Bash(python *) Bash(cat *) Read AskUserQuestion
 
 A thin, self-contained CLI over the Kinoa **feature-settings** admin API
 (`dashboard.kinoa.io/featuresettingsapi`), plus the one public runtime read on
-`featureset.kinoa.io`. Every subcommand makes one HTTP call and prints one JSON
+`gate.kinoa.io/featureset`. Every subcommand makes one HTTP call and prints one JSON
 object: `{ http_status, ok, response | request_body, …context }`. HTTP errors are
 serialized, never raised — so the caller can branch on `ok`/`http_status`.
 
@@ -40,7 +40,7 @@ configuration (bound to a version), load its data, publish it → fetch by key.
 | Surface | Host | Auth |
 |---|---|---|
 | Admin (every subcommand except `get-config`) | `dashboard.kinoa.io/featuresettingsapi` | `Authorization: Bearer` + `Game` + `Game-Id` |
-| Runtime (`get-config` only) | `featureset.kinoa.io` | `game: <game_secret>` (no bearer) |
+| Runtime (`get-config` only) | `gate.kinoa.io/featureset` | `game: <game_secret>` (no bearer) |
 
 `get-config` deliberately uses the public game-secret auth because it exercises
 the exact path the shipped application uses. Never emit bearer-carrying code into
@@ -110,7 +110,7 @@ date, enumeration, version, object`.
 ### Runtime read
 | Command | Call | Notes |
 |---|---|---|
-| `get-config --setting-key K --player-id ID --version V [--checksum VAL ...] [--checksum-only] [--include-filters] [--get-default]` | `POST featureset.kinoa.io/features-configurations` | the real runtime call; `--version` is effectively required; response `settings[].status` is `OK` / `KEY_NOT_FOUND` / `VERSION_NOT_FOUND` / `DEFAULT_NOT_FOUND`, plus a `checksum`. `getDefault` is false in normal use (omit `--get-default`). **Checksum caching:** pass the checksum(s) the client holds via `--checksum`; the response returns only the settings whose checksum CHANGED (unchanged ones are omitted — the client reuses its cache). |
+| `get-config --setting-key K --player-id ID --version V [--checksum VAL ...] [--checksum-only] [--include-filters] [--get-default]` | `POST gate.kinoa.io/featureset/features-configurations` | the real runtime call; `--version` is effectively required; response `settings[].status` is `OK` / `KEY_NOT_FOUND` / `VERSION_NOT_FOUND` / `DEFAULT_NOT_FOUND`, plus a `checksum`. `getDefault` is false in normal use (omit `--get-default`). **Checksum caching:** pass the checksum(s) the client holds via `--checksum`; an unchanged config returns status OK with `data: null` (same checksum); a changed one returns fresh `data` + a new checksum — the client caches on data:null. |
 
 ## Typical one-off sequence
 
@@ -131,7 +131,7 @@ python "$H" submit-config --config-id <CONFIG_ID>     # DRAFT → IN_REVIEW
 python "$H" publish-config --config-id <CONFIG_ID>    # IN_REVIEW → SCHEDULED → ACTIVE
 # 4. verify exactly as the app would (allow a few seconds / retry — the runtime caches briefly)
 python "$H" get-config --setting-key BoostersConfig --version 1 --player-id <PLAYER_ID>
-# 4b. checksum delta — pass the checksum from step 4; unchanged settings drop out of the response
+# 4b. checksum delta — pass the checksum from step 4; unchanged settings come back with data:null
 python "$H" get-config --setting-key BoostersConfig --version 1 --player-id <PLAYER_ID> --checksum <checksum>
 ```
 
