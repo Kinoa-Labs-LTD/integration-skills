@@ -43,18 +43,18 @@ Each sub-skill ships its own Python helper and has no cross-skill imports — yo
 
 ## Install all skills globally
 
-From the repo root:
+From the repo root (it must be your working directory — `$PWD` becomes the absolute symlink target):
 
 ```bash
 mkdir -p ~/.claude/skills
-for d in /Users/illia/IdeaProjects/kinoa-github/integration-skills/*/; do
+for d in "$PWD"/*/; do
   base=$(basename "$d")
   case "$base" in *-workspace) continue ;; esac
   ln -sfn "$d" ~/.claude/skills/"$base"
 done
 ```
 
-Adjust the source path if your checkout lives elsewhere. Restart Claude Code; the ten skills become available as slash commands in any project: `/kinoa-api-integration`, `/kinoa-init`, `/kinoa-sync-player-fields-integration`, `/kinoa-dashboard-player-fields`, `/kinoa-open-session`, `/kinoa-sync-event-integration`, `/kinoa-dashboard-event`, `/kinoa-sync-feature-settings-integration`, `/kinoa-dashboard-feature-settings`, `/kinoa-csv-schema-infer`.
+Restart Claude Code; the ten skills become available as slash commands in any project: `/kinoa-api-integration`, `/kinoa-init`, `/kinoa-sync-player-fields-integration`, `/kinoa-dashboard-player-fields`, `/kinoa-open-session`, `/kinoa-sync-event-integration`, `/kinoa-dashboard-event`, `/kinoa-sync-feature-settings-integration`, `/kinoa-dashboard-feature-settings`, `/kinoa-csv-schema-infer`.
 
 To verify:
 

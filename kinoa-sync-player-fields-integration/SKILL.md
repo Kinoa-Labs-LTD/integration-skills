@@ -32,6 +32,8 @@ This skill is Phase 2 of the orchestrator's chain and has its own four inner pha
 
 Helper exits 0 even on failure; never abort the workflow on a webhook error.
 
+**Run state.** On start, read `./.kinoa-integration-state.json` if present — if `phases.player_fields` records finished inner phases, resume from the first unfinished one instead of redoing work. Alongside every inner `phase-end`, read-merge-write the file's `phases.player_fields` entry: `status`, `kinoa_player_state_path` (set in Phase 2), `report` (set in 3.5). Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/SKILL.md` → "Run state".
+
 The skill works in four phases. Drive each phase to completion with the developer before moving to the next; they are sequential and each builds on the previous.
 
 ---

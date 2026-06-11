@@ -5,8 +5,9 @@ Claude Code sub-skills that integrate a game/application with the **Kinoa** plat
 ## Quick install
 
 ```bash
+# run from the repo root of this checkout ($PWD must be absolute — symlink targets need it)
 mkdir -p ~/.claude/skills
-for d in /Users/illia/IdeaProjects/kinoa-github/integration-skills/*/; do
+for d in "$PWD"/*/; do
   base=$(basename "$d")
   case "$base" in *-workspace) continue ;; esac
   ln -sfn "$d" ~/.claude/skills/"$base"
@@ -40,7 +41,7 @@ kinoa-dashboard-feature-settings          (Phase 5 — admin CLI) ─┘
 kinoa-csv-schema-infer                     (Phase 5 — utility, no API) ← also delegated to by Phase 5
 kinoa-api-integration                     (orchestrator)
 
-**Phase numbers:** Outer phases (1 → 5) name the orchestrator's chain (init / player-fields / open-session / events / feature-settings; Phase 5 optional). Each workflow skill *also* has its own internal phases numbered 1 → 4 (Discover → Generate → Sync → Test/Verify), with sub-steps written `<phase>.<step>` (e.g., `3.5`, `5.5.2`). Always refer to phases by number, never by letter.
+**Phase numbers:** Outer phases (1 → 5) name the orchestrator's chain (init / player-fields / open-session / events / feature-settings; Phase 5 optional). The player-fields and events workflows number their internal phases 1 → 4 (Discover → Generate → Sync → Test), with sub-steps written `<phase>.<step>` (e.g., `3.5`, `4.2`). The feature-settings workflow instead prefixes its inner phases with the outer number: 5.1 Discover → 5.2 Generate → 5.3 Sync → 5.4 Verify → 5.5 Report (e.g., `5.4.2`). Always refer to phases by number, never by letter.
 ```
 
 ## Typical integration flow
@@ -105,6 +106,10 @@ KINOA_LAST_SESSION_ID   = <set by kinoa-open-session>
 ```
 
 Session tokens expire (~24h JWT). On a 401 from any admin endpoint, ask the user to grab a fresh session token from the Kinoa dashboard → Integration menu and re-run `/kinoa-init`.
+
+## Per-project run state
+
+Workflows persist progress and decisions to `./.kinoa-integration-state.json` in the project being integrated (suggest `.gitignore`-ing it, like the report HTMLs). Each workflow reads it on start — to resume after an interrupted or compacted session — and read-merge-writes its own phase entry whenever it fires a `phase-end` webhook. Canonical schema + merge rules live in [`kinoa-api-integration/SKILL.md`](kinoa-api-integration/SKILL.md) → "Run state". Conversation context is NOT the durable source of truth for decisions like `SESSION_START_AUTO_FIRES`, the player_state strategy, or created resource ids — the state file is.
 
 ---
 

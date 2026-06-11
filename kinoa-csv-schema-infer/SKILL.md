@@ -1,6 +1,6 @@
 ---
 name: kinoa-csv-schema-infer
-description: Pure-parser utility that turns a CSV into a Kinoa feature-schema. Reads the header row and sample values, infers a Kinoa column type per column (integer, number, long, boolean, string, long_string, date, version, object, enumeration, bundle_key), and emits a ready-to-POST SchemaDto (or a review table / tableFields array). No network, no credentials. Use whenever the user wants to build a feature-schema from a CSV, guess column types from sample data, or generate the create-schema body for kinoa-dashboard-feature-settings. The workflow skill kinoa-sync-feature-settings-integration delegates to this for the "new schema from CSV" branch.
+description: Pure-parser utility that turns a CSV into a Kinoa feature-schema body. Reads the header row and sample values, infers a Kinoa column type per column (integer, number, long, boolean, string, long_string, date, version, object, enumeration, bundle_key), and emits a ready-to-POST SchemaDto (or a review table / tableFields array). No network, no credentials — this skill only analyzes and emits JSON; it never creates anything on the dashboard. Use when the user wants to infer column types from a CSV or generate the SchemaDto body. When they want the schema actually created and published in Kinoa, route via kinoa-api-integration schema-from-csv (the scoped Phase 5 run), which delegates here for the inference step. The workflow skill kinoa-sync-feature-settings-integration delegates to this for the "new schema from CSV" branch.
 argument-hint: [infer --csv PATH --name NAME [--emit full|body|fields] [--type COL=TYPE]]
 allowed-tools: Bash(python *) Bash(cat *) Read AskUserQuestion
 ---
@@ -78,5 +78,8 @@ explicitly with `--type col=enumeration`.
 2. Collect any corrections and re-run with `--type COL=TYPE` overrides (and
    `--name`). Inference is a starting point, not a verdict — the developer owns
    the final types.
-3. Re-emit with `--emit body` and pipe into `create-schema`, then
-   `publish-schema`.
+3. Re-emit with `--emit body`. That JSON is this skill's deliverable. If the
+   developer also wants the schema created + published on the dashboard, hand
+   off to the `schema-from-csv` scoped run of
+   `kinoa-sync-feature-settings-integration` (which drives the
+   `create-schema` / `publish-schema` admin calls) — don't drive them from here.

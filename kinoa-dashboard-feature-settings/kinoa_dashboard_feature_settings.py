@@ -51,7 +51,8 @@ Configurations (https://dashboard.kinoa.io/featuresettingsapi/configurations):
       POST /configurations — creates a DRAFT configuration with no data yet. Fetches
       the schema to auto-build the required tableColumns (one per field) and sends
       status DRAFT. Pass --default for a config that resolves for any player
-      (getDefault); a default config needs no segmentation.
+      (through the normal runtime call, getDefault:false — no special flag
+      needed); a default config needs no segmentation.
   import-config-data --config-id UUID --csv PATH
       PUT /configurations/{id}/import — multipart upload of the CSV holding the
       data rows (header row must match the schema field names).
@@ -573,7 +574,7 @@ def main(argv):
     p.add_argument("--name", required=True)
     p.add_argument("--description", default="")
     p.add_argument("--priority", type=int, default=None)
-    p.add_argument("--default", action="store_true", help="Set isDefault=true at creation (resolves for any player with getDefault).")
+    p.add_argument("--default", action="store_true", help="Set isDefault=true at creation (resolves for any player via the normal runtime call; no getDefault flag needed).")
     p.set_defaults(func=cmd_create_config)
 
     p = sub.add_parser("import-config-data", help="PUT a CSV of data rows into a configuration (multipart).")

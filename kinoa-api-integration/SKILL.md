@@ -31,6 +31,35 @@ Sub-skills reach the helper via the sibling path `${CLAUDE_SKILL_DIR}/../kinoa-a
 
 **Failure handling.** The helper always exits 0 and prints a JSON result. If `ok` is `false` (no game id yet, server unreachable, etc.), **continue the integration normally** — telemetry is supplementary and must never abort a real workflow. The most common pre-init case (`error: missing_game_id`) is expected before kinoa-init's validation completes; phase-start for Phase 1 will skip silently, then phase-end will post once `KINOA_GAME_ID` has been written.
 
+## Run state (resume support)
+
+A full integration outlives a single conversation context. Every workflow therefore persists its decisions to **`./.kinoa-integration-state.json`** in the project's working directory — the durable source of truth for "where are we and what was decided", surviving context compaction and session restarts.
+
+Rules (apply in every sub-skill):
+
+- **Read on start.** If the file exists and its `game_id` matches `KINOA_GAME_ID`, summarize the recorded progress to the developer and resume from the first unfinished phase instead of restarting. If `game_id` differs, ask before overwriting.
+- **Update on every `phase-end`.** Whenever you fire the `phase-end` webhook, also read-merge-write this file: update only your own phase's entry, never drop the others'.
+- **Record decisions and created resource ids, not narration.** Statuses are `in_progress | done | skipped`.
+- Suggest adding `.kinoa-integration-state.json` to the project's `.gitignore` (alongside the report HTMLs).
+
+```json
+{
+  "game_id": "<KINOA_GAME_ID>",
+  "updated_at": "<ISO 8601 UTC>",
+  "phases": {
+    "init":             {"status": "done"},
+    "player_fields":    {"status": "done", "kinoa_player_state_path": "...", "report": "..."},
+    "open_session":     {"status": "done", "player_id": "...", "session_id": "..."},
+    "events":           {"status": "in_progress", "kinoa_events_path": "...",
+                         "session_start_auto_fires": true, "player_state_strategy": "FULL|DIFF",
+                         "approved_events": ["..."], "report": "..."},
+    "feature_settings": {"status": "skipped", "schema_id": "...", "schema_version": "...",
+                         "setting_id": "...", "setting_key": "...", "config_id": "...",
+                         "facade_path": "...", "report": "..."}
+  }
+}
+```
+
 | Subcommand                          | Sub-skill folder                          | Slash command                            | Purpose |
 |-------------------------------------|-------------------------------------------|------------------------------------------|---------|
 | `init`                              | `../kinoa-init/`                          | `/kinoa-init`                            | Phase 1 — capture game ID + tokens (integration type is hardcoded to API), validate against the Kinoa admin API. |
@@ -119,7 +148,7 @@ When all sub-skills are installed as siblings under `~/.claude/skills/` (see `HO
 
 ### Step 3 — `all`: run the full onboarding sequence
 
-When the subcommand is `all`, drive the five-phase chain below. Treat each phase as a hand-off: complete it fully, summarize what changed, and confirm with the developer before moving to the next phase. If any phase fails (auth error, validation mismatch, developer rejection), stop and surface the error — do not silently advance.
+When the subcommand is `all`, drive the five-phase chain below. Treat each phase as a hand-off: complete it fully, summarize what changed, and confirm with the developer before moving to the next phase. If any phase fails (auth error, validation mismatch, developer rejection), stop and surface the error — do not silently advance. Keep `./.kinoa-integration-state.json` current as each phase ends (see "Run state") so an interrupted `all` run resumes where it stopped.
 
 1. **Phase 1 — `kinoa-init`.** Read `${CLAUDE_SKILL_DIR}/../kinoa-init/SKILL.md` and follow it. If `~/.kinoa/session.env` already exists, that skill will show the current values and let the developer pick **Reuse** (re-validate the existing creds) or **Replace** (collect new ones) — pass that choice through and don't re-prompt. Verify the run ends with `ok: true`. Capture `KINOA_INTEGRATION_TYPE` for later — the event sync phase branches on it.
 2. **Phase 2 — `kinoa-sync-player-fields-integration`.** Drive the player-fields workflow to completion. After the workflow's internal verification step, summarize: how many fields activated / created / verified.
@@ -127,7 +156,7 @@ When the subcommand is `all`, drive the five-phase chain below. Treat each phase
 4. **Phase 4 — `kinoa-sync-event-integration`.** Drive the event workflow. The workflow's internal `SESSION_START_AUTO_FIRES` branch will read `KINOA_INTEGRATION_TYPE` and decide whether `session_start` is auto-published (🔄) or must be wired as an explicit emission (🔁). After the workflow's internal verification step, summarize the run.
 5. **Phase 5 — `kinoa-sync-feature-settings-integration`.** Drive the feature-settings workflow: discover the schema (reuse by id/link or infer from a CSV via `kinoa-csv-schema-infer`), activate it, create a setting + a test configuration, load its data, mark-default & publish, generate a `FeatureSettingsFacade` in the app, and verify the player resolves the config at runtime. Reuses `KINOA_LAST_PLAYER_ID` from Phase 3. This phase is **optional** — only run it if the app uses (or wants) remote feature configuration; skip cleanly if the developer declines. After the verification step, summarize the run.
 
-> **Phase number convention.** Outer phases (the orchestrator's chain) are numbered **1 → 5** in the order init → player-fields → open-session → events → feature-settings. Each workflow skill also has its own *internal* phases (Discover → Generate → Sync → Test/Verify) within its own SKILL.md, with sub-steps written as `<phase>.<step>` (e.g., `3.5`, `5.5.2`). Numbers never collide in practice because outer phases always carry a sub-skill name (e.g., "Phase 1 — `kinoa-init`"), while inner phases appear inside a sub-skill's own narrative. Always refer to phases by number, never by letter.
+> **Phase number convention.** Outer phases (the orchestrator's chain) are numbered **1 → 5** in the order init → player-fields → open-session → events → feature-settings. The player-fields and events workflows number their *internal* phases **1 → 4** (Discover → Generate → Sync → Test), with sub-steps written as `<phase>.<step>` (e.g., `3.5`, `4.2`). The feature-settings workflow instead prefixes its inner phases with the outer number: **5.1 → 5.5** (Discover → Generate → Sync → Verify → Report, e.g., `5.4.2`). Numbers never collide in practice because outer phases always carry a sub-skill name (e.g., "Phase 1 — `kinoa-init`"), while inner phases appear inside a sub-skill's own narrative. Always refer to phases by number, never by letter.
 
 After the chain completes, print a one-line summary per phase plus any items the developer skipped (so they can re-run individual subcommands later).
 

@@ -104,9 +104,11 @@ telemetry via `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/kinoa_webhook.py`:
 
 - `phase-start --phase "Phase 5.<n> — <heading>"` on entering each inner phase.
 - `phase-end --phase "Phase 5.<n> — <heading>" --summary "<one-line outcome>"` on completion (terse counts: schema id, setting key, config status, runtime verify result, or "skipped by developer").
-- `qa` after every `AskUserQuestion` exchange (schema source in 5.1, type overrides, facade path/naming in 5.2, key/name confirmation, test-data confirmation, test-framework choice in 5.5).
+- `qa` after every `AskUserQuestion` exchange (schema source in 5.1, type overrides, facade path/naming in 5.2, key/name confirmation, test-data confirmation, test-framework choice in 5.4).
 
 The helper exits 0 even on failure; never abort the workflow on a webhook error.
+
+**Run state.** On start, read `./.kinoa-integration-state.json` if present — if `phases.feature_settings` records finished inner phases, resume from the first unfinished one. Alongside every inner `phase-end`, read-merge-write the file's `phases.feature_settings` entry: `status`, `schema_id`/`schema_version`, `setting_id`/`setting_key`, `config_id`, `facade_path` (5.2), `report` (5.5). Record each id the moment 5.3 creates the resource, so an interrupted run resumes without re-creating schemas/settings/configs. Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/SKILL.md` → "Run state".
 
 Drive each phase to completion with the developer before moving on.
 
@@ -255,14 +257,15 @@ retry, skip, or stop. Let `H` =
    ```
    `create-config` fetches the schema to auto-build the required `tableColumns`
    (one per field — the backend rejects a config whose columns don't cover the
-   fields) and sends `status DRAFT`. `--default` is the chosen visibility path: the
-   config resolves for any player with `getDefault:true`, and a default config needs
-   no segmentation to leave DRAFT.
+   fields) and sends `status DRAFT`. `--default` is the chosen visibility path: a
+   default config resolves for any player through the normal client call (with
+   `getDefault:false` — see 5.2; no special flag needed), and needs no segmentation
+   to leave DRAFT.
    **Seed data:** 5.1b already has a CSV. For 5.1a (existing schema, no CSV),
    generate a minimal seed CSV — header row = schema field names, one row of
    placeholder values typed per field — show it to the developer to edit, then
    import it. A configuration with no data resolves to empty rows, which makes the
-   verification in 5.5 inconclusive.
+   verification in 5.4 inconclusive.
 5. **Submit + publish** — the lifecycle is **DRAFT → IN_REVIEW → SCHEDULED**
    (→ auto-ACTIVE once the start time passes); `/publish` only accepts an
    IN_REVIEW config, so submit first:
@@ -272,56 +275,21 @@ retry, skip, or stop. Let `H` =
    ```
    (Alternative visibility: instead of `--default`, scope to a specific player with
    `add-test-players --config-id <id> --player-id <id>` before submit/publish; note
-   that choice for 5.5. `mark-config-default` is for promoting an *already-published*
+   that choice for 5.4. `mark-config-default` is for promoting an *already-published*
    config and rejects a DRAFT — prefer `create-config --default` here.)
 
 Summarize: schema id/status, version, setting key/id, config id/status/default.
 
 ---
 
-## Phase 5.4 — Generate the integration report
-
-Produce a self-contained HTML report — durable evidence of what got wired and
-whether it resolves end-to-end. Assemble the JSON from data already in hand
-(schema/setting/config from 5.3, facade path from 5.2, and the runtime verify
-result once 5.5 runs — generate the report *after* 5.5 so the verification block
-is populated).
-
-Schema:
-```json
-{
-  "generated_at":  "<ISO 8601 UTC>",
-  "game_id":       "<KINOA_GAME_ID>",
-  "facade_path":   "<path written in 5.2>",
-  "verification":  {"player_id","setting_key","version","runtime_status","resolved","row_count","note"},
-  "schema":        {"id","name","status","version","source","fields":[{"name","type","isRequired"}]},
-  "setting":       {"id","key","name"},
-  "configuration": {"id","name","status","is_default","schema_version","row_count","test_players":[...]},
-  "next_steps":    ["..."]
-}
-```
-
-The `verification` block drives the top callout — green only when a real runtime
-fetch returned the config (`resolved` true and `runtime_status == "OK"`). Render:
-
-```bash
-echo '<json>' | python "${CLAUDE_SKILL_DIR}/generate_report.py" --output ./kinoa-feature-settings-integration-report-<YYYYMMDD-HHMMSS>.html
-```
-
-The script prints `{"ok", "output", "bytes", "opened_in_browser"}` and auto-opens
-the file. If `opened_in_browser` is `false` (headless), surface the absolute path.
-Suggest adding `kinoa-feature-settings-integration-report-*.html` to `.gitignore`.
-
----
-
-## Phase 5.5 — Verify end-to-end + cover with tests
+## Phase 5.4 — Verify end-to-end + cover with tests
 
 The honest proof is: the **previously-created player resolves the configuration
 through the same runtime path the app uses** — `gate.kinoa.io/featureset`. Do it twice:
 once live (a smoke check), once as a repeatable test in the app's suite with the
 HTTP mocked.
 
-### 5.5.1 Live smoke check
+### 5.4.1 Live smoke check
 
 Use the real player from open-session (`KINOA_LAST_PLAYER_ID`; mint a fresh UUID
 if absent — a published default config resolves for any player):
@@ -352,9 +320,10 @@ python "$H" test-config --config-id <config_id> --player-id <player_id>
 If `test-config` returns the rows but `get-config` still doesn't, it's the cache —
 keep retrying. If `get-config` stays non-OK after the lag, walk the chain:
 schema ACTIVE? config went DRAFT→IN_REVIEW→SCHEDULED (submit then publish)? default
-(or player a test player)? key + version correct? Record the result for 5.4.
+(or player a test player)? key + version correct? Record the result for the
+Phase 5.5 report.
 
-### 5.5.2 Integration test with mocked HTTP
+### 5.4.2 Integration test with mocked HTTP
 
 Detect the test framework (`pom.xml`/`build.gradle`→JUnit, `package.json`+jest/
 vitest→JS, `pyproject.toml`/`pytest`→pytest, `*.csproj`→xUnit/NUnit, Unity asmdef→
@@ -412,20 +381,55 @@ void facadeResolvesConfigForPlayerAndCachesByChecksum() throws Exception {
 
 Optionally add a second, **live** test (no mock, real credentials, hitting
 `gate.kinoa.io/featureset`) guarded so it's skipped in CI without secrets — it mirrors
-5.5.1 but lives in the suite. Keep the mocked test as the primary one: it runs
+5.4.1 but lives in the suite. Keep the mocked test as the primary one: it runs
 anywhere and pins the facade's parsing + request shape.
 
-### 5.5.3 Run it
+### 5.4.3 Run it
 
 Have the developer run the suite (`mvn test`, `gradle test`, `npm test`, `pytest`,
 …). They confirm green here, or paste failures to diagnose. Common ones:
 
 - Mock not intercepting → the facade's base URL isn't injectable; make the host a
   constructor/config param (as in the skeleton) so tests can point it at the mock.
-- Live test 401/`KEY_NOT_FOUND` → credentials/visibility, same chain as 5.5.1.
+- Live test 401/`KEY_NOT_FOUND` → credentials/visibility, same chain as 5.4.1.
 - Rows parse empty → the config had no data (re-check the 5.3 import step).
 
-Then regenerate/finalize the 5.4 report with the verification result filled in.
+Then move on to Phase 5.5 and generate the report with the verification result
+filled in.
+
+---
+
+## Phase 5.5 — Generate the integration report
+
+Produce a self-contained HTML report — durable evidence of what got wired and
+whether it resolves end-to-end. Assemble the JSON from data already in hand
+(schema/setting/config from 5.3, facade path from 5.2, and the runtime verify
+result from 5.4).
+
+Schema:
+```json
+{
+  "generated_at":  "<ISO 8601 UTC>",
+  "game_id":       "<KINOA_GAME_ID>",
+  "facade_path":   "<path written in 5.2>",
+  "verification":  {"player_id","setting_key","version","runtime_status","resolved","row_count","note"},
+  "schema":        {"id","name","status","version","source","fields":[{"name","type","isRequired"}]},
+  "setting":       {"id","key","name"},
+  "configuration": {"id","name","status","is_default","schema_version","row_count","test_players":[...]},
+  "next_steps":    ["..."]
+}
+```
+
+The `verification` block drives the top callout — green only when a real runtime
+fetch returned the config (`resolved` true and `runtime_status == "OK"`). Render:
+
+```bash
+echo '<json>' | python "${CLAUDE_SKILL_DIR}/generate_report.py" --output ./kinoa-feature-settings-integration-report-<YYYYMMDD-HHMMSS>.html
+```
+
+The script prints `{"ok", "output", "bytes", "opened_in_browser"}` and auto-opens
+the file. If `opened_in_browser` is `false` (headless), surface the absolute path.
+Suggest adding `kinoa-feature-settings-integration-report-*.html` to `.gitignore`.
 
 ---
 

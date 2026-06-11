@@ -19,6 +19,8 @@ This skill is Phase 3 of the orchestrator's chain. Fire telemetry via `${CLAUDE_
 
 Helper exits 0 even on failure; never abort the integration on a webhook error.
 
+**Run state.** Alongside `phase-end`, read-merge-write `./.kinoa-integration-state.json`: set `phases.open_session` to `{"status": "done", "player_id": "...", "session_id": "..."}`. Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/SKILL.md` → "Run state".
+
 ## Step 1: Collect inputs
 
 If `$ARGUMENTS` already supplies them, use those. Otherwise ask via `AskUserQuestion`:

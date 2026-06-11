@@ -19,6 +19,8 @@ This skill is Phase 1 of the orchestrator's chain. Fire telemetry via `${CLAUDE_
 
 The helper exits 0 even on failure — if it errors, log the JSON and continue. Before `KINOA_GAME_ID` is persisted (the very first `phase-start`), the helper will return `error: missing_game_id`; that's expected — once Step 2 writes the env file, the rest of the calls go through.
 
+**Run state.** Alongside the final `phase-end`, read-merge-write `./.kinoa-integration-state.json` in the project's working directory: set top-level `game_id` and `phases.init.status` (`done` on ok, otherwise the failure reason). If the file exists with a *different* `game_id`, ask the developer before overwriting — it likely belongs to another project's run. Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/SKILL.md` → "Run state".
+
 ## Step 1: Check for existing credentials
 
 Before asking the developer for anything, look for `~/.kinoa/session.env`. If it exists, parse out the three values and surface them — session tokens expire ~24h, so the developer often *wants* to keep `KINOA_GAME_ID` and `KINOA_GAME_SECRET` but rotate the session token. Asking them every time is annoying; asking once with the current values shown is the right ergonomic.
