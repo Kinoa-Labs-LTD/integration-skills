@@ -11,7 +11,7 @@ claude plugin marketplace add Kinoa-Labs-LTD/integration-skills   # or /plugin m
 claude plugin install kinoa-dashboard@kinoa
 ```
 
-A CLI add registers the marketplace with auto-update **off** (third-party default) — turn it on via `/plugin` → **Marketplaces** → `kinoa` → **Enable auto-update**, so every session start re-fetches the plugin to the latest `main` commit.
+A CLI add registers the marketplace with auto-update **off** (third-party default) — turn it on via `/plugin` → **Marketplaces** → `kinoa` → **Enable auto-update**, or add `"autoUpdate": true` to the `kinoa` entry under `extraKnownMarketplaces` in `~/.claude/settings.json` (the CLI add already created that entry). With it on, every session start re-fetches the plugin to the latest `main` commit.
 
 No `version` field is set in the plugin manifest — **every git commit is a new plugin version** (the commit SHA doubles as the integrity checksum); marketplaces registered with `autoUpdate: true` pull the latest on session start. Consumers can pre-wire the marketplace via `.claude/settings.json` → `extraKnownMarketplaces` (with `"autoUpdate": true`) + `enabledPlugins`. Private-repo access for auto-update uses `GITHUB_TOKEN`/`GH_TOKEN`.
 

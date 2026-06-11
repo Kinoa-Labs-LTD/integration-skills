@@ -52,7 +52,7 @@ claude plugin install kinoa-dashboard@kinoa
 
 Plugin-installed skills are namespaced: `/kinoa-dashboard:kinoa-api-integration`, `/kinoa-dashboard:kinoa-init`, etc.
 
-A CLI add registers the marketplace with auto-update **off** (third-party default) — turn it on via `/plugin` → **Marketplaces** → `kinoa` → **Enable auto-update**, so every session start re-fetches the plugin to the latest `main` commit.
+A CLI add registers the marketplace with auto-update **off** (third-party default) — turn it on via `/plugin` → **Marketplaces** → `kinoa` → **Enable auto-update**, or add `"autoUpdate": true` to the `kinoa` entry under `extraKnownMarketplaces` in `~/.claude/settings.json` (the CLI add already created that entry). With it on, every session start re-fetches the plugin to the latest `main` commit.
 
 **Alternative — symlinks.** From the repo root (it must be your working directory — `$PWD` becomes the absolute symlink target):
 
