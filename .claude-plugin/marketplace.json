@@ -1,0 +1,18 @@
+{
+  "name": "kinoa",
+  "owner": {
+    "name": "Kinoa Labs LTD",
+    "email": "support@kinoa.io"
+  },
+  "description": "Kinoa platform skills — Dashboard instance management and API integration workflows driven from Claude Code.",
+  "plugins": [
+    {
+      "name": "kinoa-dashboard",
+      "source": "./",
+      "description": "Kinoa Dashboard skills: create/publish game events, player fields, and feature settings on dashboard.kinoa.io; full API-integration workflows; SDK-integration dashboard sync (consumes kinoa-dashboard-manifest.json produced by the /kinoa SDK skill).",
+      "author": { "name": "Kinoa Labs LTD" },
+      "repository": "https://github.com/Kinoa-Labs-LTD/integration-skills",
+      "license": "UNLICENSED"
+    }
+  ]
+}

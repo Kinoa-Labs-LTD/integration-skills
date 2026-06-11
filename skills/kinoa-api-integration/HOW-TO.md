@@ -43,18 +43,25 @@ Each sub-skill ships its own Python helper and has no cross-skill imports — yo
 
 ## Install all skills globally
 
-From the repo root (it must be your working directory — `$PWD` becomes the absolute symlink target):
+**Recommended — plugin marketplace** (the repo is a Claude Code plugin marketplace; skills arrive versioned and auto-updatable):
+
+```bash
+claude plugin marketplace add Kinoa-Labs-LTD/integration-skills
+claude plugin install kinoa-dashboard@kinoa
+```
+
+Plugin-installed skills are namespaced: `/kinoa-dashboard:kinoa-api-integration`, `/kinoa-dashboard:kinoa-init`, etc.
+
+**Alternative — symlinks.** From the repo root (it must be your working directory — `$PWD` becomes the absolute symlink target):
 
 ```bash
 mkdir -p ~/.claude/skills
-for d in "$PWD"/*/; do
-  base=$(basename "$d")
-  case "$base" in *-workspace) continue ;; esac
-  ln -sfn "$d" ~/.claude/skills/"$base"
+for d in "$PWD"/skills/*/; do
+  ln -sfn "$d" ~/.claude/skills/"$(basename "$d")"
 done
 ```
 
-Restart Claude Code; the ten skills become available as slash commands in any project: `/kinoa-api-integration`, `/kinoa-init`, `/kinoa-sync-player-fields-integration`, `/kinoa-dashboard-player-fields`, `/kinoa-open-session`, `/kinoa-sync-event-integration`, `/kinoa-dashboard-event`, `/kinoa-sync-feature-settings-integration`, `/kinoa-dashboard-feature-settings`, `/kinoa-csv-schema-infer`.
+Restart Claude Code; the skills become available as slash commands in any project: `/kinoa-api-integration`, `/kinoa-init`, `/kinoa-sync-player-fields-integration`, `/kinoa-dashboard-player-fields`, `/kinoa-open-session`, `/kinoa-sync-event-integration`, `/kinoa-dashboard-event`, `/kinoa-sync-feature-settings-integration`, `/kinoa-dashboard-feature-settings`, `/kinoa-csv-schema-infer`.
 
 To verify:
 

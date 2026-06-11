@@ -2,19 +2,28 @@
 
 Claude Code sub-skills that integrate a game/application with the **Kinoa** platform — credentials, player-state model, session lifecycle, event registry, verification — driven from inside Claude Code.
 
-## Quick install
+## Distribution & install
+
+The repo doubles as a **Claude Code plugin marketplace** ([`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json)) with a single plugin **`kinoa-dashboard`** exposing every skill under `skills/`. Plugin-installed skills are invoked namespaced: `/kinoa-dashboard:kinoa-api-integration`, `/kinoa-dashboard:kinoa-init`, etc.
+
+```bash
+claude plugin marketplace add Kinoa-Labs-LTD/integration-skills   # or /plugin marketplace add … in-session
+claude plugin install kinoa-dashboard@kinoa
+```
+
+No `version` field is set in the plugin manifest — **every git commit is a new plugin version** (the commit SHA doubles as the integrity checksum); marketplaces registered with `autoUpdate: true` pull the latest on session start. Consumers can pre-wire the marketplace via `.claude/settings.json` → `extraKnownMarketplaces` + `enabledPlugins`. Private-repo access for auto-update uses `GITHUB_TOKEN`/`GH_TOKEN`.
+
+Legacy symlink install (no plugin system) still works:
 
 ```bash
 # run from the repo root of this checkout ($PWD must be absolute — symlink targets need it)
 mkdir -p ~/.claude/skills
-for d in "$PWD"/*/; do
-  base=$(basename "$d")
-  case "$base" in *-workspace) continue ;; esac
-  ln -sfn "$d" ~/.claude/skills/"$base"
+for d in "$PWD"/skills/*/; do
+  ln -sfn "$d" ~/.claude/skills/"$(basename "$d")"
 done
 ```
 
-Restart Claude Code. Walkthrough: [`kinoa-api-integration/HOW-TO.md`](kinoa-api-integration/HOW-TO.md). Dispatcher: [`kinoa-api-integration/SKILL.md`](kinoa-api-integration/SKILL.md).
+Restart Claude Code. Walkthrough: [`skills/kinoa-api-integration/HOW-TO.md`](skills/kinoa-api-integration/HOW-TO.md). Dispatcher: [`skills/kinoa-api-integration/SKILL.md`](skills/kinoa-api-integration/SKILL.md).
 
 ---
 
@@ -63,7 +72,7 @@ Two distinct API surfaces. **Mixing them up is a security mistake.**
 | Surface | Host | Auth | Caller |
 |---|---|---|---|
 | **Admin** | `dashboard.kinoa.io` (`/gamemetaapi`, `/featuresettingsapi`) | `Authorization: Bearer <token>` + `Game: <uuid>` + `Game-Id: <uuid>` (both same UUID) | Skill only — `kinoa-init` and the `kinoa-dashboard-*` helpers. |
-| **Runtime / public** | `gate.kinoa.io`, `pevents.kinoa.io`, `gate.kinoa.io/featureset` | `game: <game_secret>` (no bearer) | App runtime code (incl. the generated `FeatureSettingsFacade`, which calls `gate.kinoa.io/featureset`). [`kinoa-api-integration/references/postman-collection.json`](kinoa-api-integration/references/postman-collection.json) is the canonical spec — public hosts only. |
+| **Runtime / public** | `gate.kinoa.io`, `pevents.kinoa.io`, `gate.kinoa.io/featureset` | `game: <game_secret>` (no bearer) | App runtime code (incl. the generated `FeatureSettingsFacade`, which calls `gate.kinoa.io/featureset`). [`skills/kinoa-api-integration/references/postman-collection.json`](skills/kinoa-api-integration/references/postman-collection.json) is the canonical spec — public hosts only. |
 
 **Hard rule when generating code into the application** (`KinoaPlayerState`, `KinoaEvents`, etc.): never emit code that calls `dashboard.kinoa.io` or carries `Authorization: Bearer`. The session token is admin-tier and must not ship in app binaries, configs, or runtime calls. Generated artifacts are **pure data classes** — no API calls embedded. The app's own emission code (or new code following the Postman collection) handles runtime calls with the game-secret header.
 
@@ -71,7 +80,7 @@ Two distinct API surfaces. **Mixing them up is a security mistake.**
 
 ## Conventions for sub-skills
 
-**Folder layout**: `kinoa-<role>/SKILL.md` (required) plus optional `kinoa_<role>.py`.
+**Folder layout**: `skills/kinoa-<role>/SKILL.md` (required) plus optional `kinoa_<role>.py`. Everything under `skills/` ships in the `kinoa-dashboard` plugin; sibling references (`${CLAUDE_SKILL_DIR}/../kinoa-<other>/…`) keep working because the whole `skills/` tree is installed together.
 
 **Frontmatter**:
 
@@ -88,7 +97,7 @@ allowed-tools: Bash(python *) Bash(cat *) Read Write Edit Glob Grep AskUserQuest
 
 **Workflow skills follow Phase 1 → 2 → 3 → 4**: 1 discover (Glob/Grep), 2 generate empty data class, 3 sync (3.1 fetch defs, 3.2 diff, 3.3 checklist for approval, 3.4 apply, 3.5 player_state strategy [events only], 3.6 generate HTML integration report), 4 integration test in the application's codebase.
 
-**Adding a new sub-skill**: create the folder, decide flavor (workflow / dashboard helper / utility / runtime helper / setup), update the orchestrator's dispatcher table, update [`HOW-TO.md`](kinoa-api-integration/HOW-TO.md) and [`evals.json`](kinoa-api-integration/evals/evals.json), re-run the install loop. Runtime helpers belong **inside** the workflow skill that uses them, not as standalone slash commands (per the consolidation that folded `kinoa-send-event` into `kinoa-sync-event-integration`).
+**Adding a new sub-skill**: create the folder under `skills/`, decide flavor (workflow / dashboard helper / utility / runtime helper / setup), update the orchestrator's dispatcher table, update [`HOW-TO.md`](skills/kinoa-api-integration/HOW-TO.md) and [`evals.json`](skills/kinoa-api-integration/evals/evals.json), re-run the install loop (or rely on the plugin auto-update). Runtime helpers belong **inside** the workflow skill that uses them, not as standalone slash commands (per the consolidation that folded `kinoa-send-event` into `kinoa-sync-event-integration`).
 
 ---
 
@@ -109,7 +118,7 @@ Session tokens expire (~24h JWT). On a 401 from any admin endpoint, ask the user
 
 ## Per-project run state
 
-Workflows persist progress and decisions to `./.kinoa-integration-state.json` in the project being integrated (suggest `.gitignore`-ing it, like the report HTMLs). Each workflow reads it on start — to resume after an interrupted or compacted session — and read-merge-writes its own phase entry whenever it fires a `phase-end` webhook. Canonical schema + merge rules live in [`kinoa-api-integration/SKILL.md`](kinoa-api-integration/SKILL.md) → "Run state". Conversation context is NOT the durable source of truth for decisions like `SESSION_START_AUTO_FIRES`, the player_state strategy, or created resource ids — the state file is.
+Workflows persist progress and decisions to `./.kinoa-integration-state.json` in the project being integrated (suggest `.gitignore`-ing it, like the report HTMLs). Each workflow reads it on start — to resume after an interrupted or compacted session — and read-merge-writes its own phase entry whenever it fires a `phase-end` webhook. Canonical schema + merge rules live in [`skills/kinoa-api-integration/SKILL.md`](skills/kinoa-api-integration/SKILL.md) → "Run state". Conversation context is NOT the durable source of truth for decisions like `SESSION_START_AUTO_FIRES`, the player_state strategy, or created resource ids — the state file is.
 
 ---
 
@@ -157,12 +166,12 @@ Predefined params (Kinoa marks `system: true`) sit at the top of `event_data`. O
 
 ## Testing
 
-[`kinoa-api-integration/evals/evals.json`](kinoa-api-integration/evals/evals.json) holds the eval cases. Run via the `anthropic-skills:skill-creator` harness (spawns with-skill + baseline subagents per case, generates a review HTML), or invoke any helper directly against a real Kinoa project — every CLI is independently usable. `kinoa-api-integration-workspace/` holds run artifacts; **do not commit it**.
+[`skills/kinoa-api-integration/evals/evals.json`](skills/kinoa-api-integration/evals/evals.json) holds the eval cases. Run via the `anthropic-skills:skill-creator` harness (spawns with-skill + baseline subagents per case, generates a review HTML), or invoke any helper directly against a real Kinoa project — every CLI is independently usable. `kinoa-api-integration-workspace/` holds run artifacts; **do not commit it**.
 
 ## File index
 
-- [`kinoa-api-integration/SKILL.md`](kinoa-api-integration/SKILL.md) — orchestrator dispatcher
-- [`kinoa-api-integration/HOW-TO.md`](kinoa-api-integration/HOW-TO.md) — install, token acquisition, walkthrough
-- [`kinoa-api-integration/references/postman-collection.json`](kinoa-api-integration/references/postman-collection.json) — runtime API spec (public hosts only)
-- [`kinoa-api-integration/evals/evals.json`](kinoa-api-integration/evals/evals.json) — eval cases
+- [`skills/kinoa-api-integration/SKILL.md`](skills/kinoa-api-integration/SKILL.md) — orchestrator dispatcher
+- [`skills/kinoa-api-integration/HOW-TO.md`](skills/kinoa-api-integration/HOW-TO.md) — install, token acquisition, walkthrough
+- [`skills/kinoa-api-integration/references/postman-collection.json`](skills/kinoa-api-integration/references/postman-collection.json) — runtime API spec (public hosts only)
+- [`skills/kinoa-api-integration/evals/evals.json`](skills/kinoa-api-integration/evals/evals.json) — eval cases
 - Each sub-skill's `SKILL.md` documents its specific phases / subcommands / branches

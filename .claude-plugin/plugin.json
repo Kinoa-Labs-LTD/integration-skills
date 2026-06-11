@@ -1,0 +1,5 @@
+{
+  "name": "kinoa-dashboard",
+  "description": "Kinoa Dashboard skills: create/publish game events, player fields, and feature settings on dashboard.kinoa.io; API-integration workflows; SDK-integration dashboard sync. Updates track the git repository — no version field, every commit is a new version.",
+  "author": { "name": "Kinoa Labs LTD", "email": "support@kinoa.io" }
+}
