@@ -6,14 +6,30 @@ Claude Code sub-skills that integrate a game/application with the **Kinoa** plat
 
 The repo doubles as a **Claude Code plugin marketplace** ([`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json)) with a single plugin **`kinoa-dashboard`** exposing every skill under `skills/`. Plugin-installed skills are invoked namespaced: `/kinoa-dashboard:kinoa-api-integration`, `/kinoa-dashboard:kinoa-init`, etc.
 
+**Recommended — register via the project's `.claude/settings.json`** (the only way auto-update is ON from the start; Claude Code prompts to add the marketplace and install the plugin on the next session in that project — the `/kinoa` SDK skill's dashboard-sync phase writes exactly this block into game projects):
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "kinoa": {
+      "source": { "source": "github", "repo": "Kinoa-Labs-LTD/integration-skills" },
+      "autoUpdate": true
+    }
+  },
+  "enabledPlugins": { "kinoa-dashboard@kinoa": true }
+}
+```
+
+**Quick CLI alternative** — registers the marketplace **without** auto-update (third-party marketplaces default to off):
+
 ```bash
 claude plugin marketplace add Kinoa-Labs-LTD/integration-skills   # or /plugin marketplace add … in-session
 claude plugin install kinoa-dashboard@kinoa
 ```
 
-A CLI add registers the marketplace with auto-update **off** (third-party default) — turn it on via `/plugin` → **Marketplaces** → `kinoa` → **Enable auto-update**, so every session start re-fetches the plugin to the latest `main` commit.
+After a CLI add, enable updates via `/plugin` → **Marketplaces** → `kinoa` → **Enable auto-update**.
 
-No `version` field is set in the plugin manifest — **every git commit is a new plugin version** (the commit SHA doubles as the integrity checksum); marketplaces registered with `autoUpdate: true` pull the latest on session start. Consumers can pre-wire the marketplace via `.claude/settings.json` → `extraKnownMarketplaces` (with `"autoUpdate": true`) + `enabledPlugins`. Private-repo access for auto-update uses `GITHUB_TOKEN`/`GH_TOKEN`.
+No `version` field is set in the plugin manifest — **every git commit is a new plugin version** (the commit SHA doubles as the integrity checksum). With auto-update on, every session start refreshes the marketplace and re-fetches installed plugins to the latest `main` commit (a `/reload-plugins` prompt appears when something updated). Private-repo access for auto-update uses `GITHUB_TOKEN`/`GH_TOKEN`.
 
 Legacy symlink install (no plugin system) still works:
 

@@ -43,16 +43,30 @@ Each sub-skill ships its own Python helper and has no cross-skill imports — yo
 
 ## Install all skills globally
 
-**Recommended — plugin marketplace** (the repo is a Claude Code plugin marketplace; skills arrive versioned and auto-updatable):
+**Recommended — register via the project's `.claude/settings.json`** (the only way auto-update is ON from the start; Claude Code prompts to add the marketplace and install the plugin on the next session in that project):
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "kinoa": {
+      "source": { "source": "github", "repo": "Kinoa-Labs-LTD/integration-skills" },
+      "autoUpdate": true
+    }
+  },
+  "enabledPlugins": { "kinoa-dashboard@kinoa": true }
+}
+```
+
+**Quick CLI alternative** — registers the marketplace **without** auto-update (third-party marketplaces default to off):
 
 ```bash
 claude plugin marketplace add Kinoa-Labs-LTD/integration-skills
 claude plugin install kinoa-dashboard@kinoa
 ```
 
-Plugin-installed skills are namespaced: `/kinoa-dashboard:kinoa-api-integration`, `/kinoa-dashboard:kinoa-init`, etc.
+After a CLI add, enable updates via `/plugin` → **Marketplaces** → `kinoa` → **Enable auto-update**.
 
-A CLI add registers the marketplace with auto-update **off** (third-party default) — turn it on via `/plugin` → **Marketplaces** → `kinoa` → **Enable auto-update**, so every session start re-fetches the plugin to the latest `main` commit.
+Plugin-installed skills are namespaced: `/kinoa-dashboard:kinoa-api-integration`, `/kinoa-dashboard:kinoa-init`, etc.
 
 **Alternative — symlinks.** From the repo root (it must be your working directory — `$PWD` becomes the absolute symlink target):
 
