@@ -3,7 +3,10 @@
 Kinoa Init — capture credentials, persist to ~/.kinoa/session.env, and validate
 the project against the Kinoa admin API.
 
-Integration type is hardcoded to API (the only supported mode).
+Integration type defaults to API (direct API integration). Pass
+--integration-type SDK for games integrated via the Kinoa Unity SDK — the
+dashboard skills then only mirror entities onto the Dashboard; the game's
+client integration stays SDK and is never affected by these admin calls.
 
 Self-contained. Prints a single JSON object on stdout describing the result.
 
@@ -11,6 +14,7 @@ Usage:
   python kinoa_init.py --game-id GAME_UUID
                        --game-secret SECRET
                        --bearer-token TOKEN
+                       [--integration-type {API,SDK}]
                        [--fix-integration-type]
 """
 
@@ -25,7 +29,8 @@ SESSION_DIR = os.path.expanduser("~/.kinoa")
 SESSION_ENV_PATH = os.path.join(SESSION_DIR, "session.env")
 
 GAME_SETTINGS_URL = "https://dashboard.kinoa.io/gamemetaapi/api/game-settings"
-INTEGRATION_TYPE = "API"
+ALLOWED_INTEGRATION_TYPES = ("API", "SDK")
+DEFAULT_INTEGRATION_TYPE = "API"
 
 
 def _load_session_env():
@@ -140,35 +145,57 @@ def set_integration_type(bearer_token, game_id, integration_type):
 def main(argv):
     parser = argparse.ArgumentParser(
         prog="kinoa_init",
-        description="Capture Kinoa credentials and validate the project (API integration only).",
+        description="Capture Kinoa credentials and validate the project (API or SDK integration).",
     )
     parser.add_argument("--game-id", required=True, help="Internal game UUID from the Kinoa dashboard.")
     parser.add_argument("--game-secret", required=True)
     parser.add_argument("--bearer-token", required=True)
     parser.add_argument(
+        "--integration-type",
+        choices=ALLOWED_INTEGRATION_TYPES,
+        default=None,
+        help="Expected integration_type of the game. API = direct API integration (default); "
+             "SDK = game integrated via the Kinoa Unity SDK (dashboard skills only mirror entities).",
+    )
+    parser.add_argument(
         "--fix-integration-type",
         action="store_true",
-        help="If the project's integration_type isn't API, POST to switch it to API.",
+        help="If the project's integration_type doesn't match --integration-type, POST to switch it. "
+             "The flip direction IS the --integration-type value — SDK flows must pass "
+             "--integration-type SDK explicitly; a bare --fix-integration-type targets API "
+             "(legacy API-mode form) and emits a warning.",
     )
     args = parser.parse_args(argv)
+    integration_type_explicit = args.integration_type is not None
+    expected_type = args.integration_type or DEFAULT_INTEGRATION_TYPE
 
     _save_session_env({
-        "KINOA_INTEGRATION_TYPE": INTEGRATION_TYPE,
+        "KINOA_INTEGRATION_TYPE": expected_type,
         "KINOA_GAME_ID": args.game_id,
         "KINOA_GAME_SECRET": args.game_secret,
         "KINOA_BEARER_TOKEN": args.bearer_token,
     })
 
     result = {"saved": True, "session_env_path": SESSION_ENV_PATH}
-    validation = validate_game_settings(args.bearer_token, args.game_id, INTEGRATION_TYPE)
+    if args.fix_integration_type and not integration_type_explicit:
+        # The flip direction silently falls back to API — in an SDK flow that papers over
+        # the mismatch instead of fixing it (validates "ok", persists API into session.env).
+        result["integration_type_defaulted"] = True
+        result["warning"] = (
+            "fix-integration-type invoked without an explicit --integration-type: "
+            f"targeting the default ({DEFAULT_INTEGRATION_TYPE}). Pass --integration-type "
+            "explicitly (API or SDK) to confirm the flip direction; SDK flows in particular "
+            "MUST pass --integration-type SDK or they silently re-target API."
+        )
+    validation = validate_game_settings(args.bearer_token, args.game_id, expected_type)
     result.update(validation)
 
     if args.fix_integration_type and validation.get("reason") == "wrong_integration_type":
-        update = set_integration_type(args.bearer_token, args.game_id, INTEGRATION_TYPE)
+        update = set_integration_type(args.bearer_token, args.game_id, expected_type)
         result["fix_attempted"] = True
         result["fix_http_status"] = update["http_status"]
         if 200 <= update["http_status"] < 300:
-            recheck = validate_game_settings(args.bearer_token, args.game_id, INTEGRATION_TYPE)
+            recheck = validate_game_settings(args.bearer_token, args.game_id, expected_type)
             result.update(recheck)
             result["fix_succeeded"] = recheck["ok"]
         else:

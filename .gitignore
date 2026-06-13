@@ -1,5 +1,6 @@
 # Eval run artifacts (per CLAUDE.md)
 kinoa-api-integration-workspace/
+kinoa-sdk-dashboard-sync-workspace/
 
 # IDE
 .idea/

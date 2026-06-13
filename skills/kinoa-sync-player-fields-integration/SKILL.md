@@ -143,7 +143,7 @@ Execute in order. After each call, read the JSON; if `ok == false`, surface `htt
   2. **No API call** — the field is already active in Kinoa. The work is purely code-side mirroring.
 
 - 🔵 **Create custom** field:
-  1. Confirm the kind with the developer. **Allowed kinds: `number`, `boolean`, `string`, `enumeration`, `version`.** Anything else must be remapped to one of these.
+  1. Confirm the kind with the developer. **Allowed kinds: `number`, `boolean`, `string`, `date`, `long_string`, `enumeration`, `version`.** Anything else must be remapped to one of these.
   2. For `enumeration`, ask for allowed values as comma-separated string (`v1,v2,v3`).
   3. Run:
      ```
@@ -281,6 +281,5 @@ If anything is missing, recommend re-running Phase 3 to verify activations, re-c
 - Headers:
   - `dashboard.kinoa.io/gamemetaapi/...` → `Authorization: Bearer <session_token>` + `Game: <uuid>` + `Game-Id: <uuid>` (both headers carry the same game UUID).
   - `gate.kinoa.io/playerevents/...` → `game: <game_secret>`.
-- Allowed kinds for custom field creation: `number`, `boolean`, `string`, `enumeration`, `version`.
-- Predefined fields may use additional kinds (`date`, `long_string`); the skill reads them but does not create new fields with those kinds.
+- Allowed kinds for custom field creation: `number`, `boolean`, `string`, `date`, `long_string`, `enumeration`, `version`.
 - The `delete` subcommand is available for cleanup after test runs but is not part of the main sync workflow — call it only when explicitly asked.

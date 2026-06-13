@@ -22,12 +22,18 @@ python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_player_fields.py" list-custom [--sta
 
 python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_player_fields.py" activate --field-id UUID
     PATCH https://dashboard.kinoa.io/gamemetaapi/api/player_fields/<id>/ACTIVATE
-    Flips a predefined field state from not_implemented → active.
+    Flips a predefined field state from not_implemented → active. Also re-activates
+    a soft-deleted USER field — for deleted fields, activate instead of create
+    (create would collide or duplicate the path).
 
 python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_player_fields.py" create --name NAME --path PATH --kind KIND [--extra ...] [--description ...] [--default-value ...] [--app-version ...] [--calculated]
     POST https://dashboard.kinoa.io/gamemetaapi/api/player_fields
-    KIND ∈ {number, boolean, string, enumeration, version}.
+    KIND ∈ {number, boolean, string, date, long_string, enumeration, version}.
     For enumeration, --extra is the comma-separated allowed values.
+    NOTE: --default-value is only valid together with --calculated (EXTERNAL
+    fields). On a normal (non-calculated) field the live API rejects it with
+    HTTP 422 "defaultValue can only be set for calculated (EXTERNAL) fields" —
+    so for code-backed game fields omit it (the SDK-sync flow never passes it).
 
 python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_player_fields.py" delete --field-id UUID
     DELETE https://dashboard.kinoa.io/gamemetaapi/api/player_fields/<id>
@@ -49,7 +55,8 @@ Every subcommand prints a single JSON object: `{ http_status, ok, response | req
 ## When to use
 
 - Direct admin tasks (e.g., "activate field X by id", "list deleted custom fields").
-- Invoked by `kinoa-sync-player-fields-integration` for every admin step.
+- Invoked by `kinoa-sync-player-fields-integration` for every admin step (API-integration mode).
+- Invoked by `kinoa-sdk-dashboard-sync` for every player-field operation when mirroring an SDK-integrated game's manifest onto the dashboard (SDK mode).
 - Useful for debugging by inspecting field records or player state directly.
 
-For anything beyond a single admin call (discovery, generating `KinoaPlayerState`, computing the diff, running the test scenario), use `kinoa-sync-player-fields-integration` instead.
+For anything beyond a single admin call (discovery, generating `KinoaPlayerState`, computing the diff, running the test scenario), use `kinoa-sync-player-fields-integration` (API mode) or `kinoa-sdk-dashboard-sync` (SDK mode) instead.

@@ -13,9 +13,12 @@ Subcommands:
       GET https://dashboard.kinoa.io/gamemetaapi/api/player_fields (types=USER)
   activate --field-id UUID
       PATCH https://dashboard.kinoa.io/gamemetaapi/api/player_fields/<id>/ACTIVATE
+      Flips not_implemented -> active; also the recovery path for soft-deleted
+      USER fields: activate the deleted record instead of re-creating.
   create --name N --path P --kind K [--extra ...] [--description ...]
          [--default-value ...] [--app-version ...] [--calculated]
       POST https://dashboard.kinoa.io/gamemetaapi/api/player_fields
+      KIND: number, boolean, string, date, long_string, enumeration, version.
   delete --field-id UUID
       DELETE https://dashboard.kinoa.io/gamemetaapi/api/player_fields/<id>
       (soft delete — field state becomes "deleted")
@@ -37,7 +40,7 @@ SESSION_ENV_PATH = os.path.join(SESSION_DIR, "session.env")
 PLAYER_FIELDS_URL = "https://dashboard.kinoa.io/gamemetaapi/api/player_fields"
 PLAYER_STATE_URL = "https://gate.kinoa.io/playerevents/api/v3/player-state"
 
-ALLOWED_KINDS = ("number", "boolean", "string", "enumeration", "version")
+ALLOWED_KINDS = ("number", "boolean", "string", "date", "long_string", "enumeration", "version")
 
 
 def _load_session_env():
