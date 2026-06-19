@@ -46,6 +46,16 @@ configuration (bound to a version), load its data, publish it → fetch by key.
 the exact path the shipped application uses. Never emit bearer-carrying code into
 an application — that's an admin token.
 
+**Cross-game backstop (`--expect-game UUID`)** — accepted by every *mutating*
+subcommand (`create-schema`, `publish-schema`, `create-setting`, `create-config`,
+`import-config-data`, `mark-config-default`, `submit-config`, `publish-config`,
+`add-test-players`, `delete-config`). When passed, the helper aborts with
+`error: session_game_mismatch` (exit 2) *before* any state change unless
+`session.env`'s `KINOA_GAME_ID` equals the given UUID — guarding against a stale
+session from another game. Mirrors the SDK-sync planner's `listing_game_mismatch`
+check. Pass the intended game id whenever scripting these; omitting it preserves
+the previous behavior.
+
 ## Setup
 
 The helper auto-loads `~/.kinoa/session.env`. Run `/kinoa-init` first. A `401`

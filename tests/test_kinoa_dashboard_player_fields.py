@@ -112,6 +112,27 @@ class PlayerFieldsHelperTests(unittest.TestCase):
         self.assertIn("states=deleted", url)
         self.assertIn("types=USER", url)
 
+    # ---- cross-game guard (--expect-game) ----
+
+    def test_expect_game_mismatch_aborts_delete_before_request(self):
+        self._mock_request([])  # any request would raise IndexError — proves none fired
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as cm:
+            self.mod.main(["delete", "--field-id", FIELD_ID,
+                           "--expect-game", "99999999-9999-9999-9999-999999999999"])
+        self.assertEqual(cm.exception.code, 2)
+        self.assertEqual(json.loads(out.getvalue())["error"], "session_game_mismatch")
+        self.assertEqual(self.requests, [])
+
+    def test_expect_game_match_proceeds_on_activate(self):
+        self._mock_request([(200, json.dumps({"state": "active"}))])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = self.mod.main(["activate", "--field-id", FIELD_ID,
+                                  "--expect-game", os.environ["KINOA_GAME_ID"]])
+        self.assertEqual(code, 0)
+        self.assertEqual(self.requests[0]["method"], "PATCH")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -201,6 +201,28 @@ def _admin_headers():
     return {"Authorization": f"Bearer {bearer}", "Game": game_id, "Game-Id": game_id}
 
 
+def _guard_expected_game(args):
+    """Cross-game backstop. Mirrors kinoa_sdk_sync_plan's listing_game_mismatch
+    check: when the caller passes --expect-game, it must equal the game the
+    session credentials point at (KINOA_GAME_ID from session.env). A stale
+    session.env left over from ANOTHER game would otherwise mutate the WRONG
+    game's dashboard. Fatal, before any state-changing call. Read-only and
+    flagless calls are unaffected."""
+    expected = getattr(args, "expect_game", None)
+    if not expected:
+        return
+    session_game = (os.environ.get("KINOA_GAME_ID") or "").strip()
+    if expected.strip().lower() != session_game.lower():
+        print(json.dumps({
+            "error": "session_game_mismatch",
+            "expected_game": expected,
+            "session_game": session_game or None,
+            "hint": "session.env points at a different game than --expect-game. "
+                    "Re-run /kinoa-init for the intended game before retrying.",
+        }, indent=2))
+        sys.exit(2)
+
+
 def _public_headers():
     secret = os.environ.get("KINOA_GAME_SECRET")
     if not secret:
@@ -513,6 +535,15 @@ def main(argv):
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
+    # Parent carrying the cross-game backstop, attached to every mutating subcommand.
+    guard = argparse.ArgumentParser(add_help=False)
+    guard.add_argument(
+        "--expect-game",
+        default=None,
+        help="Cross-game backstop: abort unless session.env's KINOA_GAME_ID equals this UUID. "
+             "Mirrors the SDK-sync planner's game-mismatch check; pass the manifest/intended game id.",
+    )
+
     # Schemas
     p = sub.add_parser("list-schemas", help="GET all schemas.")
     p.add_argument("--rows", type=int, default=100)
@@ -529,7 +560,7 @@ def main(argv):
     p.add_argument("--schema-id", required=True)
     p.set_defaults(func=cmd_latest_version)
 
-    p = sub.add_parser("create-schema", help="POST a schema (DRAFT). Full body via --body-file/stdin, or --name + fields.")
+    p = sub.add_parser("create-schema", parents=[guard], help="POST a schema (DRAFT). Full body via --body-file/stdin, or --name + fields.")
     p.add_argument("--body-file", help="Path to a full SchemaDto JSON (e.g. from kinoa-csv-schema-infer). '-' or omit to read stdin.")
     p.add_argument("--name", help="Schema name (when not using --body-file).")
     p.add_argument("--description", default="")
@@ -537,7 +568,7 @@ def main(argv):
     p.add_argument("--fields-json", default="", help="Inline JSON array of tableFields: [{\"name\":\"x\",\"type\":\"integer\"}].")
     p.set_defaults(func=cmd_create_schema)
 
-    p = sub.add_parser("publish-schema", help="POST /schemas/{id}/publish (DRAFT → ACTIVE).")
+    p = sub.add_parser("publish-schema", parents=[guard], help="POST /schemas/{id}/publish (DRAFT → ACTIVE).")
     p.add_argument("--schema-id", required=True)
     p.set_defaults(func=cmd_publish_schema)
 
@@ -550,7 +581,7 @@ def main(argv):
     p.add_argument("--setting-id", required=True)
     p.set_defaults(func=cmd_get_setting)
 
-    p = sub.add_parser("create-setting", help="POST a setting binding a runtime key to a schema.")
+    p = sub.add_parser("create-setting", parents=[guard], help="POST a setting binding a runtime key to a schema.")
     p.add_argument("--key", required=True, help="Runtime lookup key, e.g. BoostersConfig.")
     p.add_argument("--name", required=True)
     p.add_argument("--schema-id", required=True)
@@ -567,7 +598,7 @@ def main(argv):
     p.add_argument("--config-id", required=True)
     p.set_defaults(func=cmd_get_configuration)
 
-    p = sub.add_parser("create-config", help="POST a DRAFT configuration (no data yet); auto-builds tableColumns from the schema.")
+    p = sub.add_parser("create-config", parents=[guard], help="POST a DRAFT configuration (no data yet); auto-builds tableColumns from the schema.")
     p.add_argument("--setting-id", required=True)
     p.add_argument("--schema-id", required=True, help="UUID of the schema (used to mirror its fields into tableColumns).")
     p.add_argument("--schema-version-id", required=True, help="UUID of the schema version (see latest-version).")
@@ -577,24 +608,24 @@ def main(argv):
     p.add_argument("--default", action="store_true", help="Set isDefault=true at creation (resolves for any player via the normal runtime call; no getDefault flag needed).")
     p.set_defaults(func=cmd_create_config)
 
-    p = sub.add_parser("import-config-data", help="PUT a CSV of data rows into a configuration (multipart).")
+    p = sub.add_parser("import-config-data", parents=[guard], help="PUT a CSV of data rows into a configuration (multipart).")
     p.add_argument("--config-id", required=True)
     p.add_argument("--csv", required=True, help="Path to the CSV file (header row = schema field names).")
     p.set_defaults(func=cmd_import_config_data)
 
-    p = sub.add_parser("mark-config-default", help="PATCH /configurations/{id}/mark-as-default (config must already be SCHEDULED/ACTIVE/PAUSED).")
+    p = sub.add_parser("mark-config-default", parents=[guard], help="PATCH /configurations/{id}/mark-as-default (config must already be SCHEDULED/ACTIVE/PAUSED).")
     p.add_argument("--config-id", required=True)
     p.set_defaults(func=cmd_mark_config_default)
 
-    p = sub.add_parser("submit-config", help="PATCH status DRAFT → IN_REVIEW (required before publish).")
+    p = sub.add_parser("submit-config", parents=[guard], help="PATCH status DRAFT → IN_REVIEW (required before publish).")
     p.add_argument("--config-id", required=True)
     p.set_defaults(func=cmd_submit_config)
 
-    p = sub.add_parser("publish-config", help="POST /configurations/{id}/publish (IN_REVIEW → SCHEDULED).")
+    p = sub.add_parser("publish-config", parents=[guard], help="POST /configurations/{id}/publish (IN_REVIEW → SCHEDULED).")
     p.add_argument("--config-id", required=True)
     p.set_defaults(func=cmd_publish_config)
 
-    p = sub.add_parser("add-test-players", help="POST test players who may resolve a non-public configuration.")
+    p = sub.add_parser("add-test-players", parents=[guard], help="POST test players who may resolve a non-public configuration.")
     p.add_argument("--config-id", required=True)
     p.add_argument("--player-id", action="append", required=True, help="Repeatable.")
     p.set_defaults(func=cmd_add_test_players)
@@ -604,7 +635,7 @@ def main(argv):
     p.add_argument("--player-id", required=True)
     p.set_defaults(func=cmd_test_config)
 
-    p = sub.add_parser("delete-config", help="DELETE a configuration.")
+    p = sub.add_parser("delete-config", parents=[guard], help="DELETE a configuration.")
     p.add_argument("--config-id", required=True)
     p.set_defaults(func=cmd_delete_config)
 
@@ -620,6 +651,7 @@ def main(argv):
     p.set_defaults(func=cmd_get_config)
 
     args = parser.parse_args(argv)
+    _guard_expected_game(args)
     return args.func(args)
 
 

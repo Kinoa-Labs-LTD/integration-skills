@@ -46,6 +46,8 @@ python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_player_fields.py" get-player-state -
 
 Every subcommand prints a single JSON object: `{ http_status, ok, response | request_body, ...context }`.
 
+**Cross-game backstop (`--expect-game UUID`)** — accepted by every *mutating* subcommand (`activate`, `create`, `delete`). When passed, the helper aborts with `error: session_game_mismatch` (exit 2) *before* any state change unless `session.env`'s `KINOA_GAME_ID` equals the given UUID — guarding against a stale session from another game. Mirrors the SDK-sync planner's `listing_game_mismatch` check. Orchestrators should always pass the intended/manifest game id; omitting it preserves the previous behavior.
+
 ## Security boundary
 
 `list-predefined` / `list-custom` / `activate` / `create` / `delete` call `dashboard.kinoa.io` with `Authorization: Bearer <token>` + `Game: <uuid>` + `Game-Id: <uuid>` (both headers carry the same UUID) — **skill-only / admin**. Never embed these calls in application runtime code.

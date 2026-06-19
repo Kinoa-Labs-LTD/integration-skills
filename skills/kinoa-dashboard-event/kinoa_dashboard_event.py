@@ -123,6 +123,28 @@ def _admin_headers():
     return {"Authorization": f"Bearer {bearer}", "Game": game_id, "Game-Id": game_id}
 
 
+def _guard_expected_game(args):
+    """Cross-game backstop. Mirrors kinoa_sdk_sync_plan's listing_game_mismatch
+    check: when the caller passes --expect-game, it must equal the game the
+    session credentials point at (KINOA_GAME_ID from session.env). A stale
+    session.env left over from ANOTHER game would otherwise mutate the WRONG
+    game's dashboard (here a HARD delete is unrecoverable). Fatal, before any
+    state-changing call. Read-only and flagless calls are unaffected."""
+    expected = getattr(args, "expect_game", None)
+    if not expected:
+        return
+    session_game = (os.environ.get("KINOA_GAME_ID") or "").strip()
+    if expected.strip().lower() != session_game.lower():
+        print(json.dumps({
+            "error": "session_game_mismatch",
+            "expected_game": expected,
+            "session_game": session_game or None,
+            "hint": "session.env points at a different game than --expect-game. "
+                    "Re-run /kinoa-init for the intended game before retrying.",
+        }, indent=2))
+        sys.exit(2)
+
+
 def _list_events(types, rows, states=None):
     params = {
         "page": "0",
@@ -329,6 +351,15 @@ def main(argv):
     parser = argparse.ArgumentParser(prog="kinoa_dashboard_event", description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
+    # Parent carrying the cross-game backstop, attached to every mutating subcommand.
+    guard = argparse.ArgumentParser(add_help=False)
+    guard.add_argument(
+        "--expect-game",
+        default=None,
+        help="Cross-game backstop: abort unless session.env's KINOA_GAME_ID equals this UUID. "
+             "Mirrors the SDK-sync planner's game-mismatch check; pass the manifest/intended game id.",
+    )
+
     p_lp = sub.add_parser("list-predefined", help="GET predefined game_events.")
     p_lp.add_argument("--rows", type=int, default=100, help="Page size. Default: 100.")
     p_lp.add_argument("--states", default=None, help="Optional states filter. Currently IGNORED by the live game_events endpoint (events have no deleted state); forward-compat only.")
@@ -343,11 +374,11 @@ def main(argv):
     p_get.add_argument("--event-id", required=True)
     p_get.set_defaults(func=cmd_get)
 
-    p_pub = sub.add_parser("publish", help="Publish a predefined event (status NOT_IMPLEMENTED -> ACTIVE).")
+    p_pub = sub.add_parser("publish", parents=[guard], help="Publish a predefined event (status NOT_IMPLEMENTED -> ACTIVE).")
     p_pub.add_argument("--event-id", required=True)
     p_pub.set_defaults(func=cmd_publish)
 
-    p_cre = sub.add_parser("create", help="POST a custom (USER) event.")
+    p_cre = sub.add_parser("create", parents=[guard], help="POST a custom (USER) event.")
     p_cre.add_argument("--name", required=True)
     p_cre.add_argument(
         "--no-analytics",
@@ -362,7 +393,7 @@ def main(argv):
     )
     p_cre.set_defaults(func=cmd_create)
 
-    p_add = sub.add_parser("add-params", help="Append non-system parameters to an existing event (GET + merged PUT).")
+    p_add = sub.add_parser("add-params", parents=[guard], help="Append non-system parameters to an existing event (GET + merged PUT).")
     p_add.add_argument("--event-id", required=True)
     p_add.add_argument(
         "--param",
@@ -372,11 +403,12 @@ def main(argv):
     )
     p_add.set_defaults(func=cmd_add_params)
 
-    p_del = sub.add_parser("delete", help="DELETE a game_event by id.")
+    p_del = sub.add_parser("delete", parents=[guard], help="DELETE a game_event by id.")
     p_del.add_argument("--event-id", required=True)
     p_del.set_defaults(func=cmd_delete)
 
     args = parser.parse_args(argv)
+    _guard_expected_game(args)
     return args.func(args)
 
 

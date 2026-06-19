@@ -58,6 +58,8 @@ python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_event.py" delete --event-id UUID
 
 Every subcommand prints a single JSON object: `{ http_status, ok, response | request_body, ...context }`.
 
+**Cross-game backstop (`--expect-game UUID`)** — accepted by every *mutating* subcommand (`publish`, `create`, `add-params`, `delete`). When passed, the helper aborts with `error: session_game_mismatch` (exit 2) *before* any state change unless `session.env`'s `KINOA_GAME_ID` equals the given UUID — guarding against a stale session from another game (here an irreversible HARD delete). Mirrors the SDK-sync planner's `listing_game_mismatch` check. Orchestrators should always pass the intended/manifest game id; omitting it preserves the previous behavior.
+
 ## Security boundary
 
 This skill calls `dashboard.kinoa.io` with `Authorization: Bearer <token>` + `Game: <uuid>` + `Game-Id: <uuid>` (both headers carry the same UUID). **Skill-only / admin** — never embed these calls or the session token in application runtime code. App code uses `gate.kinoa.io` with the public `game: <secret>` header (see Postman collection at `../kinoa-api-integration/references/postman-collection.json`).

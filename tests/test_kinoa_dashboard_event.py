@@ -262,6 +262,39 @@ class EventHelperTests(unittest.TestCase):
             code = self.mod.main(["add-params", "--event-id", EVENT_ID, "--param", "score:number"])
         self.assertEqual(code, 0)
 
+    # ---- cross-game guard (--expect-game) ----
+
+    def test_expect_game_mismatch_aborts_before_any_request(self):
+        # session.env game (set in setUp) != --expect-game → abort before the DELETE.
+        self._mock_request([])  # any request would raise IndexError — proves none fired
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as cm:
+            self.mod.main(["delete", "--event-id", EVENT_ID,
+                           "--expect-game", "99999999-9999-9999-9999-999999999999"])
+        self.assertEqual(cm.exception.code, 2)
+        result = json.loads(out.getvalue())
+        self.assertEqual(result["error"], "session_game_mismatch")
+        self.assertEqual(self.requests, [])
+
+    def test_expect_game_match_proceeds(self):
+        # --expect-game equal to session.env game → guard passes, DELETE fires.
+        self._mock_request([(200, json.dumps({"ok": True}))])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = self.mod.main(["delete", "--event-id", EVENT_ID,
+                                  "--expect-game", os.environ["KINOA_GAME_ID"]])
+        self.assertEqual(code, 0)
+        self.assertEqual(self.requests[0]["method"], "DELETE")
+
+    def test_expect_game_is_case_insensitive_and_trims(self):
+        self._mock_request([(200, json.dumps({"ok": True}))])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = self.mod.main(["delete", "--event-id", EVENT_ID,
+                                  "--expect-game", "  " + os.environ["KINOA_GAME_ID"].upper() + "  "])
+        self.assertEqual(code, 0)
+        self.assertEqual(self.requests[0]["method"], "DELETE")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -151,6 +151,8 @@ Execute approved actions in this fixed order (events before fields; within event
 | `player_fields.activate[]` | `kinoa_dashboard_player_fields.py activate --field-id <id>` |
 | `player_fields.create[]` | `kinoa_dashboard_player_fields.py create --name <name> --path <path> --kind <kind> [--extra ...]` — **never pass `--default-value`**: the live API 422-rejects it for non-calculated fields (*"defaultValue can only be set for calculated (EXTERNAL) fields"*), and manifest fields are code-backed, never calculated |
 
+**Always append `--expect-game <game_id from the manifest>` to every call in this table.** It is the per-call cross-game backstop in the dashboard helpers (mirrors the planner's `listing_game_mismatch`): the helper aborts with `session_game_mismatch` (exit 2) before any state change if `session.env`'s `KINOA_GAME_ID` drifted to a different game. A `session_game_mismatch` is the same condition as the planner's exit 2 — stop and route to kinoa-init for the manifest's game; do not retry without `--expect-game`.
+
 Per action: run the helper, read its JSON, record `{surface, name|path, action, id, http_status, ok}`. Failures don't abort the run (collect and continue) — **except 401**: stop immediately, write a partial sync result (`status: "partial"`), route to kinoa-init for token rotation, then re-run from Phase 2 (the recomputed plan contains only the remaining delta — this is the idempotent resume path).
 
 `create` events: derive `--param` specs from the plan item's `params` (`name:kind` or `name:kind:extra`); pass `--no-analytics` only when the manifest entry has `"send_to_analytics": false`.

@@ -97,6 +97,28 @@ def _admin_headers():
     return {"Authorization": f"Bearer {bearer}", "Game": game_id, "Game-Id": game_id}
 
 
+def _guard_expected_game(args):
+    """Cross-game backstop. Mirrors kinoa_sdk_sync_plan's listing_game_mismatch
+    check: when the caller passes --expect-game, it must equal the game the
+    session credentials point at (KINOA_GAME_ID from session.env). A stale
+    session.env left over from ANOTHER game would otherwise mutate the WRONG
+    game's dashboard. Fatal, before any state-changing call. Read-only and
+    flagless calls are unaffected."""
+    expected = getattr(args, "expect_game", None)
+    if not expected:
+        return
+    session_game = (os.environ.get("KINOA_GAME_ID") or "").strip()
+    if expected.strip().lower() != session_game.lower():
+        print(json.dumps({
+            "error": "session_game_mismatch",
+            "expected_game": expected,
+            "session_game": session_game or None,
+            "hint": "session.env points at a different game than --expect-game. "
+                    "Re-run /kinoa-init for the intended game before retrying.",
+        }, indent=2))
+        sys.exit(2)
+
+
 def _public_headers():
     secret = os.environ.get("KINOA_GAME_SECRET")
     if not secret:
@@ -204,6 +226,15 @@ def main(argv):
     parser = argparse.ArgumentParser(prog="kinoa_dashboard_player_fields", description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
+    # Parent carrying the cross-game backstop, attached to every mutating subcommand.
+    guard = argparse.ArgumentParser(add_help=False)
+    guard.add_argument(
+        "--expect-game",
+        default=None,
+        help="Cross-game backstop: abort unless session.env's KINOA_GAME_ID equals this UUID. "
+             "Mirrors the SDK-sync planner's game-mismatch check; pass the manifest/intended game id.",
+    )
+
     p_list = sub.add_parser("list-predefined", help="GET predefined (system) player fields.")
     p_list.add_argument(
         "--states",
@@ -222,15 +253,15 @@ def main(argv):
     p_lc.add_argument("--rows", type=int, default=100, help="Page size. Default: 100.")
     p_lc.set_defaults(func=cmd_list_custom)
 
-    p_act = sub.add_parser("activate", help="PATCH a predefined field to ACTIVATE.")
+    p_act = sub.add_parser("activate", parents=[guard], help="PATCH a predefined field to ACTIVATE.")
     p_act.add_argument("--field-id", required=True, help="Predefined field UUID.")
     p_act.set_defaults(func=cmd_activate)
 
-    p_del = sub.add_parser("delete", help="DELETE a player field (soft delete).")
+    p_del = sub.add_parser("delete", parents=[guard], help="DELETE a player field (soft delete).")
     p_del.add_argument("--field-id", required=True, help="Field UUID.")
     p_del.set_defaults(func=cmd_delete)
 
-    p_create = sub.add_parser("create", help="POST a custom player field.")
+    p_create = sub.add_parser("create", parents=[guard], help="POST a custom player field.")
     p_create.add_argument("--name", required=True)
     p_create.add_argument("--path", required=True, help="Dot-separated path from root, e.g. profile.level.")
     p_create.add_argument("--kind", required=True, choices=ALLOWED_KINDS)
@@ -246,6 +277,7 @@ def main(argv):
     p_state.set_defaults(func=cmd_get_player_state)
 
     args = parser.parse_args(argv)
+    _guard_expected_game(args)
     return args.func(args)
 
 
