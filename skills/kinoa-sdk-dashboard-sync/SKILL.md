@@ -11,7 +11,7 @@ Mirrors an SDK-integrated game's locally-defined Kinoa entities (game events, pl
 
 This is the SDK-mode counterpart of the `kinoa-sync-*-integration` workflows. It does **no discovery in game code** (the manifest already carries the inventory) and **never generates or edits application code**.
 
-## Hard rules (non-negotiable) 
+## Hard rules (non-negotiable)
 
 1. **Never delete anything on the Dashboard.** No `delete` subcommand invocations, ever — not for "cleanup", not for "stale" entries, not on request mid-run **regardless of who asks** (developer, PM, senior engineer, operator). Point them to the dashboard UI for deletions; that's an operator decision outside this skill — and "I'll just call the helper directly, it's not *the sync* deleting" is the same violation re-hatted. Event deletion is HARD on the live dashboard (irreversible); all the more reason it never rides along in someone else's approved change set.
 2. **Soft-deleted records are re-activated, never re-created.** A manifest **field** whose path matches a `deleted` dashboard record → `activate` that record's id; calling `create` for such a path is a violation — it collides with or duplicates the existing record. Predefined events parked as `NOT_IMPLEMENTED` → `publish`, never `create`. **Custom events have no soft-delete on the live dashboard** (verified live 2026-06-12: DELETE is hard — the record 404s and the server's `EventModelStatus` enum has no deleted value), so a manifest custom event absent from the dashboard is `create`d — that is the correct and only recovery, not a rule violation. Should the dashboard ever grow event soft-delete, the planner already handles it (`publish` + `was_deleted`).
