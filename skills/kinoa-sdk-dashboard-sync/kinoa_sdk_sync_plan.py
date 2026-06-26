@@ -37,10 +37,16 @@ import json
 import sys
 
 PLAN_SCHEMA_VERSION = 1
-SUPPORTED_MANIFEST_VERSIONS = (1,)
+SUPPORTED_MANIFEST_VERSIONS = (1, 2)  # 2 adds the feature_settings section
 
 EVENT_PARAM_KINDS = ("number", "boolean", "string", "date", "enumeration", "string_array", "number_array")
 FIELD_KINDS = ("number", "boolean", "string", "date", "long_string", "enumeration", "version")
+# Feature-settings column kinds the OPERATOR can actually use (the FS UI dropdown). API values are
+# lowercase. create-schema itself is looser — it accepts the full 11-value SchemaColumnType verbatim
+# (a backend gap, live-probed 2026-06-26: no server-side type validation), so the producer maps every
+# column down to these 5, and we fold live schema types through the same map before diffing so a code
+# `string` never false-conflicts with a live `date`/`long_string` column.
+FS_COLUMN_KINDS = ("integer", "number", "string", "boolean", "bundle_key")
 
 # The dashboard auto-attaches these system params to every event. Verified live
 # 2026-06-12: a CREATE carrying a same-named operator param silently DISPLACES the
@@ -54,7 +60,7 @@ SYSTEM_EVENT_PARAM_NAMES = ("device_id", "time", "time_ms")
 KNOWN_MANIFEST_KEYS = (
     "schema_version", "generated_at", "producer", "integration_type", "game_id",
     "sdk_version", "head_sha", "round", "project_root",
-    "events", "player_fields", "unsupported_by_cli",
+    "events", "player_fields", "feature_settings", "unsupported_by_cli",
 )
 
 
@@ -156,15 +162,65 @@ def _validate_params(params, allowed, owner, unsupported):
     return ok
 
 
-def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_custom, pf_custom_deleted):
+def _fs_normalize_kind(t):
+    """Fold any column type to the operator's 5 FS kinds. The producer already maps to these;
+    live schemas created elsewhere may carry finer SchemaColumnType values — folding both sides
+    the same way stops a code `string` from false-conflicting with a live `date`/`long_string`."""
+    t = (t or "").strip().lower()
+    if t in ("integer", "long"):
+        return "integer"
+    if t in ("number", "decimal", "float", "double"):
+        return "number"
+    if t == "boolean":
+        return "boolean"
+    if t in ("bundle_key", "bundlekey"):
+        return "bundle_key"
+    return "string"  # string, long_string, date, version, enumeration, object, arrays, unknown
+
+
+def _fs_latest_version(record):
+    """The schema's ACTIVE version (else the highest-numbered), or None."""
+    versions = record.get("versions") or []
+    if not versions:
+        return None
+    active = [v for v in versions if str(v.get("status") or "").strip().lower() == "active"]
+    pool = active or versions
+
+    def _vnum(v):
+        try:
+            return int(str(v.get("version")))
+        except (TypeError, ValueError):
+            return v.get("order") or 0
+
+    return max(pool, key=_vnum)
+
+
+def _fs_fields_map(record):
+    """{normalized name: normalized FS kind} from a schema's active/latest version, or None when
+    the listing carries no version fields (a summary-only list-schemas row — can't field-diff)."""
+    ver = _fs_latest_version(record)
+    if not ver or ver.get("tableFields") is None:
+        return None
+    out = {}
+    for f in ver.get("tableFields") or []:
+        if isinstance(f, dict) and f.get("name"):
+            out[_norm(f["name"])] = _fs_normalize_kind(f.get("type"))
+    return out
+
+
+def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_custom, pf_custom_deleted,
+               fs_schemas=None, fs_settings=None):
     plan = {
         "schema_version": PLAN_SCHEMA_VERSION,
         "manifest_schema_version": manifest.get("schema_version"),
         "integration_type": manifest.get("integration_type"),
         "events": {"publish": [], "create": [], "add_params": [], "already_ok": [], "warnings": []},
         "player_fields": {"activate": [], "create": [], "already_ok": [], "warnings": []},
+        "feature_settings": {"schema_create": [], "schema_publish": [], "setting_create": [],
+                             "config_create": [], "config_publish": [], "version_conflict": [],
+                             "already_ok": [], "warnings": []},
         "unsupported": list(manifest.get("unsupported_by_cli") or []),
-        "dashboard_only": {"events": [], "player_fields": []},
+        "dashboard_only": {"events": [], "player_fields": [], "feature_schemas": [], "feature_settings": []},
         "unknown_manifest_sections": sorted(set(manifest) - set(KNOWN_MANIFEST_KEYS)),
     }
 
@@ -388,6 +444,100 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
         if path not in manifest_field_paths and _item_state(record) == "active":
             plan["dashboard_only"]["player_fields"].append({"path": path, "id": record.get("id")})
 
+    # --- Feature settings: schemas (by name) + settings (by key) + default configs (new settings) ---
+    fs = manifest.get("feature_settings") or {}
+    fsp = plan["feature_settings"]
+    fs_schemas_by_name = _index_by(fs_schemas or [], "name")
+    fs_settings_by_key = _index_by(fs_settings or [], "key")
+    manifest_schema_names = set()
+    manifest_setting_keys = set()
+    live_active_version_by_schema = {}
+
+    for sch in fs.get("schemas") or []:
+        name = _norm(sch.get("name"))
+        if not name:
+            continue
+        manifest_schema_names.add(name)
+        want_fields = [{"name": f.get("name"), "kind": _fs_normalize_kind(f.get("kind")),
+                        "isRequired": f.get("is_required", True)}
+                       for f in (sch.get("fields") or [])]
+        live = fs_schemas_by_name.get(name)
+        if live is None:
+            fsp["schema_create"].append({
+                "name": name, "fields": want_fields,
+                "reason": "feature schema not present on the dashboard — create, then publish if it is not auto-ACTIVE",
+            })
+            continue
+        ver = _fs_latest_version(live)
+        if ver is not None and ver.get("version") is not None:
+            live_active_version_by_schema[name] = ver.get("version")
+        item = {"name": name, "id": live.get("id"), "current_status": live.get("status")}
+        live_fields = _fs_fields_map(live)
+        if live_fields is None:
+            fsp["already_ok"].append(dict(item,
+                reason="feature schema exists — column shape NOT verified (no version fields in the listing); "
+                       "fetch get-schema to confirm the columns match the code before relying on it"))
+        else:
+            want_map = {_norm(f["name"]): f["kind"] for f in want_fields}
+            if want_map == live_fields:
+                fsp["already_ok"].append(dict(item, reason="feature schema exists with matching column shape"))
+            else:
+                fsp["version_conflict"].append(dict(item,
+                    code_only_columns=sorted(k for k in want_map if k not in live_fields),
+                    dashboard_only_columns=sorted(k for k in live_fields if k not in want_map),
+                    type_changed_columns=sorted(k for k in want_map if k in live_fields and want_map[k] != live_fields[k]),
+                    reason="code column shape differs from the live ACTIVE schema version — the helpers cannot edit a "
+                           "published version; needs a developer-approved NEW schema version, after which the code's "
+                           "requested version at the four wiring sites must be re-aligned and Default Feature Settings.zip re-exported"))
+        status = str(live.get("status") or "").strip().lower()
+        if status and status != "active":
+            fsp["schema_publish"].append(dict(item, reason="feature schema exists but is not ACTIVE — publish"))
+
+    for st in fs.get("settings") or []:
+        key = _norm(st.get("key"))
+        if not key:
+            continue
+        manifest_setting_keys.add(key)
+        schema_name = _norm(st.get("schema_name"))
+        version = st.get("version")
+        # Version-number sanity: a setting bound to an existing schema whose live ACTIVE version differs
+        # from the requested number resolves to VERSION_NOT_FOUND at runtime. Warn, never block.
+        live_ver = live_active_version_by_schema.get(schema_name)
+        if live_ver is not None and version is not None and str(live_ver) != str(version):
+            fsp["warnings"].append({
+                "key": key, "schema_name": schema_name,
+                "requested_version": version, "live_active_version": live_ver,
+                "reason": "the code requests a schema version that is not the live ACTIVE version — runtime would get "
+                          "VERSION_NOT_FOUND; align the code's version or publish the matching schema version",
+            })
+        live = fs_settings_by_key.get(key)
+        if live is not None:
+            fsp["already_ok"].append({"surface": "setting", "key": key, "id": live.get("id"),
+                                      "reason": "feature setting key already exists"})
+            continue
+        fsp["setting_create"].append({
+            "key": key, "schema_name": schema_name, "version": version,
+            "reason": "feature setting key not present — create (binds the schema by id)",
+        })
+        # D-2: a brand-new setting gets an EMPTY published default configuration (no data rows).
+        fsp["config_create"].append({
+            "setting_key": key, "schema_name": schema_name, "default": True,
+            "seed_csv": st.get("seed_csv"),
+            "reason": "new setting — create a default configuration and seed it from the developer's CSV "
+                      "(seed_csv, mirrored values; operator edits afterward), or empty when no seed_csv",
+        })
+        fsp["config_publish"].append({
+            "setting_key": key,
+            "reason": "publish the empty default configuration (submit -> publish) so the key resolves at runtime",
+        })
+
+    for name, record in fs_schemas_by_name.items():
+        if name not in manifest_schema_names:
+            plan["dashboard_only"]["feature_schemas"].append({"name": name, "id": record.get("id")})
+    for key, record in fs_settings_by_key.items():
+        if key not in manifest_setting_keys:
+            plan["dashboard_only"]["feature_settings"].append({"key": key, "id": record.get("id")})
+
     return plan
 
 
@@ -400,6 +550,10 @@ def main(argv):
     parser.add_argument("--fields-predefined", required=True)
     parser.add_argument("--fields-custom", required=True)
     parser.add_argument("--fields-custom-deleted", default=None)
+    parser.add_argument("--fs-schemas", default=None,
+                        help="Live feature schemas (list-schemas, ideally enriched with get-schema "
+                             "records so versions[].tableFields are present for the column diff).")
+    parser.add_argument("--fs-settings", default=None, help="Live feature settings (list-settings).")
     args = parser.parse_args(argv)
 
     manifest = _load_json(args.manifest, "manifest")
@@ -420,6 +574,8 @@ def main(argv):
         "fields-custom": _extract_items(_load_json(args.fields_custom, "fields-custom"), "fields-custom"),
         "fields-custom-deleted": _extract_items(_load_json(args.fields_custom_deleted, "fields-custom-deleted"), "fields-custom-deleted")
         if args.fields_custom_deleted else [],
+        "fs-schemas": _extract_items(_load_json(args.fs_schemas, "fs-schemas"), "fs-schemas") if args.fs_schemas else [],
+        "fs-settings": _extract_items(_load_json(args.fs_settings, "fs-settings"), "fs-settings") if args.fs_settings else [],
     }
 
     # Cross-game backstop: every listing record carries the game it belongs to
@@ -445,6 +601,8 @@ def main(argv):
         listings["fields-predefined"],
         listings["fields-custom"],
         listings["fields-custom-deleted"],
+        listings["fs-schemas"],
+        listings["fs-settings"],
     )
     print(json.dumps(plan, indent=2))
     return 0
