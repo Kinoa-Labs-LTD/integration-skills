@@ -570,16 +570,18 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                 "reason": "the code requests a schema version that is not the live ACTIVE version — runtime would get "
                           "VERSION_NOT_FOUND; align the code's version or publish the matching schema version",
             })
-        # Bundle dependency: the backend validates seeded bundle_key values against existing
-        # Bundles — the whole CSV import 422s when any value is missing (live-verified 2026-07-02:
-        # 'Import Failed: Line: 1. [sku] is invalid bundle key'). Warn ahead of the checklist.
+        # Bundle dependency: seeded bundle_key values must (1) match the Bundle-key FORMAT — start
+        # with a letter, then only letters/digits/_/- (no dots) — and (2) exist as Bundles; the
+        # whole CSV import 422s otherwise (live-verified 2026-07-02: 'Import Failed: Line: 1.
+        # [sku] is invalid bundle key'). Warn ahead of the checklist.
         bk_cols = bundle_key_columns_by_schema.get(schema_name)
         if bk_cols and st.get("seed_csv"):
             fsp["warnings"].append({
                 "key": key, "schema_name": schema_name, "bundle_key_columns": bk_cols,
                 "reason": "the seed import will be REJECTED (422 invalid bundle key) unless every value in "
-                          "these columns already exists as a Bundle key on the dashboard — create the "
-                          "Bundles first, or expect an empty default config + a manual re-import",
+                          "these columns is a valid Bundle key (starts with a letter; only letters, digits, "
+                          "_ and -; no dots) AND already exists as a Bundle on the dashboard — fix/create "
+                          "the Bundles first, or expect an empty default config + a manual re-import",
             })
         live = fs_settings_by_key.get(key)
         if live is not None:
