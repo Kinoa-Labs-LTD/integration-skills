@@ -444,25 +444,58 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
         if path not in manifest_field_paths and _item_state(record) == "active":
             plan["dashboard_only"]["player_fields"].append({"path": path, "id": record.get("id")})
 
-    # --- Feature settings: schemas (by name) + settings (by key) + default configs (new settings) ---
+    # --- Feature settings: schemas (by name) + settings (by key) + default configs ---
     fs = manifest.get("feature_settings") or {}
     fsp = plan["feature_settings"]
     fs_schemas_by_name = _index_by(fs_schemas or [], "name")
     fs_settings_by_key = _index_by(fs_settings or [], "key")
     manifest_schema_names = set()
     manifest_setting_keys = set()
+    creating_schema_names = set()
     live_active_version_by_schema = {}
+
+    def _is_filter_or_placeholder(field_name):
+        # Filters are configuration-level constructs (tableFilters bound to Player Fields), never
+        # schema columns; and an unreplaced "<PlayerField>" scaffold is producer junk either way.
+        n = (field_name or "")
+        return n.startswith("filter: ") or "<" in n
 
     for sch in fs.get("schemas") or []:
         name = _norm(sch.get("name"))
         if not name:
             continue
+        if name in manifest_schema_names:
+            fsp["warnings"].append({
+                "name": name,
+                "reason": "duplicate schema name in the manifest — only the first entry is planned; "
+                          "check the producer's suffix-strip rule for a class-name collision",
+            })
+            continue
         manifest_schema_names.add(name)
-        want_fields = [{"name": f.get("name"), "kind": _fs_normalize_kind(f.get("kind")),
-                        "isRequired": f.get("is_required", True)}
-                       for f in (sch.get("fields") or [])]
+        want_fields, dropped = [], []
+        for f in (sch.get("fields") or []):
+            if _is_filter_or_placeholder(f.get("name")):
+                dropped.append(f.get("name"))
+                continue
+            want_fields.append({"name": f.get("name"), "kind": _fs_normalize_kind(f.get("kind")),
+                                "isRequired": f.get("is_required", True)})
+        if dropped:
+            fsp["warnings"].append({
+                "name": name, "dropped_columns": dropped,
+                "reason": "filter-prefixed / placeholder properties are IncludeFilters readers, not schema "
+                          "columns — excluded from the schema plan (filters are configuration-level, chosen "
+                          "by the operator); the producer should not have emitted them",
+            })
         live = fs_schemas_by_name.get(name)
         if live is None:
+            ci = next((k for k in fs_schemas_by_name if k.lower() == name.lower() and k != name), None)
+            if ci is not None:
+                fsp["warnings"].append({
+                    "name": name, "dashboard_name": ci,
+                    "reason": "case-collision: manifest schema name matches a live schema except for case — "
+                              "names are byte-for-byte; creating it would register a near-duplicate schema",
+                })
+            creating_schema_names.add(name)
             fsp["schema_create"].append({
                 "name": name, "fields": want_fields,
                 "reason": "feature schema not present on the dashboard — create, then publish if it is not auto-ACTIVE",
@@ -473,6 +506,8 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
             live_active_version_by_schema[name] = ver.get("version")
         item = {"name": name, "id": live.get("id"), "current_status": live.get("status")}
         live_fields = _fs_fields_map(live)
+        if live_fields is not None:
+            live_fields = {k: v for k, v in live_fields.items() if not _is_filter_or_placeholder(k)}
         if live_fields is None:
             fsp["already_ok"].append(dict(item,
                 reason="feature schema exists — column shape NOT verified (no version fields in the listing); "
@@ -497,11 +532,32 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
         key = _norm(st.get("key"))
         if not key:
             continue
+        if key in manifest_setting_keys:
+            fsp["warnings"].append({
+                "key": key,
+                "reason": "duplicate setting key in the manifest — only the first entry is planned",
+            })
+            continue
         manifest_setting_keys.add(key)
         schema_name = _norm(st.get("schema_name"))
         version = st.get("version")
-        # Version-number sanity: a setting bound to an existing schema whose live ACTIVE version differs
-        # from the requested number resolves to VERSION_NOT_FOUND at runtime. Warn, never block.
+        # Dangling binding: a setting whose schema is neither in the manifest-created set nor live
+        # can never resolve a schemaId at apply — the plan would be unexecutable for this key.
+        if schema_name and schema_name not in creating_schema_names \
+                and schema_name not in fs_schemas_by_name and schema_name not in manifest_schema_names:
+            fsp["warnings"].append({
+                "key": key, "schema_name": schema_name,
+                "reason": "dangling schema_name: no schema with this name exists in the manifest or on the "
+                          "dashboard — the setting cannot be bound; fix the producer's schemas[] section",
+            })
+        # Version-number sanity. A schema created THIS run starts at version "1"; an existing schema
+        # must carry a live version matching the requested number, else runtime gets VERSION_NOT_FOUND.
+        if schema_name in creating_schema_names and version is not None and str(version) != "1":
+            fsp["warnings"].append({
+                "key": key, "schema_name": schema_name, "requested_version": version,
+                "reason": "the schema is being created this run, so its only version will be 1 — the code "
+                          "requests a different version and would get VERSION_NOT_FOUND at runtime",
+            })
         live_ver = live_active_version_by_schema.get(schema_name)
         if live_ver is not None and version is not None and str(live_ver) != str(version):
             fsp["warnings"].append({
@@ -512,14 +568,36 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
             })
         live = fs_settings_by_key.get(key)
         if live is not None:
+            # Binding sanity: the live setting may point at a DIFFERENT schema than the code expects.
+            live_schema = fs_schemas_by_name.get(schema_name)
+            live_bound = _norm(live.get("schemaId") or live.get("schema_id"))
+            if live_schema is not None and live_bound and _norm(live_schema.get("id")) != live_bound:
+                fsp["warnings"].append({
+                    "key": key, "schema_name": schema_name,
+                    "live_schema_id": live_bound, "expected_schema_id": live_schema.get("id"),
+                    "reason": "the live setting is bound to a different schema than the code's schema_name — "
+                              "reconcile on the dashboard (the helpers cannot re-bind a setting)",
+                })
             fsp["already_ok"].append({"surface": "setting", "key": key, "id": live.get("id"),
                                       "reason": "feature setting key already exists"})
+            # Resume path: a prior partial run may have created the setting but died before its default
+            # configuration was created/published. Conditional item — the executor first runs
+            # list-configs for this setting and SKIPS when any configuration already exists.
+            fsp["config_create"].append({
+                "setting_key": key, "schema_name": schema_name, "default": True,
+                "seed_csv": st.get("seed_csv"), "conditional": "only_if_no_configs",
+                "reason": "existing setting — ensure a default configuration exists (create+seed only if the "
+                          "setting has zero configurations; otherwise skip)",
+            })
+            fsp["config_publish"].append({
+                "setting_key": key, "conditional": "only_if_no_configs",
+                "reason": "publish the default configuration only if it was created by the conditional step above",
+            })
             continue
         fsp["setting_create"].append({
             "key": key, "schema_name": schema_name, "version": version,
             "reason": "feature setting key not present — create (binds the schema by id)",
         })
-        # D-2: a brand-new setting gets an EMPTY published default configuration (no data rows).
         fsp["config_create"].append({
             "setting_key": key, "schema_name": schema_name, "default": True,
             "seed_csv": st.get("seed_csv"),
@@ -528,7 +606,7 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
         })
         fsp["config_publish"].append({
             "setting_key": key,
-            "reason": "publish the empty default configuration (submit -> publish) so the key resolves at runtime",
+            "reason": "publish the default configuration (submit -> publish) so the key resolves at runtime",
         })
 
     for name, record in fs_schemas_by_name.items():
@@ -537,6 +615,14 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
     for key, record in fs_settings_by_key.items():
         if key not in manifest_setting_keys:
             plan["dashboard_only"]["feature_settings"].append({"key": key, "id": record.get("id")})
+        ci = next((k for k in manifest_setting_keys if k.lower() == key.lower() and k != key), None)
+        if ci is not None:
+            fsp["warnings"].append({
+                "key": ci, "dashboard_key": key,
+                "reason": "case-collision: manifest setting key matches a live setting except for case — "
+                          "keys are byte-for-byte; creating it would register a near-duplicate setting the "
+                          "runtime never resolves for the code's key",
+            })
 
     return plan
 
@@ -557,6 +643,14 @@ def main(argv):
     args = parser.parse_args(argv)
 
     manifest = _load_json(args.manifest, "manifest")
+    # A v2 manifest with FS content but NO live FS listings would make the planner mistake
+    # "not fetched" for "nothing on the dashboard" and plan duplicate creates. Fail closed.
+    fs_section = manifest.get("feature_settings") or {}
+    if (fs_section.get("schemas") or fs_section.get("settings")) and not (args.fs_schemas and args.fs_settings):
+        _fail("missing_fs_listings",
+              "the manifest carries feature_settings but --fs-schemas/--fs-settings listings were not "
+              "supplied — fetch list-schemas and list-settings first (planning without them would plan "
+              "duplicate creates against a dashboard that already has these entities)")
     if manifest.get("schema_version") not in SUPPORTED_MANIFEST_VERSIONS:
         _fail("unsupported_manifest_version",
               f"manifest schema_version {manifest.get('schema_version')!r} not in {SUPPORTED_MANIFEST_VERSIONS}")

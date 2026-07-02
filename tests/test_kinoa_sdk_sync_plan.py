@@ -496,13 +496,99 @@ class FeatureSettingsPlanTests(unittest.TestCase):
         cc = plan["feature_settings"]["config_create"]
         self.assertEqual(cc[0]["seed_csv"], "kinoa-sdk-dashboard-sync-workspace/DailyBonus.csv")
 
-    def test_setting_present_already_ok_no_config(self):
+    def test_setting_present_already_ok_conditional_config(self):
+        # Resume path (C8): an existing setting gets a CONDITIONAL config ensure-step —
+        # a prior partial run may have created the setting but died before its default config.
         plan = self._plan(settings=[{"key": "DailyBonus", "schema_name": "S", "version": 1}],
                           fs_settings=[{"id": "set1", "key": "DailyBonus"}])
         fsp = plan["feature_settings"]
         self.assertEqual(fsp["setting_create"], [])
-        self.assertEqual(fsp["config_create"], [])
         self.assertEqual([s["key"] for s in fsp["already_ok"] if s.get("surface") == "setting"], ["DailyBonus"])
+        self.assertEqual(len(fsp["config_create"]), 1)
+        self.assertEqual(fsp["config_create"][0]["conditional"], "only_if_no_configs")
+        self.assertEqual(fsp["config_publish"][0]["conditional"], "only_if_no_configs")
+
+    def test_new_setting_config_is_unconditional(self):
+        plan = self._plan(settings=[{"key": "K", "schema_name": "S", "version": 1}])
+        cc = plan["feature_settings"]["config_create"]
+        self.assertEqual(len(cc), 1)
+        self.assertNotIn("conditional", cc[0])
+
+    def test_dangling_schema_name_warns(self):
+        # Setting bound to a schema that is neither in the manifest nor live → unexecutable bind.
+        plan = self._plan(settings=[{"key": "K", "schema_name": "Ghost", "version": 1}])
+        warns = [w for w in plan["feature_settings"]["warnings"] if "dangling" in w.get("reason", "")]
+        self.assertEqual(len(warns), 1)
+        self.assertEqual(warns[0]["schema_name"], "Ghost")
+
+    def test_duplicate_schema_names_and_setting_keys_warn_once(self):
+        plan = self._plan(
+            schemas=[{"name": "S", "fields": [{"name": "a", "kind": "integer"}]},
+                     {"name": "S", "fields": [{"name": "b", "kind": "string"}]}],
+            settings=[{"key": "K", "schema_name": "S", "version": 1},
+                      {"key": "K", "schema_name": "S", "version": 1}])
+        fsp = plan["feature_settings"]
+        self.assertEqual(len(fsp["schema_create"]), 1)
+        self.assertEqual(len(fsp["setting_create"]), 1)
+        self.assertTrue(any("duplicate schema name" in w.get("reason", "") for w in fsp["warnings"]))
+        self.assertTrue(any("duplicate setting key" in w.get("reason", "") for w in fsp["warnings"]))
+
+    def test_new_schema_with_nondefault_version_warns(self):
+        # Schema created this run starts at version 1 — requesting version 3 = VERSION_NOT_FOUND.
+        plan = self._plan(schemas=[{"name": "S", "fields": [{"name": "a", "kind": "integer"}]}],
+                          settings=[{"key": "K", "schema_name": "S", "version": 3}])
+        warns = [w for w in plan["feature_settings"]["warnings"]
+                 if "created this run" in w.get("reason", "")]
+        self.assertEqual(len(warns), 1)
+
+    def test_filter_and_placeholder_columns_dropped_with_warning(self):
+        # Filters are configuration-level; unreplaced "<PlayerField>" scaffolds are junk. Both
+        # excluded from the schema plan, surfaced as a warning — never silently created.
+        plan = self._plan(schemas=[{"name": "S", "fields": [
+            {"name": "coins", "kind": "integer"},
+            {"name": "filter: Level", "kind": "number"},
+            {"name": "filter: <PlayerField>:from", "kind": "number"}]}])
+        create = plan["feature_settings"]["schema_create"][0]
+        self.assertEqual([f["name"] for f in create["fields"]], ["coins"])
+        drop = [w for w in plan["feature_settings"]["warnings"] if "dropped_columns" in w]
+        self.assertEqual(len(drop), 1)
+        self.assertEqual(sorted(drop[0]["dropped_columns"]),
+                         ["filter: <PlayerField>:from", "filter: Level"])
+
+    def test_live_filter_columns_ignored_in_shape_diff(self):
+        # A live schema polluted with filter columns must not force a version_conflict when the
+        # code's data columns match.
+        plan = self._plan(
+            schemas=[{"name": "S", "fields": [{"name": "coins", "kind": "integer"}]}],
+            fs_schemas=[_live_schema("S", [("coins", "integer"), ("filter: Level", "number")])])
+        self.assertEqual([s["name"] for s in plan["feature_settings"]["already_ok"]], ["S"])
+        self.assertEqual(plan["feature_settings"]["version_conflict"], [])
+
+    def test_schema_case_collision_warns(self):
+        plan = self._plan(schemas=[{"name": "wheeloffortune", "fields": [{"name": "a", "kind": "string"}]}],
+                          fs_schemas=[_live_schema("WheelOfFortune", [("a", "string")])])
+        fsp = plan["feature_settings"]
+        self.assertTrue(any("case-collision" in w.get("reason", "") for w in fsp["warnings"]))
+        # byte-for-byte: still planned as create (advisory, developer decides at the checklist)
+        self.assertEqual([s["name"] for s in fsp["schema_create"]], ["wheeloffortune"])
+
+    def test_setting_key_case_collision_warns(self):
+        plan = self._plan(settings=[{"key": "dailybonus", "schema_name": "S", "version": 1}],
+                          fs_settings=[{"id": "s1", "key": "DailyBonus", "schemaId": "x"}])
+        fsp = plan["feature_settings"]
+        self.assertTrue(any("case-collision" in w.get("reason", "") and w.get("dashboard_key") == "DailyBonus"
+                            for w in fsp["warnings"]))
+
+    def test_existing_setting_bound_to_different_schema_warns(self):
+        plan = self._plan(
+            schemas=[{"name": "S", "fields": [{"name": "a", "kind": "string"}]}],
+            settings=[{"key": "K", "schema_name": "S", "version": 1}],
+            fs_schemas=[_live_schema("S", [("a", "string")], schema_id="sch-right")],
+            fs_settings=[{"id": "set1", "key": "K", "schemaId": "sch-WRONG"}])
+        warns = [w for w in plan["feature_settings"]["warnings"]
+                 if "different schema" in w.get("reason", "")]
+        self.assertEqual(len(warns), 1)
+        self.assertEqual(warns[0]["live_schema_id"], "sch-WRONG")
 
     def test_setting_version_mismatch_with_live_schema_warns(self):
         plan = self._plan(
@@ -691,6 +777,35 @@ class CliContractTests(unittest.TestCase):
         self.assertEqual([s["name"] for s in plan["feature_settings"]["schema_create"]], ["DailyBonusSettings"])
         self.assertEqual([s["key"] for s in plan["feature_settings"]["setting_create"]], ["DailyBonus"])
         self.assertEqual(plan["unknown_manifest_sections"], [])
+
+    def test_main_rejects_v2_manifest_without_fs_listings(self):
+        # FS content in the manifest but no --fs-schemas/--fs-settings → planning would mistake
+        # "not fetched" for "nothing on the dashboard" and create duplicates. Fail closed.
+        manifest = _manifest(schema_version=2, feature_settings={
+            "schemas": [{"name": "S", "fields": [{"name": "a", "kind": "integer"}]}],
+            "settings": [{"key": "K", "schema_name": "S", "version": 1}]})
+        manifest_path = self._write("m.json", manifest)
+        empty = self._write("e.json", self._listing([]))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as ctx:
+                self.mod.main(["--manifest", manifest_path,
+                               "--events-predefined", empty, "--events-custom", empty,
+                               "--fields-predefined", empty, "--fields-custom", empty])
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertEqual(json.loads(out.getvalue())["error"], "missing_fs_listings")
+
+    def test_main_allows_empty_fs_section_without_listings(self):
+        # A v2 manifest whose feature_settings is EMPTY needs no FS listings.
+        manifest = _manifest(schema_version=2, feature_settings={"schemas": [], "settings": []})
+        manifest_path = self._write("m.json", manifest)
+        empty = self._write("e.json", self._listing([]))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = self.mod.main(["--manifest", manifest_path,
+                                  "--events-predefined", empty, "--events-custom", empty,
+                                  "--fields-predefined", empty, "--fields-custom", empty])
+        self.assertEqual(code, 0)
 
     def test_main_rejects_listing_from_another_game(self):
         # session.env left over from another game → listings carry that game's id.
