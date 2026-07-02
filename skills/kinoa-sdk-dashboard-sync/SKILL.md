@@ -1,7 +1,7 @@
 ---
 name: kinoa-sdk-dashboard-sync
-description: Use when a game integrated via the Kinoa Unity SDK needs its game events, player fields, and feature settings mirrored onto the Kinoa Dashboard — a kinoa-dashboard-manifest.json is present in the project (produced by the /kinoa SDK skill, Phase 7 hand-off), or the developer asks to "sync events/fields/feature-settings to the dashboard", "register the SDK integration on Kinoa Dashboard", or "run the dashboard sync". NOT for API-integrated games (use kinoa-api-integration) and NOT for generating any game code — this skill only creates/publishes/activates Dashboard entities via the kinoa-dashboard-event, kinoa-dashboard-player-fields, and kinoa-dashboard-feature-settings helpers.
-argument-hint: [path/to/kinoa-dashboard-manifest.json]
+description: Use when a game integrated via the Kinoa Unity SDK needs its game events, player fields, and feature settings mirrored onto the Kinoa Dashboard — a kinoa-dashboard-manifest.json is present in the project (produced by the /kinoa SDK skill, Phase 7 hand-off), or the developer asks to "sync events/fields/feature-settings to the dashboard", "register the SDK integration on Kinoa Dashboard", "run the dashboard sync", or to re-import/re-seed a feature-settings default configuration's data ("reseed <setting-key>" — the scoped reseed run). NOT for API-integrated games (use kinoa-api-integration) and NOT for generating any game code — this skill only creates/publishes/activates Dashboard entities via the kinoa-dashboard-event, kinoa-dashboard-player-fields, and kinoa-dashboard-feature-settings helpers.
+argument-hint: [path/to/kinoa-dashboard-manifest.json | reseed <setting-key> [--csv PATH]]
 allowed-tools: Bash(python *) Bash(cat *) Read Write Edit Glob AskUserQuestion
 ---
 
@@ -10,6 +10,18 @@ allowed-tools: Bash(python *) Bash(cat *) Read Write Edit Glob AskUserQuestion
 Mirrors an SDK-integrated game's locally-defined Kinoa entities (game events, player fields, feature settings) onto the Kinoa Dashboard. Input is the **manifest** the `/kinoa` SDK integration skill writes at the project root; output is dashboard state + a machine-readable **sync result** the SDK skill (or the developer) can audit.
 
 This is the SDK-mode counterpart of the `kinoa-sync-*-integration` workflows. It does **no discovery in game code** (the manifest already carries the inventory) and **never generates or edits application code**.
+
+## Scoped run — `reseed <setting-key>` (re-import a default config's data)
+
+Trigger: `reseed <setting-key>` in `$ARGUMENTS`, or a natural-language ask ("re-import / re-seed the seed for `<key>`", "reload the default config data from my CSV"). Runs ONLY the data re-import for one setting's **default** configuration — no manifest regeneration, no planner, no other surfaces. Typical uses: recovery after a `422 invalid bundle key` seed failure (once the Bundles are fixed/created), or refreshing the default config after the developer updated their data CSV.
+
+1. **Session preflight** as in Phase 1 steps 3-4 (session.env / kinoa-init / cross-game guard). The expected game id = the manifest's `game_id` when `kinoa-dashboard-manifest.json` is present next to the working dir; if no manifest, confirm the game id with the developer via `AskUserQuestion` before any mutating call. Fire `phase-start --phase "Phase 7 — dashboard sync (plugin, reseed)"` live, `--game-id` as always.
+2. **Resolve the target** (read-only): `list-settings` → match the key **byte-for-byte** (a case-variant match → stop and surface it, same rule as the planner); missing → stop: *"no such setting — run the full `/kinoa dashboard-sync` first."* Then `list-configs --setting-id <id>` → pick the `isDefault: true` configuration; none → stop: *"the setting has no default configuration — run the full sync (its conditional ensure-step creates one)."*
+3. **Locate the seed CSV**: an explicit `--csv PATH` wins; else `kinoa-sdk-dashboard-sync-workspace/<schema name>.csv` (schema name via `get-schema --schema-id <setting.schemaId>`); still missing → ask the developer for the path. Resolve to an absolute path (the helper resolves `--csv` against the process cwd).
+4. **Bundle-key precheck**: if the schema has `bundle_key` columns, validate the CSV's values for those columns against the key format (starts with a letter; only letters, digits, `_`, `-`) — malformed → stop and list the offending values (data fix needed); well-formed → warn that the import still 422s if any value isn't a registered Bundle.
+5. **Consent gate** (`AskUserQuestion`, then a `qa` post): *"Import will OVERWRITE the current table data of configuration `<name>` (`<id>`) with N rows from `<csv>`. The current rows — including any operator edits — are replaced. Proceed?"* — **Proceed** / **Abort**. This gate is mandatory: seeded data becomes operator-owned after the first import, so a re-import is a deliberate overwrite.
+6. **Import**: `import-config-data --config-id <id> --csv <abs path> --expect-game <game_id>`. On 422 → the invalid-bundle-key failure row (diagnose format first, then existence); on success → confirm via `get-configuration` and report one line (config, row count, status).
+7. `phase-end` with `--summary "reseed <key> rows=N status=<ok|failed>"`. **Do NOT write `kinoa-dashboard-sync-result.json`, do NOT regenerate the manifest, do NOT append a log round** — those describe full syncs; the chat summary + telemetry is this run's record. The workspace is read-only here (seed files always survive, per §Cleanup policy).
 
 ## Hard rules (non-negotiable)
 
