@@ -490,6 +490,22 @@ class FeatureSettingsPlanTests(unittest.TestCase):
         self.assertIsNone(fsp["config_create"][0]["seed_csv"])  # no seed_csv provided → empty default config
         self.assertEqual([c["setting_key"] for c in fsp["config_publish"]], ["DailyBonus"])
 
+    def test_bundle_key_seed_dependency_warns(self):
+        # Live-verified 2026-07-02: import 422s when a bundle_key column's values aren't Bundles yet.
+        plan = self._plan(
+            schemas=[{"name": "S", "fields": [{"name": "sku", "kind": "bundle_key"},
+                                              {"name": "coins", "kind": "integer"}]}],
+            settings=[{"key": "K", "schema_name": "S", "version": 1,
+                       "seed_csv": "kinoa-sdk-dashboard-sync-workspace/S.csv"}])
+        warns = [w for w in plan["feature_settings"]["warnings"] if "bundle_key_columns" in w]
+        self.assertEqual(len(warns), 1)
+        self.assertEqual(warns[0]["bundle_key_columns"], ["sku"])
+        # no seed_csv → no warning (nothing to import)
+        plan2 = self._plan(
+            schemas=[{"name": "S", "fields": [{"name": "sku", "kind": "bundle_key"}]}],
+            settings=[{"key": "K", "schema_name": "S", "version": 1}])
+        self.assertEqual([w for w in plan2["feature_settings"]["warnings"] if "bundle_key_columns" in w], [])
+
     def test_config_create_carries_seed_csv(self):
         plan = self._plan(settings=[{"key": "DailyBonus", "schema_name": "DailyBonus", "version": 1,
                                      "seed_csv": "kinoa-sdk-dashboard-sync-workspace/DailyBonus.csv"}])

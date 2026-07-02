@@ -453,6 +453,7 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
     manifest_setting_keys = set()
     creating_schema_names = set()
     live_active_version_by_schema = {}
+    bundle_key_columns_by_schema = {}
 
     def _is_filter_or_placeholder(field_name):
         # Filters are configuration-level constructs (tableFilters bound to Player Fields), never
@@ -479,6 +480,9 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                 continue
             want_fields.append({"name": f.get("name"), "kind": _fs_normalize_kind(f.get("kind")),
                                 "isRequired": f.get("is_required", True)})
+        bk = [f["name"] for f in want_fields if f["kind"] == "bundle_key"]
+        if bk:
+            bundle_key_columns_by_schema[name] = bk
         if dropped:
             fsp["warnings"].append({
                 "name": name, "dropped_columns": dropped,
@@ -565,6 +569,17 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                 "requested_version": version, "live_active_version": live_ver,
                 "reason": "the code requests a schema version that is not the live ACTIVE version — runtime would get "
                           "VERSION_NOT_FOUND; align the code's version or publish the matching schema version",
+            })
+        # Bundle dependency: the backend validates seeded bundle_key values against existing
+        # Bundles — the whole CSV import 422s when any value is missing (live-verified 2026-07-02:
+        # 'Import Failed: Line: 1. [sku] is invalid bundle key'). Warn ahead of the checklist.
+        bk_cols = bundle_key_columns_by_schema.get(schema_name)
+        if bk_cols and st.get("seed_csv"):
+            fsp["warnings"].append({
+                "key": key, "schema_name": schema_name, "bundle_key_columns": bk_cols,
+                "reason": "the seed import will be REJECTED (422 invalid bundle key) unless every value in "
+                          "these columns already exists as a Bundle key on the dashboard — create the "
+                          "Bundles first, or expect an empty default config + a manual re-import",
             })
         live = fs_settings_by_key.get(key)
         if live is not None:
