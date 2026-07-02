@@ -164,7 +164,9 @@ python "${CLAUDE_SKILL_DIR}/kinoa_sdk_sync_plan.py" \
 | 4 | field | `wallet.gold` | activate (was deleted) | soft-deleted record with same path |
 | 5 | feature schema | `WheelOfFortune` | create + publish | feature schema not on dashboard |
 | 6 | feature setting | `WheelOfFortune` | create + default config | setting key not on dashboard |
-| 7 | feature schema | `DailyBonus` | ⚠ version conflict (no auto action) | code columns differ from the live ACTIVE version |
+| — | feature schema | `DailyBonus` | ⚠ version conflict (developer GATE — no auto action) | code columns differ from the live ACTIVE version |
+
+(`version_conflict` rows are **unnumbered** and do NOT count toward the gate's "Apply the N planned actions" — they are informational gates the sync never executes; only actionable rows get numbers.)
 
 **Predefined-name warnings get one correction loop.** When the plan warns *"predefined event/player field not found on the dashboard"*, the cause is usually a producer-side mapping miss (e.g. `progression` vs the registry's `progress`, `personal_info.country` vs `.country_code`). The fix is producer-side: correct the **manifest** against the live predefined listing and re-run the planner — exactly once per sync, in the same session, never by "normalizing" names consumer-side, and never by creating a same-named custom entity as a workaround. Warnings that survive the correction loop stay warnings.
 
