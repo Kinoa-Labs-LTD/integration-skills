@@ -572,8 +572,9 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
             })
         # Bundle dependency: seeded bundle_key values must (1) match the Bundle-key FORMAT — start
         # with a letter, then only letters/digits/_/- (no dots) — and (2) exist as Bundles; the
-        # whole CSV import 422s otherwise (live-verified 2026-07-02: 'Import Failed: Line: 1.
-        # [sku] is invalid bundle key'). Warn ahead of the checklist.
+        # whole CSV import 422s otherwise, with an IDENTICAL message for both causes (both
+        # live-verified 2026-07-02: 'Import Failed: Line: 1. [sku] is invalid bundle key').
+        # Warn ahead of the checklist.
         bk_cols = bundle_key_columns_by_schema.get(schema_name)
         if bk_cols and st.get("seed_csv"):
             fsp["warnings"].append({
