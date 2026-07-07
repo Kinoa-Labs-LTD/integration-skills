@@ -32,7 +32,14 @@ This skill is Phase 2 of the orchestrator's chain and has its own four inner pha
 
 Helper exits 0 even on failure; never abort the workflow on a webhook error.
 
-**Run state.** On start, read `./.kinoa-integration-state.json` if present — if `phases.player_fields` records finished inner phases, resume from the first unfinished one instead of redoing work. Alongside every inner `phase-end`, read-merge-write the file's `phases.player_fields` entry: `status`, `kinoa_player_state_path` (set in Phase 2), `report` (set in 3.5). Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/SKILL.md` → "Run state".
+**Run state.** On start, read `./.kinoa-integration-state.json` if present — if `phases.player_fields` records finished inner phases, resume from the first unfinished one instead of redoing work. Alongside every inner `phase-end`, read-merge-write the file's `phases.player_fields` entry: `status`, `service_root` (MONOREPO), `kinoa_player_state_path` (set in Phase 2), `report` (set in 3.5). Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/SKILL.md` → "Run state".
+
+**Architecture & service scope.** Read `KINOA_ARCHITECTURE` from `~/.kinoa/session.env` (default `SINGLE`; semantics: orchestrator SKILL.md → "Architecture modes") before Phase 1:
+
+- `MONOREPO` — ask which service directory owns the player model (offer candidate dirs found via Glob). Scope all Phase 1 discovery and the Phase 2 generated `KinoaPlayerState` to that `service_root`, and record it in the phase entry.
+- `MULTI_REPO` — the current repo is the service. On start also read the central index `~/.kinoa/<game_id>/services.json`; if another service already integrated player fields, say so and confirm the developer really wants a second integration from this repo. At every module-level `phase-end`, update this service's entry in the index (`modules.player_fields`, `last_sync`).
+
+**Integration registry.** Alongside every state-file write, update `KINOA-INTEGRATION.md` next to it (bootstrap from the orchestrator's template if missing): rewrite the "Player fields" section under `## Modules` to the current state (service, generated file path, field counts) and append a dated entry to `## History` describing what this run changed (fields activated/created, artifact paths). Append-only — never rewrite old History entries.
 
 The skill works in four phases. Drive each phase to completion with the developer before moving to the next; they are sequential and each builds on the previous.
 
@@ -40,7 +47,7 @@ The skill works in four phases. Drive each phase to completion with the develope
 
 ## Phase 1 — Discover the application's player class
 
-1. Use `Glob` and `Grep` to find candidate classes representing the player model. Scan for: class names like `Player`, `PlayerState`, `User`, `UserState`, `Profile`, `GameProfile`, and for source files containing fields like `player_id` / `playerId`. Search the project root the user names (default: current working directory).
+1. Use `Glob` and `Grep` to find candidate classes representing the player model. Scan for: class names like `Player`, `PlayerState`, `User`, `UserState`, `Profile`, `GameProfile`, and for source files containing fields like `player_id` / `playerId`. Search the project root the user names (default: current working directory; in `MONOREPO` mode, the chosen `service_root` — see "Architecture & service scope" above).
 2. If multiple candidates emerge, present them via `AskUserQuestion` and let the developer pick.
 3. Read the chosen file. Extract every field declared on the player class:
    - **name** (as written in source)
@@ -163,7 +170,7 @@ Once Phase 3.4 has finished (or has been skipped because nothing needed applying
 The report has four buckets, mirroring how a developer thinks about the sync afterwards:
 
 1. **Predefined fields — integrated** — every predefined element with `state == "active"` whose `path` appears in `KinoaPlayerState`. Includes both fields activated this run (🟢, 🟡) and any that were already active before. The `note` distinguishes them ("newly activated", "implemented + activated", "already active before this run").
-2. **Predefined fields — NOT integrated** — every predefined element with `state == "not_implemented"` (regardless of `KinoaPlayerState`), plus any `state == "active"` predefined whose path is **not** in `KinoaPlayerState` (the 🟠 warning case). Include the `state` column so the developer can tell them apart. The `note` should explain the situation: "skipped by developer", "recommended but skipped", or "active in Kinoa but missing in code (warning)".
+2. **Predefined fields — NOT integrated** — every predefined element with `state == "not_implemented"` (regardless of `KinoaPlayerState`), plus any `state == "active"` predefined whose path is **not** in `KinoaPlayerState` (the 🟠 warning case). Include the `state` column so the developer can tell them apart. The `note` should explain the situation: "skipped by developer", "recommended but skipped", or "active in Kinoa but missing in code (warning)". When this bucket is non-empty, the report script renders a callout above the sections stating the consequence honestly: the integration keeps working without these fields, but calculated properties / segments / analytics that rely on them won't be computed (no data), and implementing them in the game is recommended if possible.
 3. **Custom fields — integrated** — every active USER field whose `path` appears in `KinoaPlayerState`. Includes 🔵 newly created, 🟣 mirrored-from-existing, and ✅ already-in-sync. The `note` distinguishes them.
 4. **Custom fields — NOT integrated** — every active USER field whose `path` is **not** in `KinoaPlayerState` and the developer didn't approve mirroring. These are dashboard-only custom fields the app currently ignores.
 
@@ -282,4 +289,4 @@ If anything is missing, recommend re-running Phase 3 to verify activations, re-c
   - `dashboard.kinoa.io/gamemetaapi/...` → `Authorization: Bearer <session_token>` + `Game: <uuid>` + `Game-Id: <uuid>` (both headers carry the same game UUID).
   - `gate.kinoa.io/playerevents/...` → `game: <game_secret>`.
 - Allowed kinds for custom field creation: `number`, `boolean`, `string`, `date`, `long_string`, `enumeration`, `version`.
-- The `delete` subcommand is available for cleanup after test runs but is not part of the main sync workflow — call it only when explicitly asked.
+- The `delete` subcommand is available for cleanup after test runs but is not part of the main sync workflow — call it only when explicitly asked, and even then confirm first via `AskUserQuestion` (resolved field id + name/path, soft-delete semantics), proceeding only on an explicit Yes from this session.

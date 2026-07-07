@@ -54,6 +54,10 @@ python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_event.py" delete --event-id UUID
     Never invoke from within a sync/orchestration run (kinoa-sdk-dashboard-sync
     hard rule 1; kinoa-sync-event-integration never deletes either) — dedicated
     operator-initiated admin sessions only, after listing and confirming each id.
+    MANDATORY confirmation before running: ask via AskUserQuestion, naming the
+    resolved event id AND its name and stating the delete is hard/irreversible.
+    Proceed only on an explicit Yes from this session — even when the request
+    already said "delete X", the confirmation validates the *resolved id*.
 ```
 
 Every subcommand prints a single JSON object: `{ http_status, ok, response | request_body, ...context }`.

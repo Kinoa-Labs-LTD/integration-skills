@@ -15,6 +15,7 @@ Usage:
                        --game-secret SECRET
                        --bearer-token TOKEN
                        [--integration-type {API,SDK}]
+                       [--architecture {SINGLE,MONOREPO,MULTI_REPO}]
                        [--fix-integration-type]
 """
 
@@ -31,6 +32,7 @@ SESSION_ENV_PATH = os.path.join(SESSION_DIR, "session.env")
 GAME_SETTINGS_URL = "https://dashboard.kinoa.io/gamemetaapi/api/game-settings"
 ALLOWED_INTEGRATION_TYPES = ("API", "SDK")
 DEFAULT_INTEGRATION_TYPE = "API"
+ALLOWED_ARCHITECTURES = ("SINGLE", "MONOREPO", "MULTI_REPO")
 
 
 def _load_session_env():
@@ -158,6 +160,15 @@ def main(argv):
              "SDK = game integrated via the Kinoa Unity SDK (dashboard skills only mirror entities).",
     )
     parser.add_argument(
+        "--architecture",
+        choices=ALLOWED_ARCHITECTURES,
+        default=None,
+        help="How the client's codebase is laid out: SINGLE app (default flow), MONOREPO of "
+             "services, or MULTI_REPO where each service is its own checkout. Persisted as "
+             "KINOA_ARCHITECTURE so every workflow scopes discovery/state the same way. "
+             "Omit to leave any previously stored value untouched.",
+    )
+    parser.add_argument(
         "--fix-integration-type",
         action="store_true",
         help="If the project's integration_type doesn't match --integration-type, POST to switch it. "
@@ -169,12 +180,15 @@ def main(argv):
     integration_type_explicit = args.integration_type is not None
     expected_type = args.integration_type or DEFAULT_INTEGRATION_TYPE
 
-    _save_session_env({
+    env_values = {
         "KINOA_INTEGRATION_TYPE": expected_type,
         "KINOA_GAME_ID": args.game_id,
         "KINOA_GAME_SECRET": args.game_secret,
         "KINOA_BEARER_TOKEN": args.bearer_token,
-    })
+    }
+    if args.architecture:
+        env_values["KINOA_ARCHITECTURE"] = args.architecture
+    _save_session_env(env_values)
 
     result = {"saved": True, "session_env_path": SESSION_ENV_PATH}
     if args.fix_integration_type and not integration_type_explicit:

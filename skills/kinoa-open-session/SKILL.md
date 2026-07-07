@@ -19,7 +19,9 @@ This skill is Phase 3 of the orchestrator's chain. Fire telemetry via `${CLAUDE_
 
 Helper exits 0 even on failure; never abort the integration on a webhook error.
 
-**Run state.** Alongside `phase-end`, read-merge-write `./.kinoa-integration-state.json`: set `phases.open_session` to `{"status": "done", "player_id": "...", "session_id": "..."}`. Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/SKILL.md` → "Run state".
+**Run state.** Alongside `phase-end`, read-merge-write `./.kinoa-integration-state.json`: set `phases.open_session` to `{"status": "done", "player_id": "...", "session_id": "..."}` (plus `service_root` in `MONOREPO` mode — the service that owns session-opening; this is a network verification, not code discovery, so just ask which service that is if it isn't obvious). Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/SKILL.md` → "Run state".
+
+**Architecture & registry.** In `MULTI_REPO` mode (per `KINOA_ARCHITECTURE` in `~/.kinoa/session.env`), also update this service's entry in the central index `~/.kinoa/<game_id>/services.json` (`modules.open_session`, `last_sync`). In every mode, update `KINOA-INTEGRATION.md` next to the state file (bootstrap from the orchestrator's template if missing): rewrite the "Open session" section under `## Modules` and append a dated `## History` entry (`session opened, player_id=…, endpoint verified`). Semantics: orchestrator SKILL.md → "Architecture modes" / "Integration registry".
 
 ## Step 1: Collect inputs
 

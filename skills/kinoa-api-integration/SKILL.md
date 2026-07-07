@@ -11,6 +11,8 @@ This is the **orchestrator** for the Kinoa API integration. It dispatches to one
 - **Dashboard skills** are pure admin-API wrappers; the integration skills delegate to them. They're also independently invokable for direct admin tasks.
 - **Utilities** are pure local helpers with no API calls (csv-schema-infer turns a CSV into a feature-schema); workflow skills delegate to them.
 
+**Deletion confirmation — applies everywhere.** Before ANY delete against the dashboard (`delete` on player fields or events, `delete-config` on feature settings), confirm via `AskUserQuestion` — name the exact resource (id **and** human name), state whether the delete is soft (player fields) or **hard and irreversible** (events), and proceed only on an explicit Yes given in this session. This holds even when the request already said "delete X": the confirmation is about the *resolved id* — "delete the stale field" resolving to the wrong record is exactly the mistake this catches. No batch confirmations for heterogeneous resources; list each id being deleted.
+
 ## Webhook telemetry
 
 Throughout the integration the orchestrator and every sub-skill emit lightweight progress telemetry to Kinoa's Client Support Tool (`https://client-support-tool.kinoa.io/api/kinoa-agent-hooks/prompt`) via the helper at `${CLAUDE_SKILL_DIR}/kinoa_webhook.py`. This lets the support team replay an integration run afterwards — what phases ran, what was asked, what the developer answered.
@@ -31,34 +33,132 @@ Sub-skills reach the helper via the sibling path `${CLAUDE_SKILL_DIR}/../kinoa-a
 
 **Failure handling.** The helper always exits 0 and prints a JSON result. If `ok` is `false` (no game id yet, server unreachable, etc.), **continue the integration normally** — telemetry is supplementary and must never abort a real workflow. The most common pre-init case (`error: missing_game_id`) is expected before kinoa-init's validation completes; phase-start for Phase 1 will skip silently, then phase-end will post once `KINOA_GAME_ID` has been written.
 
-## Run state (resume support)
+## Architecture modes (single app vs microservices)
 
-A full integration outlives a single conversation context. Every workflow therefore persists its decisions to **`./.kinoa-integration-state.json`** in the project's working directory — the durable source of truth for "where are we and what was decided", surviving context compaction and session restarts.
+A client doesn't always integrate Kinoa from one codebase — with a microservice architecture each module (player fields, events, feature settings, session-open) may live in a different service. Phase 1 (`kinoa-init`) asks up front how the project is laid out and persists the answer as `KINOA_ARCHITECTURE` in `~/.kinoa/session.env` and as `architecture` in the run-state file. Every workflow reads the mode before its discovery phase and scopes itself accordingly:
 
-Rules (apply in every sub-skill):
+| Mode | Layout | Behavior |
+|---|---|---|
+| `SINGLE` (default) | One application, one codebase | The classic flow — discover in the project root; state file + registry in the project root. |
+| `MONOREPO` | Several services under one repo root | Run from the repo root. Each workflow first asks **which service directory** this module is integrated from (offer candidate dirs found via Glob — `services/*/`, `apps/*/`, `packages/*/`, or whatever the repo uses). Discovery and generated artifacts are scoped to that `service_root`; one shared state file + one registry live at the repo root. |
+| `MULTI_REPO` | Each service is its own checkout (own CLAUDE.md) | The current repo **is** the service. On the first run in a repo, confirm the service name (default: the repo folder name) and register it in the central index. State file + registry live in each repo and cover only that repo's modules. |
 
-- **Read on start.** If the file exists and its `game_id` matches `KINOA_GAME_ID`, summarize the recorded progress to the developer and resume from the first unfinished phase instead of restarting. If `game_id` differs, ask before overwriting.
-- **Update on every `phase-end`.** Whenever you fire the `phase-end` webhook, also read-merge-write this file: update only your own phase's entry, never drop the others'.
-- **Record decisions and created resource ids, not narration.** Statuses are `in_progress | done | skipped`.
-- Suggest adding `.kinoa-integration-state.json` to the project's `.gitignore` (alongside the report HTMLs).
+**Game-wide decisions must survive repo boundaries.** `session_start_auto_fires`, `player_state_strategy`, and the feature-settings resource ids are decided once per game but consumed by workflows possibly running in other repos. In `MULTI_REPO`, mirror each of these into the central index the moment it is decided, and read the index on workflow start — never re-ask a question another service's run already answered; summarize what was found and let the developer object instead.
+
+### Central index (`MULTI_REPO` only) — `~/.kinoa/<game_id>/services.json`
+
+Separate checkouts share no workspace root, so the cross-repo picture lives in `~/.kinoa/` — the one place all repos on a developer's machine already share (`session.env` lives there too):
 
 ```json
 {
   "game_id": "<KINOA_GAME_ID>",
+  "architecture": "MULTI_REPO",
+  "updated_at": "<ISO 8601 UTC>",
+  "shared_decisions": {
+    "session_start_auto_fires": true,
+    "player_state_strategy": "FULL|DIFF",
+    "feature_settings": {"schema_id": "...", "schema_version": "...",
+                         "setting_id": "...", "setting_key": "...", "config_id": "..."}
+  },
+  "services": {
+    "player-service":    {"root": "/abs/path/to/checkout",
+                          "modules": {"player_fields": "done", "open_session": "done"},
+                          "last_sync": "<ISO 8601 UTC>"},
+    "analytics-service": {"root": "/abs/path/to/checkout",
+                          "modules": {"events": "in_progress"},
+                          "last_sync": "<ISO 8601 UTC>"}
+  }
+}
+```
+
+Read-merge-write with the same discipline as the run-state file: update only your own service's entry and the `shared_decisions` your run actually made; never drop other services' entries. The index is machine-local — another developer's machine won't have it. When it's missing but a repo's `KINOA-INTEGRATION.md` (or the Dashboard itself) shows prior work, rebuild the relevant entries from those sources instead of assuming a fresh start.
+
+## Run state (resume support)
+
+A full integration outlives a single conversation context. Every workflow therefore persists its decisions to **`.kinoa-integration-state.json`** — the durable source of truth for "where are we and what was decided", surviving context compaction and session restarts. Location by mode: `SINGLE` and `MULTI_REPO` → the project/repo root the run happens in; `MONOREPO` → the monorepo root (one file shared by all services).
+
+Rules (apply in every sub-skill):
+
+- **Read on start.** If the file exists and its `game_id` matches `KINOA_GAME_ID`, summarize the recorded progress to the developer and resume from the first unfinished phase instead of restarting. If `game_id` differs, ask before overwriting. In `MULTI_REPO`, also read the central index to see what other services already integrated.
+- **Update on every `phase-end`.** Whenever you fire the `phase-end` webhook, also read-merge-write this file: update only your own phase's entry, never drop the others'. Update the registry (`KINOA-INTEGRATION.md`, below) and — in `MULTI_REPO` — the central index in the same breath.
+- **Record decisions and created resource ids, not narration.** Statuses are `in_progress | done | skipped`.
+- Suggest adding `.kinoa-integration-state.json` to the project's `.gitignore` (alongside the report HTMLs). `KINOA-INTEGRATION.md` is the opposite — it should be committed.
+
+```json
+{
+  "game_id": "<KINOA_GAME_ID>",
+  "architecture": "SINGLE | MONOREPO | MULTI_REPO",
+  "service": "<this repo's service name — MULTI_REPO only>",
   "updated_at": "<ISO 8601 UTC>",
   "phases": {
     "init":             {"status": "done"},
-    "player_fields":    {"status": "done", "kinoa_player_state_path": "...", "report": "..."},
-    "open_session":     {"status": "done", "player_id": "...", "session_id": "..."},
-    "events":           {"status": "in_progress", "kinoa_events_path": "...",
+    "player_fields":    {"status": "done", "service_root": "<MONOREPO only>",
+                         "kinoa_player_state_path": "...", "report": "..."},
+    "open_session":     {"status": "done", "service_root": "<MONOREPO only>",
+                         "player_id": "...", "session_id": "..."},
+    "events":           {"status": "in_progress", "service_root": "<MONOREPO only>",
+                         "kinoa_events_path": "...",
                          "session_start_auto_fires": true, "player_state_strategy": "FULL|DIFF",
                          "approved_events": ["..."], "report": "..."},
-    "feature_settings": {"status": "skipped", "schema_id": "...", "schema_version": "...",
+    "feature_settings": {"status": "skipped", "service_root": "<MONOREPO only>",
+                         "schema_id": "...", "schema_version": "...",
                          "setting_id": "...", "setting_key": "...", "config_id": "...",
                          "facade_path": "...", "report": "..."}
   }
 }
 ```
+
+**MONOREPO, same module in several services.** When a module (typically events — several services each emit their own) is integrated from more than one service, nest the per-service artifacts under a `services` map keyed by service root, keeping game-wide decisions at the module level:
+
+```json
+"events": {
+  "status": "in_progress",
+  "session_start_auto_fires": true,
+  "player_state_strategy": "DIFF",
+  "services": {
+    "services/analytics-svc": {"status": "done", "kinoa_events_path": "...",
+                               "approved_events": ["..."], "report": "..."},
+    "services/shop-svc":      {"status": "in_progress"}
+  }
+}
+```
+
+## Integration registry — `KINOA-INTEGRATION.md` (human-readable, committed)
+
+The state file is machine state for resuming; the registry is for people — a reviewer or a newly onboarded developer opens it and sees **what is integrated with Kinoa, how, and what changed over time**. It lives next to the state file and, unlike the state file, **should be committed to git** so the integration picture travels with the repo (and, in `MULTI_REPO`, lets another developer's machine rebuild the central index).
+
+Maintain it in the same breath as the state file: whenever a workflow read-merge-writes its phase entry at a `phase-end`, also update the registry — **rewrite** that module's section under `## Modules` to the new current state, and **append** one entry to `## History` (never edit or delete existing History entries). `kinoa-init` creates the skeleton if the file is absent; any workflow that finds it missing bootstraps it the same way.
+
+Template:
+
+```markdown
+# Kinoa Integration Registry
+
+- **Game ID:** `<uuid>`
+- **Architecture:** SINGLE | MONOREPO | MULTI_REPO
+- **Service:** `<name>` <!-- MULTI_REPO only: the service this repo implements -->
+
+## Modules
+
+### Player fields — done
+- **Service:** `services/player-svc` <!-- MONOREPO: service_root; omit in SINGLE -->
+- **Generated:** `services/player-svc/src/kinoa/KinoaPlayerState.kt`
+- **Summary:** 12 fields active (9 predefined, 3 custom)
+
+### Events — in progress
+- …
+
+## History
+<!-- append-only, newest last; one entry per completed phase / sync run -->
+
+### 2026-07-06T14:32Z — player_fields (`services/player-svc`)
+Activated 9 predefined fields, created 3 custom (`vip_tier`, `guild_id`, `ab_bucket`); generated KinoaPlayerState.
+
+### 2026-07-06T15:10Z — events (`services/analytics-svc`)
+Published 3 events, created 2 custom; player_state strategy: DIFF; session_start auto-fires.
+```
+
+Keep History entries terse and factual — counts, names, decisions, artifact paths. They are the change log the client asked to be able to audit later; narration belongs in the conversation, not here.
 
 | Subcommand                          | Sub-skill folder                          | Slash command                            | Purpose |
 |-------------------------------------|-------------------------------------------|------------------------------------------|---------|
@@ -148,7 +248,13 @@ When all sub-skills are installed as siblings under `~/.claude/skills/` (see `HO
 
 ### Step 3 — `all`: run the full onboarding sequence
 
-When the subcommand is `all`, drive the five-phase chain below. Treat each phase as a hand-off: complete it fully, summarize what changed, and confirm with the developer before moving to the next phase. If any phase fails (auth error, validation mismatch, developer rejection), stop and surface the error — do not silently advance. Keep `./.kinoa-integration-state.json` current as each phase ends (see "Run state") so an interrupted `all` run resumes where it stopped.
+When the subcommand is `all`, drive the five-phase chain below. Treat each phase as a hand-off: complete it fully, summarize what changed, and confirm with the developer before moving to the next phase. If any phase fails (auth error, validation mismatch, developer rejection), stop and surface the error — do not silently advance. Keep `.kinoa-integration-state.json` current as each phase ends (see "Run state") so an interrupted `all` run resumes where it stopped.
+
+The chain adapts to the architecture mode (see "Architecture modes"):
+
+- **`SINGLE`** — run all phases in the project root, exactly as written.
+- **`MONOREPO`** — before each of Phases 2, 4, 5, the workflow asks which service directory that module lives in; different phases may target different services. Phase 3 (open-session) is a network call, not code discovery — just record which service owns session-opening.
+- **`MULTI_REPO`** — only the modules that live in the *current* repo can run here. At the start of the chain, ask the developer which modules this service implements, run those phases, and mark the rest as pending-elsewhere. In the final summary, show the cross-repo picture from the central index and tell the developer which repos to run the remaining subcommands from.
 
 1. **Phase 1 — `kinoa-init`.** Read `${CLAUDE_SKILL_DIR}/../kinoa-init/SKILL.md` and follow it. If `~/.kinoa/session.env` already exists, that skill will show the current values and let the developer pick **Reuse** (re-validate the existing creds) or **Replace** (collect new ones) — pass that choice through and don't re-prompt. Verify the run ends with `ok: true`. Capture `KINOA_INTEGRATION_TYPE` for later — the event sync phase branches on it.
 2. **Phase 2 — `kinoa-sync-player-fields-integration`.** Drive the player-fields workflow to completion. After the workflow's internal verification step, summarize: how many fields activated / created / verified.

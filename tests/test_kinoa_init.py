@@ -199,6 +199,35 @@ class KinoaInitTests(unittest.TestCase):
         self.assertNotIn("integration_type_defaulted", result)
         self.assertNotIn("warning", result)
 
+    def test_architecture_persisted_when_passed(self):
+        code, _ = self._run_main(
+            self.BASE_ARGS + ["--architecture", "MULTI_REPO"],
+            [(200, json.dumps({"integration_type": "API"}))],
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(self._read_session_env()["KINOA_ARCHITECTURE"], "MULTI_REPO")
+
+    def test_architecture_omitted_leaves_existing_value(self):
+        # A token-rotation re-run without --architecture must not clobber the stored mode.
+        self._run_main(
+            self.BASE_ARGS + ["--architecture", "MONOREPO"],
+            [(200, json.dumps({"integration_type": "API"}))],
+        )
+        self.requests = []
+        code, _ = self._run_main(
+            self.BASE_ARGS,
+            [(200, json.dumps({"integration_type": "API"}))],
+        )
+        self.assertEqual(code, 0)
+        env = self._read_session_env()
+        self.assertEqual(env["KINOA_ARCHITECTURE"], "MONOREPO")
+
+    def test_invalid_architecture_rejected_exit_2(self):
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as ctx:
+                self.mod.main(self.BASE_ARGS + ["--architecture", "monorepo"])
+        self.assertEqual(ctx.exception.code, 2)
+
     def test_unauthorized_reason(self):
         code, result = self._run_main(self.BASE_ARGS, [(401, "")])
         self.assertEqual(code, 1)

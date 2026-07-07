@@ -110,7 +110,7 @@ In any Claude Code session:
 
 (or call the sub-skill directly with `/kinoa-init`.)
 
-The skill prompts for three values (integration type is always `API` — hardcoded, no longer asked):
+The skill first asks how the project is laid out — **single app**, **monorepo with services**, or **separate repositories per service** (microservice clients integrate each Kinoa module from a different service; see the "Architecture modes" section of `SKILL.md`). It then prompts for three values (integration type is always `API` — hardcoded, no longer asked):
 
 - **game ID** — internal game UUID (from the Kinoa dashboard URL when viewing the project).
 - **game secret** — public Player Events API auth.

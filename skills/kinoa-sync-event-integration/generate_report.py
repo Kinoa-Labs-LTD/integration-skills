@@ -50,6 +50,14 @@ from typing import Any
 
 CRITICAL_EVENT_NAMES = {"session_start", "payment", "watch_ad", "install"}
 
+# Which calculated properties go dark when a critical event sends no data.
+CRITICAL_EVENT_CONSEQUENCES = {
+    "session_start": "session lifecycle metrics",
+    "payment": "monetization metrics (LTV / ARPU)",
+    "watch_ad": "ad-revenue analytics (eCPM, ad income)",
+    "install": "install attribution",
+}
+
 
 def _format_param(p: dict[str, Any]) -> str:
     name = str(p.get("name", ""))
@@ -136,21 +144,28 @@ def _critical_section(critical: list[dict[str, Any]]) -> str:
             f"<tr><td class='name'><strong>{name}</strong></td><td>{badge}</td><td class='note'>{note}</td></tr>"
         )
 
-    callout = (
-        "<p class='callout-good'>All four critical events are integrated. Kinoa's calculated properties "
-        "(ad-revenue analytics, install attribution, monetization / LTV / ARPU, session lifecycle) "
-        "will populate correctly.</p>"
-        if all_good
-        else (
+    if all_good:
+        callout = (
+            "<p class='callout-good'>All four critical events are integrated. Kinoa's calculated properties "
+            "(ad-revenue analytics, install attribution, monetization / LTV / ARPU, session lifecycle) "
+            "will populate correctly.</p>"
+        )
+    else:
+        lost = "; ".join(
+            f"<code>{html.escape(str(e.get('name', '')))}</code> → "
+            + html.escape(CRITICAL_EVENT_CONSEQUENCES.get(str(e.get("name", "")), "related calculated properties"))
+            for e in missing
+        )
+        callout = (
             "<p class='callout-bad'>"
-            "<strong>One or more critical events are not integrated.</strong> "
-            "Kinoa's calculated properties depend on these — without them, "
-            "ad-revenue analytics, install attribution, monetization (LTV/ARPU), "
-            "and session lifecycle metrics simply cannot be computed. "
-            "Please prioritize the rows marked NOT integrated below."
+            "<strong>Some critical events are not integrated.</strong> "
+            "The integration will keep working without them — everything you did wire up flows normally — "
+            "but the following calculated properties will not be computed, because Kinoa receives no data "
+            f"for them: {lost}. "
+            "We recommend implementing these events in the game if possible; re-run the events sync "
+            "afterwards to refresh this report."
             "</p>"
         )
-    )
 
     css_class = "critical critical-ok" if all_good else "critical critical-bad"
 

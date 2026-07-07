@@ -24,7 +24,20 @@ This skill is Phase 1 of the orchestrator's chain. Fire telemetry via `${CLAUDE_
 
 The helper exits 0 even on failure — if it errors, log the JSON and continue. Before `KINOA_GAME_ID` is persisted (the very first `phase-start`), the helper will return `error: missing_game_id`; that's expected — once Step 2 writes the env file, the rest of the calls go through.
 
-**Run state.** Alongside the final `phase-end`, read-merge-write `./.kinoa-integration-state.json` in the project's working directory: set top-level `game_id` and `phases.init.status` (`done` on ok, otherwise the failure reason). If the file exists with a *different* `game_id`, ask the developer before overwriting — it likely belongs to another project's run. Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/SKILL.md` → "Run state".
+**Run state.** Alongside the final `phase-end`, read-merge-write `.kinoa-integration-state.json` in the project's working directory: set top-level `game_id`, `architecture`, `service` (MULTI_REPO only), and `phases.init.status` (`done` on ok, otherwise the failure reason). If the file exists with a *different* `game_id`, ask the developer before overwriting — it likely belongs to another project's run. Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/SKILL.md` → "Run state".
+
+## Step 0: Establish the project architecture
+
+Kinoa modules don't have to live in one codebase — with microservices each module may be integrated from a different service. Every later workflow scopes its discovery and its state handling to this answer, so it must be settled first (see the orchestrator's "Architecture modes" section for the full semantics).
+
+Skip the question when the answer is already known — `KINOA_ARCHITECTURE` present in `~/.kinoa/session.env`, or `architecture` recorded in `.kinoa-integration-state.json` — just restate it in one line ("Architecture: MULTI_REPO, service `payments-service`"). Otherwise ask via `AskUserQuestion`:
+
+> "How is this project laid out?"
+> - **Single application** — one codebase; everything integrates from here. (`SINGLE`, default)
+> - **Monorepo with services** — several services under this repo root; each Kinoa module may live in a different service. (`MONOREPO`)
+> - **Separate repositories** — each service is its own checkout; this repo is one of the services. (`MULTI_REPO`)
+
+For `MULTI_REPO`, additionally confirm the **service name** for the current repo (default: the repo folder name) and register the service in the central index `~/.kinoa/<game_id>/services.json` (create the file if absent; read-merge-write if present) — this can only happen after Step 2 has validated the game id, so just note the name now and write the index alongside Step 4.
 
 ## Step 1: Check for existing credentials
 
@@ -70,13 +83,14 @@ When the developer just wants to **rotate only the session token** (Reuse-but-se
 python "${CLAUDE_SKILL_DIR}/kinoa_init.py" \
     --game-id "<game_uuid>" \
     --game-secret "<game_secret>" \
-    --bearer-token "<bearer_token>"
+    --bearer-token "<bearer_token>" \
+    --architecture "<SINGLE|MONOREPO|MULTI_REPO — Step 0's answer>"
 ```
 
 In SDK mode (kinoa-sdk-dashboard-sync preflight), append `--integration-type SDK`.
 
 The script:
-- Writes `~/.kinoa/session.env` with `KINOA_INTEGRATION_TYPE=<expected type>`, `KINOA_GAME_ID`, `KINOA_GAME_SECRET`, `KINOA_BEARER_TOKEN` (mode `0600`).
+- Writes `~/.kinoa/session.env` with `KINOA_INTEGRATION_TYPE=<expected type>`, `KINOA_ARCHITECTURE` (when `--architecture` is passed), `KINOA_GAME_ID`, `KINOA_GAME_SECRET`, `KINOA_BEARER_TOKEN` (mode `0600`).
 - Calls `GET https://dashboard.kinoa.io/gamemetaapi/api/game-settings` with headers `Authorization: Bearer <bearer_token>`, `Game: <game_uuid>`, and `Game-Id: <game_uuid>` (both headers carry the same UUID — Kinoa accepts either name and we send both).
 - Compares the returned `integration_type` against the expected type (`API` default, or the `--integration-type` value).
 - Prints a JSON object with `http_status`, `integration_type` (actual), `expected_integration_type`, `ok`, and on failure a `reason`.
@@ -102,12 +116,15 @@ Read the JSON. Branch:
 - `reason: "network_error"` → show the `body` field, ask the user to check connectivity. Stop.
 - Any other non-2xx → surface `http_status` and `body` for diagnosis.
 
-## Step 4: Print export commands
+## Step 4: Finalize local records and print export commands
 
-Print four lines so the user can paste them into a separate shell if needed:
+1. **Integration registry.** If `KINOA-INTEGRATION.md` doesn't exist in the working directory, create the skeleton (template: orchestrator SKILL.md → "Integration registry"): header with Game ID, Architecture, Service (MULTI_REPO only), an empty `## Modules`, and a `## History` opened with one entry — `### <ISO timestamp> — init` / "Credentials validated, integration_type <type>, architecture <mode>." If the file exists, just append that History entry. Remind the developer this file is meant to be committed (while `.kinoa-integration-state.json` should be gitignored).
+2. **Central index (`MULTI_REPO` only).** Read-merge-write `~/.kinoa/<game_id>/services.json`: ensure `game_id`/`architecture` are set and this repo's service appears under `services` with its absolute `root` path (schema: orchestrator SKILL.md → "Central index").
+3. Print export lines so the user can paste them into a separate shell if needed:
 
 ```
 export KINOA_INTEGRATION_TYPE=<API|SDK — the expected type from Step 2>
+export KINOA_ARCHITECTURE=<SINGLE|MONOREPO|MULTI_REPO>
 export KINOA_GAME_ID=<game_uuid>
 export KINOA_GAME_SECRET=<game_secret>
 export KINOA_BEARER_TOKEN=<bearer_token>

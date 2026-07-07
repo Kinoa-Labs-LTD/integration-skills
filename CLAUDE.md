@@ -111,6 +111,7 @@ allowed-tools: Bash(python *) Bash(cat *) Read Write Edit Glob Grep AskUserQuest
 
 ```
 KINOA_INTEGRATION_TYPE  = API | SDK   (API = api-integration workflows; SDK = dashboard-sync for SDK games)
+KINOA_ARCHITECTURE      = SINGLE | MONOREPO | MULTI_REPO   (set by kinoa-init Step 0; SINGLE default)
 KINOA_GAME_ID           = <uuid>
 KINOA_GAME_SECRET       = <secret>
 KINOA_BEARER_TOKEN      = <jwt — admin auth>
@@ -120,15 +121,23 @@ KINOA_LAST_SESSION_ID   = <set by kinoa-open-session>
 
 Session tokens expire (~24h JWT). On a 401 from any admin endpoint, ask the user to grab a fresh session token from the Kinoa dashboard → Integration menu and re-run `/kinoa-init`.
 
-## Per-project run state
+## Architecture modes (microservices)
 
-Workflows persist progress and decisions to `./.kinoa-integration-state.json` in the project being integrated (suggest `.gitignore`-ing it, like the report HTMLs). Each workflow reads it on start — to resume after an interrupted or compacted session — and read-merge-writes its own phase entry whenever it fires a `phase-end` webhook. Canonical schema + merge rules live in [`kinoa-api-integration/SKILL.md`](kinoa-api-integration/SKILL.md) → "Run state". Conversation context is NOT the durable source of truth for decisions like `SESSION_START_AUTO_FIRES`, the player_state strategy, or created resource ids — the state file is.
+A client may integrate each Kinoa module (player fields, events, feature settings, session-open) from a different service. `kinoa-init` asks up front how the codebase is laid out and persists `KINOA_ARCHITECTURE`: **SINGLE** (one app — classic flow), **MONOREPO** (services under one root; each workflow asks which `service_root` its module lives in and scopes discovery + generated artifacts to it; one state file + registry at the repo root), **MULTI_REPO** (each service is its own checkout = the service; state + registry per repo). In MULTI_REPO, game-wide decisions (`session_start_auto_fires`, `player_state_strategy`, feature-settings resource ids) and the per-service module map are mirrored to the machine-local central index **`~/.kinoa/<game_id>/services.json`** so a workflow in one repo sees what other services' runs already decided. Canonical semantics: [`skills/kinoa-api-integration/SKILL.md`](skills/kinoa-api-integration/SKILL.md) → "Architecture modes".
+
+## Per-project run state & integration registry
+
+Workflows persist progress and decisions to `.kinoa-integration-state.json` (project root in SINGLE/MULTI_REPO, monorepo root in MONOREPO; suggest `.gitignore`-ing it, like the report HTMLs). Each workflow reads it on start — to resume after an interrupted or compacted session — and read-merge-writes its own phase entry whenever it fires a `phase-end` webhook. Canonical schema + merge rules live in [`kinoa-api-integration/SKILL.md`](kinoa-api-integration/SKILL.md) → "Run state". Conversation context is NOT the durable source of truth for decisions like `SESSION_START_AUTO_FIRES`, the player_state strategy, or created resource ids — the state file is.
+
+Alongside the machine state lives **`KINOA-INTEGRATION.md`** — the human-readable integration registry, **committed to git** (unlike the state file): what modules are integrated, from which service, with which artifacts, plus an append-only `## History` change log (one dated entry per completed phase/sync run). Every state-file write updates the registry in the same breath. Template + rules: [`kinoa-api-integration/SKILL.md`](kinoa-api-integration/SKILL.md) → "Integration registry".
 
 ---
 
 ## Domain rules
 
-**Highly-recommended events** — the set `{watch_ad, install, payment}` is required for Kinoa's calculated properties (ad-revenue analytics, install attribution, monetization / LTV / ARPU). The event sync skill flags these with ⭐ in the 3.3 checklist regardless of bucket, with a callout explaining the consequence of leaving them unintegrated.
+**Highly-recommended events** — the set `{watch_ad, install, payment}` feeds Kinoa's calculated properties (ad-revenue analytics, install attribution, monetization / LTV / ARPU). The event sync skill flags these with ⭐ in the 3.3 checklist regardless of bucket. The framing is deliberate: missing them does **not** break the integration — the checklist callout and the HTML reports state that everything wired up keeps working, but the calculated properties fed by the missing events/fields won't be computed (no data), and recommend implementing them in the game if possible. Same rule for predefined player fields left `not_implemented` (player-fields report callout).
+
+**Deletion confirmation** — before ANY delete against the dashboard (player-field `delete` — soft; event `delete` — HARD, irreversible; `delete-config`), always confirm via `AskUserQuestion` with the resolved resource id + human name and the delete semantics; proceed only on an explicit Yes from this session. Canonical wording: [`skills/kinoa-api-integration/SKILL.md`](skills/kinoa-api-integration/SKILL.md) (intro) + each dashboard helper's delete doc.
 
 **`session_start` — auto-fire vs explicit emit** *(API-integration workflows; SDK games handle session lifecycle inside the Kinoa SDK)*. Two open-session endpoints exist; only one auto-fires:
 
