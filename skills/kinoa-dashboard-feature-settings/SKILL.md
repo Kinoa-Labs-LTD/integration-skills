@@ -115,7 +115,7 @@ date, enumeration, version, object`.
 | `publish-config --config-id ID` | `POST …/publish` | IN_REVIEW → SCHEDULED (then auto-ACTIVE once the start time passes; visible at runtime after a short propagation lag) |
 | `add-test-players --config-id ID --player-id ID …` | `POST …/test-players` | let specific players resolve a not-yet-public config |
 | `test-config --config-id ID --player-id ID` | `GET …/test/{playerId}` | admin-side resolve (data + filters), no runtime needed |
-| `delete-config --config-id ID` | `DELETE /configurations/{id}` | |
+| `delete-config --config-id ID` | `DELETE /configurations/{id}` | **MANDATORY confirmation first:** ask via AskUserQuestion, naming the resolved config id AND its name/setting; proceed only on an explicit Yes from this session — even when the request already said "delete X", the confirmation validates the *resolved id* |
 
 ### Runtime read
 | Command | Call | Notes |

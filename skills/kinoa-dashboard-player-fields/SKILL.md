@@ -38,6 +38,10 @@ python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_player_fields.py" create --name NAME
 python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_player_fields.py" delete --field-id UUID
     DELETE https://dashboard.kinoa.io/gamemetaapi/api/player_fields/<id>
     Soft delete (returns 204; field state becomes "deleted").
+    MANDATORY confirmation before running: ask via AskUserQuestion, naming the
+    resolved field id AND its name/path (soft delete — recoverable by activate).
+    Proceed only on an explicit Yes from this session — even when the request
+    already said "delete X", the confirmation validates the *resolved id*.
 
 python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_player_fields.py" get-player-state --player-id ID
     GET https://gate.kinoa.io/playerevents/api/v3/player-state?player_id=ID

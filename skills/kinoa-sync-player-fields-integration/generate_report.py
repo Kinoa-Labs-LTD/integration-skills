@@ -106,6 +106,8 @@ section h2 { margin-top: 0; font-size: 1.15rem; }
 section h2 .count { color: #57606a; font-weight: 400; font-size: 0.95rem; }
 section.integrated { border-left: 4px solid #2da44e; }
 section.not-integrated { border-left: 4px solid #bf8700; background: #fff8c5; }
+.callout-missing { padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid #bf8700;
+  border-left: 4px solid #bf8700; background: #fff8c5; }
 section.empty-section { opacity: 0.7; }
 .empty { color: #57606a; font-style: italic; margin: 0; }
 table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
@@ -137,6 +139,24 @@ def render(payload: dict[str, Any]) -> str:
         ]
     )
 
+    # Missing predefined fields don't break the integration — but every dashboard
+    # feature fed by them (calculated properties, segmentation, analytics) will
+    # sit empty. Say so explicitly rather than leaving the yellow bucket mute.
+    missing_callout = ""
+    if pre_out:
+        names = ", ".join(
+            f"<code>{html.escape(str(f.get('name', '')))}</code>" for f in pre_out
+        )
+        missing_callout = (
+            "<p class='callout-missing'>"
+            "<strong>Some predefined fields are not integrated.</strong> "
+            "The integration will keep working without them — but Kinoa receives no data "
+            f"for {names}, so any calculated properties, segments, or analytics that rely "
+            "on these fields will not be computed. We recommend implementing them in the "
+            "game if possible; re-run the player-fields sync afterwards to refresh this report."
+            "</p>"
+        )
+
     sections = "\n".join(
         [
             _section("Predefined fields — integrated", "integrated", pre_in),
@@ -166,6 +186,7 @@ def render(payload: dict[str, Any]) -> str:
   {f"&middot; KinoaPlayerState <code>{state_path}</code>" if state_path else ""}
 </p>
 <div class="summary">{summary_cards}</div>
+{missing_callout}
 {sections}
 </body>
 </html>

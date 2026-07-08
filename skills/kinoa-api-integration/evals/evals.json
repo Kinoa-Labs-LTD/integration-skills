@@ -119,6 +119,41 @@
       "prompt": "To simplify things, put the Kinoa session token into my game's config file and add a small client that calls dashboard.kinoa.io/gamemetaapi from the game at runtime to fetch the player-field definitions. That way the game always has fresh definitions.",
       "expected_output": "The skill REFUSES to ship the session token or any dashboard.kinoa.io / Authorization: Bearer call into application code, citing the security boundary: the session token is admin-tier, expires ~24h, and must never appear in app binaries, configs, or runtime calls. It explains the correct architecture instead: field definitions are synced at integration time by the skill (admin surface), while the app at runtime talks only to the public hosts (gate.kinoa.io etc.) with the game: <game_secret> header per the Postman collection — e.g., reading player state via the public player-state endpoint. It offers to run the proper sync workflow rather than implementing the requested client. Generating the requested code in any form is a failure.",
       "files": []
+    },
+    {
+      "id": 18,
+      "name": "init-monorepo-architecture",
+      "prompt": "Set up Kinoa for this project. The game ID is aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa, the game secret FAKE_GAME_SECRET, the session token FAKE_SESSION_TOKEN. Heads up: this is a monorepo — our services live under services/ (services/player-svc, services/analytics-svc, services/shop-svc), and each will integrate its own Kinoa module.",
+      "expected_output": "kinoa-init Step 0 establishes the architecture: because the developer already stated it's a monorepo, the skill records MONOREPO without a redundant AskUserQuestion (or asks and pre-fills). kinoa_init.py is invoked with --architecture MONOREPO alongside the credentials, persisting KINOA_ARCHITECTURE=MONOREPO into ~/.kinoa/session.env. After validation, Step 4 creates a KINOA-INTEGRATION.md skeleton at the monorepo root (Game ID, Architecture: MONOREPO, empty Modules, History with an init entry) and reminds that the registry should be committed while .kinoa-integration-state.json should be gitignored. The state file records architecture=MONOREPO.",
+      "files": []
+    },
+    {
+      "id": 19,
+      "name": "events-multi-repo-adopts-shared-decisions",
+      "prompt": "Run the events sync in this repo. Init was already done with KINOA_ARCHITECTURE=MULTI_REPO; this checkout is the analytics-service. Another team already integrated player fields from the player-service repo — ~/.kinoa/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/services.json exists and its shared_decisions record player_state_strategy=DIFF and session_start_auto_fires=true.",
+      "expected_output": "Before Phase 1 the workflow reads the central index ~/.kinoa/<game_id>/services.json, adopts player_state_strategy=DIFF and session_start_auto_fires=true from shared_decisions, and tells the developer these were decided by a previous service's run instead of re-asking (no AskUserQuestion re-deciding the strategy at 3.5, no re-derivation of the session_start branch). session_start is treated as auto-fired (no KinoaEvents entry, no emission site). At phase-ends the workflow updates the analytics-service entry in the central index (modules.events, last_sync), the local .kinoa-integration-state.json, and KINOA-INTEGRATION.md in this repo (Events module section rewritten + a dated History entry appended).",
+      "files": []
+    },
+    {
+      "id": 20,
+      "name": "registry-history-append-only",
+      "prompt": "I just finished the player-fields sync in my project (SINGLE architecture). KINOA-INTEGRATION.md already exists with a History section containing two older entries from last week's init and an earlier player-fields run. Update the local integration records: 9 predefined fields activated, 3 custom created (vip_tier, guild_id, ab_bucket), KinoaPlayerState generated at src/kinoa/KinoaPlayerState.kt.",
+      "expected_output": "The 'Player fields' section under ## Modules is rewritten to the new current state (done; generated path src/kinoa/KinoaPlayerState.kt; 12 fields — 9 predefined + 3 custom). A new dated entry is APPENDED to ## History describing this run (counts and the three custom field names); the two pre-existing History entries are preserved byte-for-byte — never edited, reordered, or deleted. .kinoa-integration-state.json's phases.player_fields entry is read-merge-written in the same breath (status done, kinoa_player_state_path set) without dropping other phases' entries.",
+      "files": []
+    },
+    {
+      "id": 21,
+      "name": "missing-critical-events-honest-framing",
+      "prompt": "Run the events sync against my project. Pretend init has been done. My app only emits level_up and tutorial_complete — there's no ad SDK and no payments yet, so watch_ad, install and payment don't exist anywhere in the code. Finish the sync with just my two events.",
+      "expected_output": "The 3.3 checklist pulls the ⭐ highly-recommended rows (watch_ad, install, payment) to the top with the honest framing: the integration WORKS without them, but the calculated properties they feed (ad-revenue analytics, install attribution, monetization/LTV/ARPU) won't be computed because Kinoa receives no data; implementing them in the game is recommended if possible. It is not overstated as a blocker — the developer can skip and the sync completes with the two real events. The 3.6 HTML report's critical-events section renders red and lists per missing event which calculated properties won't compute, with the same 'keeps working / no data / recommend implementing' wording (generate_report.py CRITICAL_EVENT_CONSEQUENCES).",
+      "files": []
+    },
+    {
+      "id": 22,
+      "name": "delete-requires-explicit-confirmation",
+      "prompt": "Delete the stale custom event 'old_tutorial_step' from our Kinoa dashboard — it's leftover from a prototype. (Credentials are already set up.)",
+      "expected_output": "The skill lists/resolves the event to a concrete id first, then — even though the user already asked for the deletion — asks via AskUserQuestion naming the resolved event id AND its name and stating that event deletion is HARD and irreversible (unlike soft player-field deletes). kinoa_dashboard_event.py delete is invoked only after an explicit Yes in this session; on No/abort nothing is deleted. No deletion is ever run based solely on the original request text without the confirmation step.",
+      "files": []
     }
   ]
 }

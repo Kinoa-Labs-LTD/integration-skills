@@ -30,7 +30,14 @@ This skill is Phase 4 of the orchestrator's chain and has its own four inner pha
 
 Helper exits 0 even on failure; never abort the workflow on a webhook error.
 
-**Run state.** On start, read `./.kinoa-integration-state.json` if present — if `phases.events` records finished inner phases, resume from the first unfinished one. Alongside every inner `phase-end`, read-merge-write the file's `phases.events` entry: `status`, `kinoa_events_path` (Phase 2), `session_start_auto_fires` (record it the moment Phase 1 decides it — this flag must survive context compaction), `player_state_strategy` (3.5), `approved_events` (the final emission contract from 3.3/3.4), `report` (3.6). Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/SKILL.md` → "Run state".
+**Run state.** On start, read `./.kinoa-integration-state.json` if present — if `phases.events` records finished inner phases, resume from the first unfinished one. Alongside every inner `phase-end`, read-merge-write the file's `phases.events` entry: `status`, `service_root` (MONOREPO), `kinoa_events_path` (Phase 2), `session_start_auto_fires` (record it the moment Phase 1 decides it — this flag must survive context compaction), `player_state_strategy` (3.5), `approved_events` (the final emission contract from 3.3/3.4), `report` (3.6). Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/SKILL.md` → "Run state".
+
+**Architecture & service scope.** Read `KINOA_ARCHITECTURE` from `~/.kinoa/session.env` (default `SINGLE`; semantics: orchestrator SKILL.md → "Architecture modes") before Phase 1:
+
+- `MONOREPO` — ask which service directory this run integrates events from (offer candidate dirs found via Glob). Scope Phase 1 discovery, the generated `KinoaEvents`, and the Phase 4 emission wiring to that `service_root`. Events are the module most likely to span several services — when a second service is integrated later, keep per-service artifacts under the `services` map in `phases.events` (schema in the orchestrator's "Run state") while game-wide decisions (`session_start_auto_fires`, `player_state_strategy`) stay at the module level: they are per game, not per service, so a later service run must reuse them, not re-decide them.
+- `MULTI_REPO` — the current repo is the service. On start read the central index `~/.kinoa/<game_id>/services.json`: if `shared_decisions` already carries `session_start_auto_fires` or `player_state_strategy` from another service's run, adopt those values and tell the developer instead of re-deriving/re-asking. The moment this run decides either value (Phase 1 step 6, or 3.5), mirror it into `shared_decisions`; at every module-level `phase-end`, update this service's entry (`modules.events`, `last_sync`).
+
+**Integration registry.** Alongside every state-file write, update `KINOA-INTEGRATION.md` next to it (bootstrap from the orchestrator's template if missing): rewrite the "Events" section under `## Modules` to the current state (service, `KinoaEvents` path, published/created event names, strategy) and append a dated entry to `## History` describing what this run changed. Append-only — never rewrite old History entries.
 
 The skill works in four phases. Drive each phase to completion with the developer before moving on.
 
@@ -43,7 +50,7 @@ The skill works in four phases. Drive each phase to completion with the develope
    python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-event/kinoa_dashboard_event.py" list-predefined
    ```
    Each element has `id`, `name`, `status`, `activity_status`, and `game_event_parameters` (with `system: true|false` per param).
-2. For each predefined `name`, grep the application source tree (`src/`, `app/`, etc., or the path the developer specifies) for occurrences of that name as a string. Record the matches.
+2. For each predefined `name`, grep the application source tree (`src/`, `app/`, etc., or the path the developer specifies; in `MONOREPO` mode, the chosen `service_root` — see "Architecture & service scope" above) for occurrences of that name as a string. Record the matches.
 3. Also grep for **calls** that look like event emission (e.g., `sendEvent(`, `kinoa.event(`, `track(`, `emit(`) and capture the event name argument. This catches custom event names that aren't in the predefined list.
 4. Present findings to the developer via `AskUserQuestion`:
    - Confirm which predefined matches are real (vs. coincidental string usage).
@@ -103,7 +110,7 @@ Each response is `{ http_status, ok, response: { totalCount, elements: [...] } }
 - **`session_start` handling depends on `SESSION_START_AUTO_FIRES`** (set in Phase 1):
   - `True` (app uses the direct `/player/session/start` endpoint) → treat `session_start` as **in app** even if grep didn't find a literal `"session_start"` string. The endpoint emits it server-side. Do not add `session_start` to `KinoaEvents` as a separately-emitted event.
   - `False` (app opens sessions some other way) → treat `session_start` as a **regular event** that the app must emit explicitly after opening a session. Classify it normally (it will typically land in 🟡 Implement+pub if `status == NOT_IMPLEMENTED`).
-- **Highly-recommended events.** The set `{watch_ad, install, payment}` is *load-bearing* for Kinoa's calculated properties (ad-revenue analytics, install attribution, monetization / LTV / ARPU). Without these, large parts of the dashboard's analytics simply don't compute. **Mark them with a leading ⭐ in whatever bucket they fall into**, and tell the developer explicitly: *"Without watch_ad / install / payment, Kinoa cannot calculate ad revenue, install attribution, or monetization metrics. These should be prioritized."*
+- **Highly-recommended events.** The set `{watch_ad, install, payment}` is *load-bearing* for Kinoa's calculated properties (ad-revenue analytics, install attribution, monetization / LTV / ARPU). **Mark them with a leading ⭐ in whatever bucket they fall into**, and frame the consequence honestly — missing them does **not** break the integration: *"The integration will work without watch_ad / install / payment — but the calculated properties they feed (ad revenue, install attribution, monetization / LTV / ARPU) won't be computed, because Kinoa receives no data for them. We recommend implementing these events in the game if possible."* Don't overstate it as a blocker, and don't bury it as a footnote — the developer should be able to make an informed skip.
 
 For every predefined event, classify by comparing its `name` to the names the app emits (with the auto-publish rule above applied):
 
@@ -125,10 +132,12 @@ For every event the app emits whose name is **not** in any predefined or active 
 This is where the developer commits to **the canonical list of events the app will emit**. Show a numbered list grouped by severity, **with `⭐ HIGHLY RECOMMENDED` rows pulled to the top** (regardless of bucket) and a one-line callout explaining why they matter:
 
 ```
-⚠ The events marked ⭐ are required for Kinoa's calculated properties:
+⚠ The events marked ⭐ feed Kinoa's calculated properties. The integration
+  works without them, but these metrics won't be computed (no data):
   - watch_ad  → ad-revenue analytics
   - install   → install attribution
   - payment   → monetization / LTV / ARPU
+  Recommended: implement them in the game if possible.
 
 1. ⭐🟡 Implement+pub  — install   (NOT_IMPLEMENTED, sys/custom: 14/0)  ← highly recommended
 2. ⭐🟡 Implement+pub  — payment   (NOT_IMPLEMENTED, sys/custom: 10/0)  ← highly recommended
@@ -231,7 +240,7 @@ After 3.4 applies and 3.5 picks the strategy, produce a human-readable HTML repo
 
 The report has a **top critical-events section** plus the standard four buckets:
 
-- **🔴 Critical events** — `session_start`, `payment`, `watch_ad`, `install`. These four power Kinoa's calculated properties (session lifecycle, monetization/LTV/ARPU, ad-revenue, install attribution). When **any** of them is not integrated, the section renders red with a "missing" callout. When all four are integrated, it renders green with a confirmation. `session_start` counts as integrated when `SESSION_START_AUTO_FIRES = True` (server fires it on the recommended open-session endpoint) — record this nuance in the row's `note`.
+- **🔴 Critical events** — `session_start`, `payment`, `watch_ad`, `install`. These four power Kinoa's calculated properties (session lifecycle, monetization/LTV/ARPU, ad-revenue, install attribution). When **any** of them is not integrated, the section renders red with a callout that states the consequence precisely: the integration keeps working without them, but it lists per missing event which calculated properties won't be computed (no data), and recommends implementing those events in the game if possible. When all four are integrated, it renders green with a confirmation. `session_start` counts as integrated when `SESSION_START_AUTO_FIRES = True` (server fires it on the recommended open-session endpoint) — record this nuance in the row's `note`.
 - **Predefined events — integrated** — `status == "ACTIVE"` and the app emits the event (or it's auto-fired for `session_start`).
 - **Predefined events — NOT integrated** — `status == "NOT_IMPLEMENTED"` regardless of in-app, plus active-but-unmemitted (🟠 WARNING). Include the `status` column.
 - **Custom events — integrated** — active USER events the app emits.

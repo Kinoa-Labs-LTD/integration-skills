@@ -108,7 +108,14 @@ telemetry via `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/kinoa_webhook.py`:
 
 The helper exits 0 even on failure; never abort the workflow on a webhook error.
 
-**Run state.** On start, read `./.kinoa-integration-state.json` if present — if `phases.feature_settings` records finished inner phases, resume from the first unfinished one. Alongside every inner `phase-end`, read-merge-write the file's `phases.feature_settings` entry: `status`, `schema_id`/`schema_version`, `setting_id`/`setting_key`, `config_id`, `facade_path` (5.2), `report` (5.5). Record each id the moment 5.3 creates the resource, so an interrupted run resumes without re-creating schemas/settings/configs. Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/SKILL.md` → "Run state".
+**Run state.** On start, read `./.kinoa-integration-state.json` if present — if `phases.feature_settings` records finished inner phases, resume from the first unfinished one. Alongside every inner `phase-end`, read-merge-write the file's `phases.feature_settings` entry: `status`, `service_root` (MONOREPO), `schema_id`/`schema_version`, `setting_id`/`setting_key`, `config_id`, `facade_path` (5.2), `report` (5.5). Record each id the moment 5.3 creates the resource, so an interrupted run resumes without re-creating schemas/settings/configs. Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/SKILL.md` → "Run state".
+
+**Architecture & service scope.** Read `KINOA_ARCHITECTURE` from `~/.kinoa/session.env` (default `SINGLE`; semantics: orchestrator SKILL.md → "Architecture modes") before 5.1:
+
+- `MONOREPO` — ask which service directory consumes this feature setting (offer candidate dirs found via Glob). The `FeatureSettingsFacade` (5.2) and the runtime verification (5.4) are scoped to that `service_root`; record it in the phase entry. The dashboard resources themselves (schema/setting/config) are game-wide, not per-service.
+- `MULTI_REPO` — the current repo is the service. On start read the central index `~/.kinoa/<game_id>/services.json`: if `shared_decisions.feature_settings` already carries resource ids from another service's run, offer to **reuse** that schema/setting instead of creating new ones (a second service often consumes the same setting via its own facade). Mirror every id 5.3 creates into `shared_decisions.feature_settings` at the moment of creation; at every module-level `phase-end`, update this service's entry (`modules.feature_settings`, `last_sync`).
+
+**Integration registry.** Alongside every state-file write, update `KINOA-INTEGRATION.md` next to it (bootstrap from the orchestrator's template if missing): rewrite the "Feature settings" section under `## Modules` to the current state (service, setting key, schema id/version, config id/status, facade path) and append a dated entry to `## History` describing what this run changed. Append-only — never rewrite old History entries.
 
 Drive each phase to completion with the developer before moving on.
 
