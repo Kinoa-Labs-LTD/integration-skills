@@ -101,7 +101,7 @@ allowed-tools: Bash(python *) Bash(cat *) Read Write Edit Glob Grep AskUserQuest
 
 **Workflow skills follow Phase 1 → 2 → 3 → 4**: 1 discover (Glob/Grep), 2 generate empty data class, 3 sync (3.1 fetch defs, 3.2 diff, 3.3 checklist for approval, 3.4 apply, 3.5 player_state strategy [events only], 3.6 generate HTML integration report), 4 integration test in the application's codebase.
 
-**Adding a new sub-skill**: create the folder, decide flavor (workflow / dashboard helper / utility / runtime helper / setup), update the orchestrator's dispatcher table, update [`HOW-TO.md`](kinoa-api-integration/HOW-TO.md) and [`evals.json`](kinoa-api-integration/evals/evals.json), re-run the install loop. Runtime helpers belong **inside** the workflow skill that uses them, not as standalone slash commands (per the consolidation that folded `kinoa-send-event` into `kinoa-sync-event-integration`).
+**Adding a new sub-skill**: create the folder, decide flavor (workflow / dashboard helper / utility / runtime helper / setup), update the orchestrator's dispatcher table, update [`HOW-TO.md`](kinoa-api-integration/HOW-TO.md), [`evals.json`](kinoa-api-integration/evals/evals.json), and [`README.md`](README.md) (skills table + any flow/architecture change), re-run the install loop. Runtime helpers belong **inside** the workflow skill that uses them, not as standalone slash commands (per the consolidation that folded `kinoa-send-event` into `kinoa-sync-event-integration`).
 
 ---
 
@@ -189,6 +189,7 @@ For games integrated via the Kinoa Unity SDK, the `/kinoa` skill (shipped inside
 
 ## File index
 
+- [`README.md`](README.md) — human-facing repo entry point (plugin overview, install, skills table, architecture, security boundary). **Keep it current** whenever skills, install steps, architecture, or the security boundary change.
 - [`skills/kinoa-api-integration/SKILL.md`](skills/kinoa-api-integration/SKILL.md) — API-mode orchestrator dispatcher
 - [`skills/kinoa-sdk-dashboard-sync/SKILL.md`](skills/kinoa-sdk-dashboard-sync/SKILL.md) — SDK-mode dashboard sync (manifest contract, phases, hard rules)
 - [`skills/kinoa-api-integration/HOW-TO.md`](skills/kinoa-api-integration/HOW-TO.md) — install, token acquisition, walkthrough
