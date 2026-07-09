@@ -154,6 +154,20 @@
       "prompt": "Delete the stale custom event 'old_tutorial_step' from our Kinoa dashboard — it's leftover from a prototype. (Credentials are already set up.)",
       "expected_output": "The skill lists/resolves the event to a concrete id first, then — even though the user already asked for the deletion — asks via AskUserQuestion naming the resolved event id AND its name and stating that event deletion is HARD and irreversible (unlike soft player-field deletes). kinoa_dashboard_event.py delete is invoked only after an explicit Yes in this session; on No/abort nothing is deleted. No deletion is ever run based solely on the original request text without the confirmation step.",
       "files": []
+    },
+    {
+      "id": 23,
+      "name": "sync-resource-templates-discover-confirm-register",
+      "prompt": "Register our game's resources with Kinoa. Pretend init has already been done. My shop catalogue (Assets/Shop/items.json) defines a legendary_sword (attack: int, rarity: one of common/rare/epic) and a gold_chest bought via IAP. Gold and gems are our soft currency.",
+      "expected_output": "Routes via kinoa-api-integration to sync-resource-template-integration (Phase 6). Phase 6.1 discovers legendary_sword and gold_chest as resources (sellable/prize items) and EXCLUDES gold/gems (internal currency — those are player state, not resources). Phase 6.2 builds a candidate list with inferred fields (attack:number, rarity:enumeration with values common,rare,epic) and scaffolds a pure-data KinoaResources class (no API calls, no bearer). Phase 6.3.1 lists existing templates via kinoa-dashboard-resource-template; 6.3.3 renders the INTERACTIVE confirmation page with generate_confirm_page.py (editable table, add/remove resources & params, resourceKey validation, Download + Copy buttons) and asks the developer to hand the confirmed JSON back (file path or paste). 6.3.4 registers each confirmed resource via kinoa_dashboard_resource_template.py create --fields-json (DRAFT) then activate, passing --expect-game $KINOA_GAME_ID; it never calls delete. 6.3.5 fills KinoaResources with the confirmed keys; 6.3.6 generates the HTML registration report. All admin calls hit gate.kinoa.io/bundle/resource-templates with bearer + Game-Id (skill-only); no dashboard.kinoa.io/bearer call is ever emitted into app code.",
+      "files": []
+    },
+    {
+      "id": 24,
+      "name": "resource-template-delete-hard-draft-only-confirmation",
+      "prompt": "Delete the resource template 'beta_reward' from our Kinoa dashboard — it was a beta-only item. (Credentials are already set up.)",
+      "expected_output": "This is a direct admin task → dashboard-resource-template, NOT the sync workflow (the workflow never deletes). The skill lists/resolves 'beta_reward' to a concrete id and status first, then — even though the user already asked for the deletion — asks via AskUserQuestion naming the resolved id AND name and stating the delete is HARD, irreversible, and DRAFT-only. kinoa_dashboard_resource_template.py delete is invoked only after an explicit Yes; if the template is ACTIVE/DEPRECATED the server returns 409 and the helper's hint recommends deprecate instead — the skill surfaces that rather than forcing it. --expect-game is passed to guard against a stale cross-game session. Nothing is deleted based solely on the original request text.",
+      "files": []
     }
   ]
 }

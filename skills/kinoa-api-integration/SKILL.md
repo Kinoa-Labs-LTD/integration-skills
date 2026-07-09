@@ -1,17 +1,17 @@
 ---
 name: kinoa-api-integration
-description: Umbrella orchestrator for integrating an application with the Kinoa Player Events API end-to-end from Claude Code. Dispatches to one of nine sub-skills — credential setup (init), player-state sync (sync-player-fields-integration), session debug helper (open-session), event sync (sync-event-integration), feature-settings sync (sync-feature-settings-integration), a CSV→schema utility (csv-schema-infer), and the three dashboard admin wrappers (dashboard-player-fields, dashboard-event, dashboard-feature-settings). Also accepts `all` to run the full onboarding sequence (init → player fields → open-session → events → feature settings). Use whenever the user wants to integrate with Kinoa, set up the Kinoa API, onboard application code with Kinoa, run the full onboarding flow, sync the player model / events / feature settings with the Kinoa dashboard, build a feature schema from a CSV, open a player session, publish or create event/field/config definitions, or perform any Kinoa admin task — even when they don't name a specific subcommand. Do NOT use for unrelated player-tracking or analytics platforms (Mixpanel, Amplitude, GameAnalytics, etc.) — this is Kinoa-specific.
+description: Umbrella orchestrator for integrating an application with the Kinoa Player Events API end-to-end from Claude Code. Dispatches to one of eleven sub-skills — credential setup (init), player-state sync (sync-player-fields-integration), session debug helper (open-session), event sync (sync-event-integration), feature-settings sync (sync-feature-settings-integration), resource-template registration (sync-resource-template-integration), a CSV→schema utility (csv-schema-infer), and the four dashboard admin wrappers (dashboard-player-fields, dashboard-event, dashboard-feature-settings, dashboard-resource-template). Also accepts `all` to run the full onboarding sequence (init → player fields → open-session → events → feature settings → resources). Use whenever the user wants to integrate with Kinoa, set up the Kinoa API, onboard application code with Kinoa, run the full onboarding flow, sync the player model / events / feature settings with the Kinoa dashboard, register game resources / sellable items / prize items, build a feature schema from a CSV, open a player session, publish or create event/field/config/resource definitions, or perform any Kinoa admin task — even when they don't name a specific subcommand. Do NOT use for unrelated player-tracking or analytics platforms (Mixpanel, Amplitude, GameAnalytics, etc.) — this is Kinoa-specific.
 argument-hint: [all | init | sync-player-fields-integration | dashboard-player-fields | open-session | sync-event-integration | dashboard-event | sync-feature-settings-integration | schema-from-csv | dashboard-feature-settings | csv-schema-infer] [extra args]
 allowed-tools: Bash(python *) Bash(cat *) Read Write Edit AskUserQuestion
 ---
 
-This is the **orchestrator** for the Kinoa API integration. It dispatches to one of nine sub-skills based on the first token in `$ARGUMENTS`. The sub-skills come in three flavors:
+This is the **orchestrator** for the Kinoa API integration. It dispatches to one of eleven sub-skills based on the first token in `$ARGUMENTS`. The sub-skills come in three flavors:
 
 - **Workflow skills** drive multi-step processes (init, sync-*-integration, open-session).
 - **Dashboard skills** are pure admin-API wrappers; the integration skills delegate to them. They're also independently invokable for direct admin tasks.
 - **Utilities** are pure local helpers with no API calls (csv-schema-infer turns a CSV into a feature-schema); workflow skills delegate to them.
 
-**Deletion confirmation — applies everywhere.** Before ANY delete against the dashboard (`delete` on player fields or events, `delete-config` on feature settings), confirm via `AskUserQuestion` — name the exact resource (id **and** human name), state whether the delete is soft (player fields) or **hard and irreversible** (events), and proceed only on an explicit Yes given in this session. This holds even when the request already said "delete X": the confirmation is about the *resolved id* — "delete the stale field" resolving to the wrong record is exactly the mistake this catches. No batch confirmations for heterogeneous resources; list each id being deleted.
+**Deletion confirmation — applies everywhere.** Before ANY delete against the dashboard (`delete` on player fields or events, `delete-config` on feature settings, `delete` on resource templates), confirm via `AskUserQuestion` — name the exact resource (id **and** human name), state whether the delete is soft (player fields) or **hard and irreversible** (events; resource templates — additionally DRAFT-only), and proceed only on an explicit Yes given in this session. This holds even when the request already said "delete X": the confirmation is about the *resolved id* — "delete the stale field" resolving to the wrong record is exactly the mistake this catches. No batch confirmations for heterogeneous resources; list each id being deleted.
 
 ## Webhook telemetry
 
@@ -103,7 +103,12 @@ Rules (apply in every sub-skill):
     "feature_settings": {"status": "skipped", "service_root": "<MONOREPO only>",
                          "schema_id": "...", "schema_version": "...",
                          "setting_id": "...", "setting_key": "...", "config_id": "...",
-                         "facade_path": "...", "report": "..."}
+                         "facade_path": "...", "report": "..."},
+    "resource_templates": {"status": "skipped", "service_root": "<MONOREPO only>",
+                         "kinoa_resources_path": "...",
+                         "confirmed_resources": ["<resourceKey>"],
+                         "registered": [{"id": "...", "key": "...", "status": "ACTIVE|DRAFT"}],
+                         "report": "..."}
   }
 }
 ```
@@ -148,6 +153,11 @@ Template:
 ### Events — in progress
 - …
 
+### Resources — done
+- **Service:** `services/shop-svc` <!-- MONOREPO: service_root; omit in SINGLE -->
+- **Generated:** `services/shop-svc/Assets/Kinoa/KinoaResources.cs`
+- **Summary:** 8 resource templates ACTIVE (6 created, 2 already active); 1 left DRAFT
+
 ## History
 <!-- append-only, newest last; one entry per completed phase / sync run -->
 
@@ -171,6 +181,8 @@ Keep History entries terse and factual — counts, names, decisions, artifact pa
 | `sync-feature-settings-integration` | `../kinoa-sync-feature-settings-integration/` | `/kinoa-sync-feature-settings-integration` | Phase 5 (workflow) — discover a schema (reuse by id/link or infer from CSV), activate it, create a setting + a test configuration, load its data, mark-default & publish, generate a `FeatureSettingsFacade` in the app, and verify a player resolves the config at runtime (tests with mocked HTTP). Delegates admin calls to `kinoa-dashboard-feature-settings` and CSV inference to `kinoa-csv-schema-infer`. |
 | `schema-from-csv`                   | `../kinoa-sync-feature-settings-integration/` | (scoped Phase 5) | **Scoped run** — execute *only* the schema-creation slice of Phase 5: infer types from a CSV (`kinoa-csv-schema-infer`), then create + publish the schema (`kinoa-dashboard-feature-settings`), and stop. No setting, configuration, facade, or test. Use when the developer wants just a published schema from a CSV, not the whole feature-settings integration. Routes to the workflow's "Scoped runs" section with the `schema-from-csv` token. |
 | `dashboard-feature-settings`        | `../kinoa-dashboard-feature-settings/`    | `/kinoa-dashboard-feature-settings`      | Helper — pure admin CLI wrapper for feature-settings defs (schemas / settings / configurations: list / create / publish / import / mark-default / test-players) plus the public runtime `get-config`. Used by Phase 5; also invokable directly. |
+| `sync-resource-template-integration` | `../kinoa-sync-resource-template-integration/` | `/kinoa-sync-resource-template-integration` | Phase 6 (workflow, **optional**) — discover sellable / awardable items (resources — NOT internal currency), let the developer confirm/edit them on an interactive HTML page, register the confirmed list as resource templates (create DRAFT → activate), generate a `KinoaResources` data class, and verify. Delegates admin calls to `kinoa-dashboard-resource-template`. |
+| `dashboard-resource-template`       | `../kinoa-dashboard-resource-template/`   | `/kinoa-dashboard-resource-template`     | Helper — pure admin CLI wrapper for resource-template defs (list / get / create / update / activate / deprecate / clone / delete). `delete` is HARD + DRAFT-only. Used by Phase 6; also invokable directly. |
 | `csv-schema-infer`                  | `../kinoa-csv-schema-infer/`              | `/kinoa-csv-schema-infer`                | Utility — pure local parser that infers a feature-schema (column types) from a CSV's headers + sample values and emits a ready-to-POST SchemaDto. Used by Phase 5; also invokable directly. No API calls. |
 
 Each sub-skill is **fully self-contained** — its own Python helper script lives in its folder, with no imports from sibling skills. This skill (`kinoa-api-integration`) holds only the orchestration prompt, the Postman reference, and the install guide. Other future skills can import any one of the sub-skills in isolation.
@@ -195,6 +207,8 @@ The user may invoke this skill with an explicit subcommand token, or they may de
 | `sync-feature-settings-integration` | Schema/setting/config → `FeatureSettingsFacade` workflow. |
 | `schema-from-csv` | Scoped: infer + create + publish a schema from a CSV, then stop. |
 | `dashboard-feature-settings` | Direct admin tools for feature-settings defs. |
+| `sync-resource-template-integration` | Discover → confirm → register game resources (sellable / prize items) → `KinoaResources` workflow. |
+| `dashboard-resource-template` | Direct admin tools for resource-template defs. |
 | `csv-schema-infer` | CSV → feature-schema type inference (local utility, no API). |
 
 If the token matches, use it. Pass remaining tokens through as `$ARGUMENTS` to the sub-skill.
@@ -213,6 +227,8 @@ If the token matches, use it. Pass remaining tokens through as `$ARGUMENTS` to t
 | "integrate feature settings", "sync feature settings / remote config", "wire up a FeatureSettingsFacade", "set up a config a player can fetch", "do the whole feature-settings integration" | `sync-feature-settings-integration` |
 | "create a schema from this CSV (just the schema)", "build and publish a feature schema from my CSV", "make me a feature schema out of shop_items.csv and publish it" — wants the schema created on the dashboard but NOT the rest of the integration | `schema-from-csv` |
 | "create / publish a schema" (by hand), "create a setting", "create / publish a configuration", "import config data", "what config does player X resolve" | `dashboard-feature-settings` |
+| "register our resources / items", "mirror the shop catalogue", "sync sellable items / prizes into Kinoa", "generate KinoaResources", "what resource templates should we create" | `sync-resource-template-integration` |
+| "list / create / activate / deprecate / delete a resource template", "publish resource X", "clone a resource template" | `dashboard-resource-template` |
 | "infer column types from this CSV", "turn this CSV into a schema body / SchemaDto" — wants the types/body only, no API call | `csv-schema-infer` |
 
 **Case C: still ambiguous.** Ask via `AskUserQuestion`. Offer the workflow steps first, dashboard helpers as a second group:
@@ -222,10 +238,12 @@ If the token matches, use it. Pass remaining tokens through as `$ARGUMENTS` to t
 - "Sync events — mirror the app's emitted events into Kinoa and verify."
 - "Sync feature settings — build/activate a schema, create a setting + config, generate a FeatureSettingsFacade, and verify a player resolves it."
 - "Schema from CSV — just infer types from a CSV and create + publish the schema (no setting/config/facade)."
+- "Sync resources — discover sellable / prize items, confirm them on an interactive page, register them as resource templates, and generate KinoaResources."
 - "All — run the full onboarding sequence end-to-end."
 - "Dashboard player fields — direct admin tools for player-field defs."
 - "Dashboard event — direct admin tools for event defs."
 - "Dashboard feature settings — direct admin tools for schemas / settings / configurations."
+- "Dashboard resource template — direct admin tools for resource-template defs."
 
 ### Step 2 — For a single subcommand, read and follow its SKILL.md
 
@@ -242,18 +260,20 @@ Read with the `Read` tool, then execute its steps. Pass through any remaining `$
 | `sync-feature-settings-integration` | `${CLAUDE_SKILL_DIR}/../kinoa-sync-feature-settings-integration/SKILL.md` |
 | `schema-from-csv` | `${CLAUDE_SKILL_DIR}/../kinoa-sync-feature-settings-integration/SKILL.md` — follow the **"Scoped runs"** section for the `schema-from-csv` token (infer → create-schema → publish-schema, then stop). Pass the token through in `$ARGUMENTS`. |
 | `dashboard-feature-settings` | `${CLAUDE_SKILL_DIR}/../kinoa-dashboard-feature-settings/SKILL.md` |
+| `sync-resource-template-integration` | `${CLAUDE_SKILL_DIR}/../kinoa-sync-resource-template-integration/SKILL.md` |
+| `dashboard-resource-template` | `${CLAUDE_SKILL_DIR}/../kinoa-dashboard-resource-template/SKILL.md` |
 | `csv-schema-infer` | `${CLAUDE_SKILL_DIR}/../kinoa-csv-schema-infer/SKILL.md` |
 
 When all sub-skills are installed as siblings under `~/.claude/skills/` (see `HOW-TO.md`), these paths resolve correctly.
 
 ### Step 3 — `all`: run the full onboarding sequence
 
-When the subcommand is `all`, drive the five-phase chain below. Treat each phase as a hand-off: complete it fully, summarize what changed, and confirm with the developer before moving to the next phase. If any phase fails (auth error, validation mismatch, developer rejection), stop and surface the error — do not silently advance. Keep `.kinoa-integration-state.json` current as each phase ends (see "Run state") so an interrupted `all` run resumes where it stopped.
+When the subcommand is `all`, drive the six-phase chain below (Phase 6 optional). Treat each phase as a hand-off: complete it fully, summarize what changed, and confirm with the developer before moving to the next phase. If any phase fails (auth error, validation mismatch, developer rejection), stop and surface the error — do not silently advance. Keep `.kinoa-integration-state.json` current as each phase ends (see "Run state") so an interrupted `all` run resumes where it stopped.
 
 The chain adapts to the architecture mode (see "Architecture modes"):
 
 - **`SINGLE`** — run all phases in the project root, exactly as written.
-- **`MONOREPO`** — before each of Phases 2, 4, 5, the workflow asks which service directory that module lives in; different phases may target different services. Phase 3 (open-session) is a network call, not code discovery — just record which service owns session-opening.
+- **`MONOREPO`** — before each of Phases 2, 4, 5, 6, the workflow asks which service directory that module lives in; different phases may target different services. Phase 3 (open-session) is a network call, not code discovery — just record which service owns session-opening.
 - **`MULTI_REPO`** — only the modules that live in the *current* repo can run here. At the start of the chain, ask the developer which modules this service implements, run those phases, and mark the rest as pending-elsewhere. In the final summary, show the cross-repo picture from the central index and tell the developer which repos to run the remaining subcommands from.
 
 1. **Phase 1 — `kinoa-init`.** Read `${CLAUDE_SKILL_DIR}/../kinoa-init/SKILL.md` and follow it. If `~/.kinoa/session.env` already exists, that skill will show the current values and let the developer pick **Reuse** (re-validate the existing creds) or **Replace** (collect new ones) — pass that choice through and don't re-prompt. Verify the run ends with `ok: true`. Capture `KINOA_INTEGRATION_TYPE` for later — the event sync phase branches on it.
@@ -261,22 +281,24 @@ The chain adapts to the architecture mode (see "Architecture modes"):
 3. **Phase 3 — `kinoa-open-session`.** Run it once with a real player_id chosen by the developer. This both verifies the endpoint and (in API + direct-endpoint projects) seeds the auto-fired `session_start` so the next phase has data to inspect. Hand off `KINOA_LAST_PLAYER_ID` / `KINOA_LAST_SESSION_ID` (already persisted by the helper) to Phase 4.
 4. **Phase 4 — `kinoa-sync-event-integration`.** Drive the event workflow. The workflow's internal `SESSION_START_AUTO_FIRES` branch will read `KINOA_INTEGRATION_TYPE` and decide whether `session_start` is auto-published (🔄) or must be wired as an explicit emission (🔁). After the workflow's internal verification step, summarize the run.
 5. **Phase 5 — `kinoa-sync-feature-settings-integration`.** Drive the feature-settings workflow: discover the schema (reuse by id/link or infer from a CSV via `kinoa-csv-schema-infer`), activate it, create a setting + a test configuration, load its data, mark-default & publish, generate a `FeatureSettingsFacade` in the app, and verify the player resolves the config at runtime. Reuses `KINOA_LAST_PLAYER_ID` from Phase 3. This phase is **optional** — only run it if the app uses (or wants) remote feature configuration; skip cleanly if the developer declines. After the verification step, summarize the run.
+6. **Phase 6 — `kinoa-sync-resource-template-integration`.** Drive the resource-registration workflow: discover sellable / awardable items (resources — NOT internal currency), let the developer confirm/edit the proposed list on an interactive HTML page, register the confirmed resources as resource templates (create DRAFT → activate) via `kinoa-dashboard-resource-template`, generate a `KinoaResources` data class, and verify. This phase is **optional** — only run it if the game has a shop / reward / item catalogue to mirror; skip cleanly if the developer declines. After the verification step, summarize the run.
 
-> **Phase number convention.** Outer phases (the orchestrator's chain) are numbered **1 → 5** in the order init → player-fields → open-session → events → feature-settings. The player-fields and events workflows number their *internal* phases **1 → 4** (Discover → Generate → Sync → Test), with sub-steps written as `<phase>.<step>` (e.g., `3.5`, `4.2`). The feature-settings workflow instead prefixes its inner phases with the outer number: **5.1 → 5.5** (Discover → Generate → Sync → Verify → Report, e.g., `5.4.2`). Numbers never collide in practice because outer phases always carry a sub-skill name (e.g., "Phase 1 — `kinoa-init`"), while inner phases appear inside a sub-skill's own narrative. Always refer to phases by number, never by letter.
+> **Phase number convention.** Outer phases (the orchestrator's chain) are numbered **1 → 6** in the order init → player-fields → open-session → events → feature-settings → resources. The player-fields and events workflows number their *internal* phases **1 → 4** (Discover → Generate → Sync → Test), with sub-steps written as `<phase>.<step>` (e.g., `3.5`, `4.2`). The feature-settings workflow instead prefixes its inner phases with the outer number: **5.1 → 5.5** (Discover → Generate → Sync → Verify → Report, e.g., `5.4.2`); the resources workflow likewise prefixes with its outer number: **6.1 → 6.4** (Discover → Generate → Confirm+Sync → Verify, e.g., `6.3.3`). Numbers never collide in practice because outer phases always carry a sub-skill name (e.g., "Phase 1 — `kinoa-init`"), while inner phases appear inside a sub-skill's own narrative. Always refer to phases by number, never by letter.
 
 After the chain completes, print a one-line summary per phase plus any items the developer skipped (so they can re-run individual subcommands later).
 
 ## End-to-end flow (the `all` sequence, expanded)
 
-A first-time integration runs through these phases. Phases 1–4 are the core onboarding; Phase 5 (feature settings) is optional and only relevant if the app uses remote configuration. The `all` subcommand drives them automatically; the developer can also invoke each as a standalone slash command.
+A first-time integration runs through these phases. Phases 1–4 are the core onboarding; Phase 5 (feature settings) and Phase 6 (resources) are optional — Phase 5 only if the app uses remote configuration, Phase 6 only if the game has a shop / reward / item catalogue to mirror. The `all` subcommand drives them automatically; the developer can also invoke each as a standalone slash command.
 
 1. `/kinoa-init` — collect credentials (integration type defaults to `API`; this flow never passes `--integration-type`, so it stays `API`), validate against `dashboard.kinoa.io`, persist to `~/.kinoa/session.env`.
 2. `/kinoa-sync-player-fields-integration` — discover the app's player class, generate `KinoaPlayerState`, drive the diff & apply (delegates each admin call to `kinoa-dashboard-player-fields`), verify.
 3. `/kinoa-open-session` — verify the open-session endpoint works against this project. **Important nuance**: this helper always hits `gate.kinoa.io/playerevents/api/v3/player/session/start` directly, which always auto-fires `session_start` server-side. That tells you the *endpoint* is wired up — but it does NOT mean the app's runtime path will auto-fire. Whether the app's runtime path auto-fires depends on whether it calls this exact endpoint (API integrations may or may not; SDK integrations definitely do not).
 4. `/kinoa-sync-event-integration` — discover events the app emits, generate `KinoaEvents`, decide `session_start` handling per the `SESSION_START_AUTO_FIRES` branch, drive publishes / creations (delegates each admin call to `kinoa-dashboard-event`), verify. Phase 4 includes a runtime test send via the local `kinoa_send_event.py` helper.
 5. `/kinoa-sync-feature-settings-integration` *(optional)* — discover a schema (reuse by id/link or infer from a CSV via `kinoa-csv-schema-infer`), activate it, create a setting + test configuration, load its data, mark-default & publish (delegates each admin call to `kinoa-dashboard-feature-settings`), generate a `FeatureSettingsFacade` in the app, and verify a player resolves the config via the public `gate.kinoa.io/featureset` runtime endpoint (covered by tests with mocked HTTP).
+6. `/kinoa-sync-resource-template-integration` *(optional)* — discover sellable / awardable items (resources), let the developer confirm/edit them on an interactive HTML page, register the confirmed list as resource templates (create DRAFT → activate, delegating each admin call to `kinoa-dashboard-resource-template`), generate a `KinoaResources` data class, and verify the templates are ACTIVE.
 
-The dashboard helpers (`kinoa-dashboard-player-fields`, `kinoa-dashboard-event`, `kinoa-dashboard-feature-settings`) aren't usually invoked directly during a fresh integration — they're called by the integration skills above. Use them directly when you need a one-off admin operation (e.g., "publish event X by id", "delete a stale custom field", "publish a configuration") without running the full workflow.
+The dashboard helpers (`kinoa-dashboard-player-fields`, `kinoa-dashboard-event`, `kinoa-dashboard-feature-settings`, `kinoa-dashboard-resource-template`) aren't usually invoked directly during a fresh integration — they're called by the integration skills above. Use them directly when you need a one-off admin operation (e.g., "publish event X by id", "delete a stale custom field", "publish a configuration") without running the full workflow.
 
 Each sub-skill is also independently invokable with its own slash command — the orchestrator makes the full sequence discoverable from one entry point.
 
@@ -286,6 +308,7 @@ Each sub-skill is also independently invokable with its own slash command — th
 - Endpoints used:
   - Admin (player fields / events): `GET / POST https://dashboard.kinoa.io/gamemetaapi/api/...`
   - Admin (feature settings): `GET / POST https://dashboard.kinoa.io/featuresettingsapi/{schemas,settings,configurations}`
+  - Admin (resource templates): `GET / POST / PUT / DELETE https://gate.kinoa.io/bundle/resource-templates` (bearer + Game-Id — skill-only, despite the `gate.kinoa.io` host)
   - Session start (new): `POST https://gate.kinoa.io/playerevents/api/v3/player/session/start`
   - Sync event: `POST https://gate.kinoa.io/playerevents/api/v3/sync-event?player_id=…`
   - Feature configurations (runtime): `POST https://gate.kinoa.io/featureset/features-configurations`
