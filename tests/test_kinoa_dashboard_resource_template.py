@@ -110,7 +110,8 @@ class ResourceTemplateHelperTests(unittest.TestCase):
         url = self.requests[0]["url"]
         self.assertIn("rows=100", url)
         self.assertIn("sortBy=updated_at", url)
-        self.assertIn("order=desc", url)
+        # Order enum is uppercase on the server (ASC/DESC), no case-insensitive converter.
+        self.assertIn("order=DESC", url)
         self.assertNotIn("statuses=", url)
 
     def test_list_statuses_filter_repeats_uppercased(self):

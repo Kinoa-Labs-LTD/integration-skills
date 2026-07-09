@@ -240,7 +240,9 @@ def cmd_list(args):
         ("page", str(args.page)),
         ("rows", str(args.rows)),
         ("sortBy", args.sort_by),
-        ("order", args.order),
+        # Order is a plain Java enum (ASC/DESC) with no case-insensitive converter,
+        # so it must be sent uppercase or the server 422s on the query binding.
+        ("order", args.order.upper()),
     ]
     if args.name:
         params.append(("name", args.name))

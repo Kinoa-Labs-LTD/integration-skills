@@ -90,7 +90,7 @@ Record `kinoa_resources_path` in run state.
 python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-resource-template/kinoa_dashboard_resource_template.py" list --rows 200
 ```
 
-The response is `{ http_status, ok, response: { total, summaries: [...] } }`. Each summary has `id`, `name`, `key`, `status` (`DRAFT`/`ACTIVE`/`DEPRECATED`), `fields`, `availableActions`. Build a map `key → {id, status}` of what's already on the dashboard.
+The response is `{ http_status, ok, response: { totalCount, elements: [...] } }` (verified live 2026-07-09). Each element has `id`, `name`, `key`, `status` (`DRAFT`/`ACTIVE`/`DEPRECATED`), `fields`, `availableActions`. Build a map `key → {id, status}` of what's already on the dashboard.
 
 ### 6.3.2 Compute the diff
 
@@ -100,6 +100,8 @@ Match each candidate to the dashboard by `resourceKey` (case-insensitive):
 - **key present, status `ACTIVE`** → ✅ already registered. Mark `existing: true`; propose an **update** only if the candidate's fields differ from the dashboard's (surface the diff so the developer decides).
 - **key present, status `DRAFT`** → 🟡 **ACTIVATE** (and update fields if changed) — someone started it but never published.
 - **key present, status `DEPRECATED`** → 🟠 **REVIEW** — the template was retired. Don't silently revive it; surface it so the developer can rename the candidate's key, clone the deprecated one, or drop it. There is no un-deprecate endpoint.
+
+**Enumeration fields on read-back (verified live 2026-07-09).** When you create a field with `enumeration_values`, the server stores the values as a separate *enumeration entity* and returns that field with `enumeration_id` set and `enumeration_values: null` — the inline values are not echoed. So when diffing a candidate's enumeration field (which carries `enumeration_values`) against the dashboard's version (which carries `enumeration_id`, values null), do **not** treat the null as "values changed/removed". Compare on `enumeration_id` presence / the enumeration's own values, not on the inline `enumeration_values` list — otherwise every re-run proposes a spurious update.
 
 Carry the `existing` flag and dashboard `status` into the candidate objects — they feed the confirmation page (which renders "on dashboard" vs "new" badges).
 

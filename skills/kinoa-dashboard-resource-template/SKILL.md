@@ -20,7 +20,8 @@ A **resource template** is a typed definition of an item that can be **sold or a
 ```
 python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_resource_template.py" list [--rows N] [--statuses DRAFT,ACTIVE,DEPRECATED] [--name SUBSTR] [--sort-by F] [--order asc|desc]
     GET https://gate.kinoa.io/bundle/resource-templates
-    Returns SummaryListDto { total, summaries:[{id,name,key,status,fields,...}] }.
+    Returns { totalCount, elements:[{id,name,key,status,fields,...}] } (verified
+    live 2026-07-09). NOTE: `order` must be ASC/DESC — the helper uppercases it.
     --statuses is the closest analogue to a state probe (resource templates
     have no soft-delete — see delete).
 
@@ -34,6 +35,9 @@ python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_resource_template.py" create --name 
     workflow after the developer confirms the HTML list). TYPE ∈ number,
     string, boolean, date, enumeration; for enumeration EXTRA is the
     comma-separated allowed values; trailing 'req' marks the field required.
+    NOTE (verified live 2026-07-09): the server stores enumeration values as a
+    separate entity — on read-back the field carries `enumeration_id` with
+    `enumeration_values: null` (the inline values are not echoed).
 
 python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_resource_template.py" update --id UUID [--name] [--key] [--description] [--status] [--body] [--field ...] [--fields-json]
     Two-step: GET the current template, apply only the provided overrides (PUT
