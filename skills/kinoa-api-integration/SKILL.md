@@ -93,7 +93,9 @@ Rules (apply in every sub-skill):
   "phases": {
     "init":             {"status": "done"},
     "player_fields":    {"status": "done", "service_root": "<MONOREPO only>",
-                         "kinoa_player_state_path": "...", "report": "..."},
+                         "kinoa_player_state_path": "...",
+                         "install_time_fields": "both|ms_only|seconds_only|none",
+                         "report": "..."},
     "open_session":     {"status": "done", "service_root": "<MONOREPO only>",
                          "player_id": "...", "session_id": "..."},
     "events":           {"status": "in_progress", "service_root": "<MONOREPO only>",

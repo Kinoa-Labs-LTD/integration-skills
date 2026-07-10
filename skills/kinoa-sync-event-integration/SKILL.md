@@ -111,6 +111,7 @@ Each response is `{ http_status, ok, response: { totalCount, elements: [...] } }
   - `True` (app uses the direct `/player/session/start` endpoint) → treat `session_start` as **in app** even if grep didn't find a literal `"session_start"` string. The endpoint emits it server-side. Do not add `session_start` to `KinoaEvents` as a separately-emitted event.
   - `False` (app opens sessions some other way) → treat `session_start` as a **regular event** that the app must emit explicitly after opening a session. Classify it normally (it will typically land in 🟡 Implement+pub if `status == NOT_IMPLEMENTED`).
 - **Highly-recommended events.** The set `{watch_ad, install, payment}` is *load-bearing* for Kinoa's calculated properties (ad-revenue analytics, install attribution, monetization / LTV / ARPU). **Mark them with a leading ⭐ in whatever bucket they fall into**, and frame the consequence honestly — missing them does **not** break the integration: *"The integration will work without watch_ad / install / payment — but the calculated properties they feed (ad revenue, install attribution, monetization / LTV / ARPU) won't be computed, because Kinoa receives no data for them. We recommend implementing these events in the game if possible."* Don't overstate it as a blocker, and don't bury it as a footnote — the developer should be able to make an informed skip.
+- **`install` is optional when the install-time player fields cover it.** Install attribution is fed either by the `install` event or by the predefined player fields `install_time` (seconds) + `install_time_ms` (milliseconds). Check whether **both** fields are implemented + active: read `phases.player_fields.install_time_fields` from `.kinoa-integration-state.json` if present; otherwise verify directly (both paths in `KinoaPlayerState` via Grep, and `state: active` via `${CLAUDE_SKILL_DIR}/../kinoa-dashboard-player-fields/kinoa_dashboard_player_fields.py list-predefined`). If both → **drop the ⭐ on `install`**: classify it normally as an optional event, note "install attribution covered by install_time / install_time_ms player fields", and leave it out of the missing-critical callout. If not both → keep the ⭐, and recommend implementing the two player fields (Phase 2) as the preferred fix — mention the `install` event as the alternative.
 
 For every predefined event, classify by comparing its `name` to the names the app emits (with the auto-publish rule above applied):
 
@@ -135,7 +136,8 @@ This is where the developer commits to **the canonical list of events the app wi
 ⚠ The events marked ⭐ feed Kinoa's calculated properties. The integration
   works without them, but these metrics won't be computed (no data):
   - watch_ad  → ad-revenue analytics
-  - install   → install attribution
+  - install   → install attribution (optional if install_time + install_time_ms
+                player fields are implemented — preferred; then no ⭐ here)
   - payment   → monetization / LTV / ARPU
   Recommended: implement them in the game if possible.
 
@@ -240,7 +242,7 @@ After 3.4 applies and 3.5 picks the strategy, produce a human-readable HTML repo
 
 The report has a **top critical-events section** plus the standard four buckets:
 
-- **🔴 Critical events** — `session_start`, `payment`, `watch_ad`, `install`. These four power Kinoa's calculated properties (session lifecycle, monetization/LTV/ARPU, ad-revenue, install attribution). When **any** of them is not integrated, the section renders red with a callout that states the consequence precisely: the integration keeps working without them, but it lists per missing event which calculated properties won't be computed (no data), and recommends implementing those events in the game if possible. When all four are integrated, it renders green with a confirmation. `session_start` counts as integrated when `SESSION_START_AUTO_FIRES = True` (server fires it on the recommended open-session endpoint) — record this nuance in the row's `note`.
+- **🔴 Critical events** — `session_start`, `payment`, `watch_ad`, `install`. These four power Kinoa's calculated properties (session lifecycle, monetization/LTV/ARPU, ad-revenue, install attribution). When **any** of them is not integrated, the section renders red with a callout that states the consequence precisely: the integration keeps working without them, but it lists per missing event which calculated properties won't be computed (no data), and recommends implementing those events in the game if possible. When all four are integrated, it renders green with a confirmation. `session_start` counts as integrated when `SESSION_START_AUTO_FIRES = True` (server fires it on the recommended open-session endpoint) — record this nuance in the row's `note`. Likewise `install` counts as integrated when both `install_time` and `install_time_ms` player fields are implemented + active (the fields feed install attribution; the event is optional) — set `"integrated": true` with note "covered by install_time / install_time_ms player fields".
 - **Predefined events — integrated** — `status == "ACTIVE"` and the app emits the event (or it's auto-fired for `session_start`).
 - **Predefined events — NOT integrated** — `status == "NOT_IMPLEMENTED"` regardless of in-app, plus active-but-unmemitted (🟠 WARNING). Include the `status` column.
 - **Custom events — integrated** — active USER events the app emits.
@@ -408,10 +410,10 @@ The following predefined events are required for Kinoa's calculated properties t
 | Event | Unlocks |
 |---|---|
 | `watch_ad` | Ad-revenue analytics (eCPM, ad income) |
-| `install` | Install attribution, acquisition cohorts |
+| `install` | Install attribution, acquisition cohorts — **optional** when both `install_time` (seconds) and `install_time_ms` (milliseconds) player fields are implemented + active; the fields feed the same attribution |
 | `payment` | Monetization metrics (LTV, ARPU, conversion) |
 
-When any of these are not yet integrated, the skill prefixes their checklist row with ⭐ and shows a callout above the checklist explaining the consequence.
+When any of these are not yet integrated, the skill prefixes their checklist row with ⭐ and shows a callout above the checklist explaining the consequence (`install` loses its ⭐ when covered by the install-time player fields — see the 3.2 pre-rule).
 
 ### `session_start` — auto-fire vs explicit emit
 

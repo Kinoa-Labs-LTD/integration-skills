@@ -106,6 +106,8 @@ Each response is `{ http_status, ok, response: { totalCount, elements: [...] } }
 
 ### 3.2 Compute the diff
 
+**Pre-rule — install-time fields.** The predefined fields **`install_time`** (Unix epoch **seconds** of the app's first install) and **`install_time_ms`** (the same instant in **milliseconds**) feed Kinoa's install attribution. `install_time_ms` is **mandatory** — every integration must implement and activate it; `install_time` must be implemented alongside it (same instant, two granularities — derive one from the other, don't capture twice). Whatever bucket they classify into, mark `install_time_ms` with a leading ❗ MANDATORY and `install_time` with a leading ⭐, and pull both to the top of the 3.3 checklist. When implementing, capture the timestamp once at first launch and persist it (e.g., first-run guard writing to local storage); every subsequent `player_state` carries the same stored values. **When both fields end up implemented + active, the `install` *event* becomes optional** — Phase 4 (event sync) reads this and drops its ⭐ on `install`; record the outcome in the state file's `player_fields` entry as `"install_time_fields": "both" | "ms_only" | "seconds_only" | "none"`. If the developer skips `install_time_ms`, don't block — but state plainly that a mandatory field is missing (install attribution won't compute) and record it in the report callout.
+
 For every predefined element, classify by comparing its `path` to the paths in `KinoaPlayerState`:
 
 - `state == "active"` and path **NOT** present in `KinoaPlayerState` → 🟠 **WARNING** — Kinoa believes this field is implemented but the app code doesn't produce it. Either it's set elsewhere in the codebase Claude didn't read, or the active state is stale. Surface to the developer for review.
@@ -123,11 +125,17 @@ If a `KinoaPlayerState` path matches an existing active custom field → ✅ **A
 Show a numbered list grouped by severity. Each row: icon, action, name, path, kind. Example:
 
 ```
-1. 🟢 Activate         — Level (number) at path: level
-2. 🟡 Implement        — Country code (enumeration) at path: personal_info.country_code
-3. 🟠 Predefined warn  — Last event time (date) is active in Kinoa but missing in your KinoaPlayerState
-4. 🟣 Implement custom — vip_tier (number) at path: vip_tier — already an active custom field in Kinoa, mirror it in code
-5. 🔵 Create custom    — gold_balance (number) at path: wallet.gold
+⚠ install_time_ms is MANDATORY (install attribution); install_time (seconds)
+  belongs with it. With both implemented + active, the install EVENT becomes
+  optional in the events phase.
+
+1. ❗🟡 Implement       — Install time ms (number) at path: install_time_ms  ← MANDATORY
+2. ⭐🟡 Implement       — Install time (number) at path: install_time
+3. 🟢 Activate         — Level (number) at path: level
+4. 🟡 Implement        — Country code (enumeration) at path: personal_info.country_code
+5. 🟠 Predefined warn  — Last event time (date) is active in Kinoa but missing in your KinoaPlayerState
+6. 🟣 Implement custom — vip_tier (number) at path: vip_tier — already an active custom field in Kinoa, mirror it in code
+7. 🔵 Create custom    — gold_balance (number) at path: wallet.gold
 ```
 
 Ask the developer which actions to apply: comma-separated indices, `all`, or `none`.
