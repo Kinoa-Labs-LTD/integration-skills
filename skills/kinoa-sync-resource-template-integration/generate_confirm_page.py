@@ -55,6 +55,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import pathlib
 import sys
 import webbrowser
 from typing import Any
@@ -209,15 +210,21 @@ function esc(s) {{
 function keyErrors() {{
   // returns map index -> error string
   const errs = {{}};
-  const seen = {{}};
+  const byKey = {{}};
   state.forEach((r, i) => {{
     const k = (r.resourceKey || "").trim();
-    if (!k) {{ errs[i] = "Key is required."; return; }}
-    if (!KEY_RE.test(k)) {{ errs[i] = "Key must match ^[a-zA-Z][a-zA-Z0-9_-]*$"; return; }}
-    const lk = k.toLowerCase();
-    if (seen[lk] !== undefined) {{ errs[i] = "Duplicate key (also resource #" + (seen[lk]+1) + ")."; }}
-    else seen[lk] = i;
+    if (!k) {{ errs[i] = "Key is required."; }}
+    else if (!KEY_RE.test(k)) {{ errs[i] = "Key must match ^[a-zA-Z][a-zA-Z0-9_-]*$"; }}
+    else (byKey[k.toLowerCase()] = byKey[k.toLowerCase()] || []).push(i);
     if (!r.name.trim()) errs[i] = (errs[i] ? errs[i] + " " : "") + "Name is required.";
+  }});
+  // Flag EVERY card sharing a key, including the first occurrence.
+  Object.values(byKey).forEach(idxs => {{
+    if (idxs.length < 2) return;
+    idxs.forEach(i => {{
+      const others = idxs.filter(j => j !== i).map(j => "#" + (j+1)).join(", ");
+      errs[i] = (errs[i] ? errs[i] + " " : "") + "Duplicate key (also resource " + others + ").";
+    }});
   }});
   return errs;
 }}
@@ -236,8 +243,22 @@ function refreshStatus() {{
 function render() {{
   const errs = refreshStatus();
   const root = document.getElementById("resources");
+  // The rebuild destroys every node, so remember which input was focused
+  // (stable data-focus-id) and its caret, and restore both afterwards —
+  // otherwise every keystroke in a live-validated field would drop focus.
+  const active = document.activeElement;
+  const focusId = active && active.dataset ? active.dataset.focusId : null;
+  const selStart = focusId && "selectionStart" in active ? active.selectionStart : null;
+  const selEnd = focusId && "selectionEnd" in active ? active.selectionEnd : null;
   root.innerHTML = "";
   state.forEach((r, i) => root.appendChild(resourceCard(r, i, errs[i])));
+  if (focusId) {{
+    const el = root.querySelector('[data-focus-id="' + focusId + '"]');
+    if (el) {{
+      el.focus();
+      if (selStart !== null && "setSelectionRange" in el) el.setSelectionRange(selStart, selEnd);
+    }}
+  }}
 }}
 
 function field(labelText, value, oninput, opts = {{}}) {{
@@ -249,6 +270,7 @@ function field(labelText, value, oninput, opts = {{}}) {{
   inp.value = value;
   if (opts.bad) inp.classList.add("bad");
   if (opts.placeholder) inp.placeholder = opts.placeholder;
+  if (opts.focusId) inp.dataset.focusId = opts.focusId;
   inp.addEventListener("input", e => oninput(e.target.value));
   wrap.appendChild(inp);
   return wrap;
@@ -259,10 +281,12 @@ function resourceCard(r, i, err) {{
   card.className = "resource" + (r.existing ? " existing" : "") + (err ? " invalid" : "");
 
   const head = document.createElement("div"); head.className = "rhead";
-  head.appendChild(field("Name", r.name, v => {{ r.name = v; refreshStatus(); }}, {{grow:true}}));
+  // Both live-validated inputs re-render on input — render() restores focus.
+  head.appendChild(field("Name", r.name, v => {{ r.name = v; render(); }},
+                         {{grow:true, focusId:"r"+i+"-name"}}));
   const keyBad = err && /[Kk]ey/.test(err);
   head.appendChild(field("Resource key", r.resourceKey, v => {{ r.resourceKey = v; render(); }},
-                         {{grow:true, bad:keyBad, placeholder:"legendary_sword"}}));
+                         {{grow:true, bad:keyBad, placeholder:"legendary_sword", focusId:"r"+i+"-key"}}));
 
   const badgeWrap = document.createElement("div");
   const badge = document.createElement("span");
@@ -280,7 +304,8 @@ function resourceCard(r, i, err) {{
   head.appendChild(delWrap);
   card.appendChild(head);
 
-  card.appendChild(field("Description", r.description, v => {{ r.description = v; }}, {{textarea:true}}));
+  card.appendChild(field("Description", r.description, v => {{ r.description = v; }},
+                         {{textarea:true, focusId:"r"+i+"-desc"}}));
 
   if (err) {{ const e = document.createElement("div"); e.className = "err"; e.textContent = err; card.appendChild(e); }}
   if (r.source) {{
@@ -289,11 +314,11 @@ function resourceCard(r, i, err) {{
     card.appendChild(s);
   }}
 
-  card.appendChild(fieldsTable(r));
+  card.appendChild(fieldsTable(r, i));
   return card;
 }}
 
-function fieldsTable(r) {{
+function fieldsTable(r, i) {{
   const wrap = document.createElement("div");
   const table = document.createElement("table"); table.className = "fields";
   table.innerHTML = "<thead><tr><th>Parameter</th><th>Type</th><th>Required</th>"
@@ -303,7 +328,7 @@ function fieldsTable(r) {{
   r.fields.forEach((f, j) => {{
     const tr = document.createElement("tr");
 
-    tr.appendChild(td(inputCell(f.name, v => f.name = v, "param_name")));
+    tr.appendChild(td(inputCell(f.name, v => f.name = v, "param_name", "r"+i+"-f"+j+"-name")));
 
     const sel = document.createElement("select");
     FIELD_TYPES.forEach(t => {{ const o = document.createElement("option"); o.value = t; o.textContent = t;
@@ -315,12 +340,13 @@ function fieldsTable(r) {{
     chk.addEventListener("change", e => f.required = e.target.checked);
     tr.appendChild(td(chk, "chk"));
 
-    const enumTd = td(inputCell(f.enumeration_values, v => f.enumeration_values = v, "a, b, c"), "enum-cell");
+    const enumTd = td(inputCell(f.enumeration_values, v => f.enumeration_values = v, "a, b, c",
+                                "r"+i+"-f"+j+"-enum"), "enum-cell");
     if (f.field_type !== "enumeration") enumTd.querySelector("input").disabled = true;
     tr.appendChild(enumTd);
 
-    tr.appendChild(td(inputCell(f.default, v => f.default = v, "")));
-    tr.appendChild(td(inputCell(f.description, v => f.description = v, "")));
+    tr.appendChild(td(inputCell(f.default, v => f.default = v, "", "r"+i+"-f"+j+"-default")));
+    tr.appendChild(td(inputCell(f.description, v => f.description = v, "", "r"+i+"-f"+j+"-desc")));
 
     const rm = document.createElement("button"); rm.className = "ghost danger"; rm.textContent = "✕";
     rm.title = "Remove parameter";
@@ -348,9 +374,10 @@ function fieldsTable(r) {{
   return wrap;
 }}
 
-function inputCell(value, oninput, placeholder) {{
+function inputCell(value, oninput, placeholder, focusId) {{
   const inp = document.createElement("input"); inp.type = "text"; inp.value = value || "";
   if (placeholder) inp.placeholder = placeholder;
+  if (focusId) inp.dataset.focusId = focusId;
   inp.addEventListener("input", e => oninput(e.target.value));
   return inp;
 }}
@@ -450,7 +477,9 @@ def main() -> int:
     opened = False
     if not args.no_open:
         try:
-            opened = webbrowser.open(f"file://{abs_path}")
+            # as_uri() percent-encodes spaces & co — a raw f"file://{path}" breaks
+            # for checkouts under directories like "My Games".
+            opened = webbrowser.open(pathlib.Path(abs_path).as_uri())
         except Exception:
             opened = False
 

@@ -105,7 +105,7 @@ class ResourceTemplateHelperTests(unittest.TestCase):
     def test_list_default_query(self):
         ns = argparse.Namespace(rows=100, page=0, statuses=None, name=None,
                                 sort_by="updated_at", order="desc")
-        code, _ = self._call(self.mod.cmd_list, ns, [(200, json.dumps({"total": 0, "summaries": []}))])
+        code, _ = self._call(self.mod.cmd_list, ns, [(200, json.dumps({"totalCount": 0, "elements": []}))])
         self.assertEqual(code, 0)
         url = self.requests[0]["url"]
         self.assertIn("rows=100", url)
@@ -117,7 +117,7 @@ class ResourceTemplateHelperTests(unittest.TestCase):
     def test_list_statuses_filter_repeats_uppercased(self):
         ns = argparse.Namespace(rows=50, page=0, statuses="draft,active", name=None,
                                 sort_by="updated_at", order="desc")
-        code, _ = self._call(self.mod.cmd_list, ns, [(200, json.dumps({"total": 0, "summaries": []}))])
+        code, _ = self._call(self.mod.cmd_list, ns, [(200, json.dumps({"totalCount": 0, "elements": []}))])
         self.assertEqual(code, 0)
         url = self.requests[0]["url"]
         self.assertIn("statuses=DRAFT", url)
@@ -126,7 +126,7 @@ class ResourceTemplateHelperTests(unittest.TestCase):
     def test_list_name_filter(self):
         ns = argparse.Namespace(rows=100, page=0, statuses=None, name="chest",
                                 sort_by="updated_at", order="desc")
-        self._call(self.mod.cmd_list, ns, [(200, json.dumps({"total": 0, "summaries": []}))])
+        self._call(self.mod.cmd_list, ns, [(200, json.dumps({"totalCount": 0, "elements": []}))])
         self.assertIn("name=chest", self.requests[0]["url"])
 
     # ---- create ----
@@ -161,6 +161,35 @@ class ResourceTemplateHelperTests(unittest.TestCase):
         code, _ = self._call(self.mod.cmd_create, ns, [(200, json.dumps({"id": TEMPLATE_ID}))])
         self.assertEqual(code, 0)
         self.assertEqual(self.requests[0]["body"]["body"], {"tier": "${rarity}"})
+
+    def test_create_invalid_key_exits_2_without_request(self):
+        ns = argparse.Namespace(name="Bad", key="9 bad key!", description=None, status="draft",
+                                body=None, field=[], fields_json=None)
+        code, result = self._call(self.mod.cmd_create, ns, [])
+        self.assertEqual(code, 2)
+        self.assertEqual(result["error"], "invalid_resource_key")
+        self.assertEqual(self.requests, [])
+
+    def test_update_invalid_key_exits_2_without_request(self):
+        ns = argparse.Namespace(id=TEMPLATE_ID, name=None, key="2gold", description=None,
+                                status=None, body=None, field=[], fields_json=None)
+        code, result = self._call(self.mod.cmd_update, ns, [])
+        self.assertEqual(code, 2)
+        self.assertEqual(result["error"], "invalid_resource_key")
+        self.assertEqual(self.requests, [])
+
+    def test_clone_invalid_key_exits_2_without_request(self):
+        ns = argparse.Namespace(id=TEMPLATE_ID, key="has space", name=None)
+        code, result = self._call(self.mod.cmd_clone, ns, [])
+        self.assertEqual(code, 2)
+        self.assertEqual(result["error"], "invalid_resource_key")
+        self.assertEqual(self.requests, [])
+
+    def test_key_validation_rejects_partial_match(self):
+        # The pattern is anchored at both ends — a valid prefix followed by
+        # junk must still be rejected, and hyphens/underscores must pass.
+        self.assertIsNotNone(self.mod._validate_key("good_key then junk"))
+        self.assertIsNone(self.mod._validate_key("good_key-2"))
 
     def test_create_invalid_field_exits_2_without_request(self):
         ns = argparse.Namespace(name="x", key="x", description=None, status="draft",
@@ -230,6 +259,14 @@ class ResourceTemplateHelperTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(self.requests[0]["method"], "POST")
         self.assertTrue(self.requests[0]["url"].endswith(f"/resource-templates/{TEMPLATE_ID}/activate"))
+
+    def test_falsy_json_body_stays_parsed(self):
+        # An empty-object 200 body must come through as {} (parsed), not the
+        # string "{}" — `{} or raw` would have swapped it for the raw string.
+        ns = argparse.Namespace(id=TEMPLATE_ID)
+        code, result = self._call(self.mod.cmd_activate, ns, [(200, "{}")])
+        self.assertEqual(code, 0)
+        self.assertEqual(result["response"], {})
 
     def test_deprecate_carries_reason(self):
         ns = argparse.Namespace(id=TEMPLATE_ID, reason="retired for season 5")

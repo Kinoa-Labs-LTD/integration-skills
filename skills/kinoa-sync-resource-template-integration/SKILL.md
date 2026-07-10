@@ -90,7 +90,7 @@ Record `kinoa_resources_path` in run state.
 python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-resource-template/kinoa_dashboard_resource_template.py" list --rows 200
 ```
 
-The response is `{ http_status, ok, response: { totalCount, elements: [...] } }` (verified live 2026-07-09). Each element has `id`, `name`, `key`, `status` (`DRAFT`/`ACTIVE`/`DEPRECATED`), `fields`, `availableActions`. Build a map `key → {id, status}` of what's already on the dashboard.
+The response is `{ http_status, ok, response: { totalCount, elements: [...] } }` (verified live 2026-07-09). Each element has `id`, `name`, `key`, `status`, `fields`, `availableActions`. `status` comes back **lowercase** in the JSON (`draft`/`active`/`deprecated`) — compare it case-insensitively; the `--statuses` filter accepts either case. Build a map `key → {id, status}` of what's already on the dashboard.
 
 ### 6.3.2 Compute the diff
 

@@ -23,10 +23,11 @@ Subcommands (each makes ONE logical operation and prints ONE JSON object:
 
   list [--rows N] [--statuses S1,S2] [--name SUBSTR] [--sort-by F] [--order asc|desc]
       GET https://gate.kinoa.io/bundle/resource-templates
-      Returns SummaryListDto { total, summaries:[{id,name,key,status,fields,...}] }.
-      --statuses filters by lifecycle status (DRAFT, ACTIVE, DEPRECATED);
-      repeatable via comma. Use it as the closest analogue to a state probe
-      (resource templates have no soft-delete — see delete below).
+      Returns SummaryListDto { totalCount, elements:[{id,name,key,status,fields,...}] }.
+      `status` values come back lowercase (draft/active/deprecated) — compare
+      case-insensitively. --statuses filters by lifecycle status (accepted in
+      either case); repeatable via comma. Use it as the closest analogue to a
+      state probe (resource templates have no soft-delete — see delete below).
 
   get --id UUID
       GET .../resource-templates/<id>  — full ResourceTemplateDto incl. fields.
@@ -78,6 +79,7 @@ KINOA_GAME_ID equals it — guarding against a stale session from another game
 import argparse
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -131,6 +133,27 @@ def _parse_json(raw):
         return json.loads(raw) if raw else None
     except json.JSONDecodeError:
         return None
+
+
+def _response_body(raw):
+    """Parsed JSON body, or the raw string when the body isn't JSON. The
+    `is not None` check matters: a valid-but-falsy body ({}, [], 0, false)
+    must stay parsed, not be swapped for its raw string."""
+    parsed = _parse_json(raw)
+    return parsed if parsed is not None else raw
+
+
+def _validate_key(key):
+    """resourceKey guard for create/update/clone. Returns error_dict_or_None.
+    The server enforces the same pattern; rejecting locally turns an opaque
+    4xx into a clear error before any request fires."""
+    if key is None or re.match(RESOURCE_KEY_RE, key):
+        return None
+    return {
+        "error": "invalid_resource_key",
+        "key": key,
+        "message": f"resourceKey must match {RESOURCE_KEY_RE}",
+    }
 
 
 def _admin_headers():
@@ -256,7 +279,7 @@ def cmd_list(args):
     print(json.dumps({
         "http_status": status,
         "ok": 200 <= status < 300,
-        "response": _parse_json(raw) or raw,
+        "response": _response_body(raw),
     }, indent=2))
     return 0 if 200 <= status < 300 else 1
 
@@ -266,12 +289,16 @@ def cmd_get(args):
     print(json.dumps({
         "http_status": status,
         "ok": 200 <= status < 300,
-        "response": _parse_json(raw) or raw,
+        "response": _response_body(raw),
     }, indent=2))
     return 0 if 200 <= status < 300 else 1
 
 
 def cmd_create(args):
+    err = _validate_key(args.key)
+    if err:
+        print(json.dumps(err, indent=2))
+        return 2
     fields, err = _collect_fields(args)
     if err:
         print(json.dumps(err, indent=2))
@@ -295,12 +322,16 @@ def cmd_create(args):
         "http_status": status,
         "ok": 200 <= status < 300,
         "request_body": payload,
-        "response": _parse_json(raw) or raw,
+        "response": _response_body(raw),
     }, indent=2))
     return 0 if 200 <= status < 300 else 1
 
 
 def cmd_update(args):
+    err = _validate_key(args.key)
+    if err:
+        print(json.dumps(err, indent=2))
+        return 2
     fields, err = _collect_fields(args)
     if err:
         print(json.dumps(err, indent=2))
@@ -317,7 +348,7 @@ def cmd_update(args):
         print(json.dumps({
             "error": "fetch_failed",
             "http_status": get_status,
-            "body": _parse_json(get_raw) or get_raw,
+            "body": _response_body(get_raw),
             "id": args.id,
         }, indent=2))
         return 1
@@ -346,7 +377,7 @@ def cmd_update(args):
         "ok": 200 <= put_status < 300,
         "id": args.id,
         "request_body": merged,
-        "response": _parse_json(put_raw) or put_raw,
+        "response": _response_body(put_raw),
     }, indent=2))
     return 0 if 200 <= put_status < 300 else 1
 
@@ -357,7 +388,7 @@ def cmd_activate(args):
         "http_status": status,
         "ok": 200 <= status < 300,
         "id": args.id,
-        "response": _parse_json(raw) or raw,
+        "response": _response_body(raw),
     }, indent=2))
     return 0 if 200 <= status < 300 else 1
 
@@ -370,12 +401,16 @@ def cmd_deprecate(args):
         "ok": 200 <= status < 300,
         "id": args.id,
         "request_body": body,
-        "response": _parse_json(raw) or raw,
+        "response": _response_body(raw),
     }, indent=2))
     return 0 if 200 <= status < 300 else 1
 
 
 def cmd_clone(args):
+    err = _validate_key(args.key)
+    if err:
+        print(json.dumps(err, indent=2))
+        return 2
     body = {}
     if args.key is not None:
         body["key"] = args.key
@@ -387,19 +422,18 @@ def cmd_clone(args):
         "ok": 200 <= status < 300,
         "id": args.id,
         "request_body": body,
-        "response": _parse_json(raw) or raw,
+        "response": _response_body(raw),
     }, indent=2))
     return 0 if 200 <= status < 300 else 1
 
 
 def cmd_delete(args):
     status, raw = _request("DELETE", f"{RESOURCE_TEMPLATES_URL}/{args.id}", headers=_admin_headers())
-    parsed = _parse_json(raw)
     out = {
         "http_status": status,
         "ok": 200 <= status < 300,
         "id": args.id,
-        "response": parsed if parsed is not None else raw,
+        "response": _response_body(raw),
     }
     if status == 409:
         out["hint"] = ("Resource templates can only be deleted while DRAFT. This one is "

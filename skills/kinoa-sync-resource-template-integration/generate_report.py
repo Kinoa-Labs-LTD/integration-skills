@@ -33,6 +33,7 @@ import argparse
 import html
 import json
 import os
+import pathlib
 import sys
 import webbrowser
 from typing import Any
@@ -200,7 +201,9 @@ def main() -> int:
     opened = False
     if not args.no_open:
         try:
-            opened = webbrowser.open(f"file://{abs_path}")
+            # as_uri() percent-encodes spaces & co — a raw f"file://{path}" breaks
+            # for checkouts under directories like "My Games".
+            opened = webbrowser.open(pathlib.Path(abs_path).as_uri())
         except Exception:
             opened = False
 

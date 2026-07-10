@@ -21,9 +21,10 @@ A **resource template** is a typed definition of an item that can be **sold or a
 python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_resource_template.py" list [--rows N] [--statuses DRAFT,ACTIVE,DEPRECATED] [--name SUBSTR] [--sort-by F] [--order asc|desc]
     GET https://gate.kinoa.io/bundle/resource-templates
     Returns { totalCount, elements:[{id,name,key,status,fields,...}] } (verified
-    live 2026-07-09). NOTE: `order` must be ASC/DESC — the helper uppercases it.
-    --statuses is the closest analogue to a state probe (resource templates
-    have no soft-delete — see delete).
+    live 2026-07-09). `status` values come back lowercase (draft/active/
+    deprecated) — compare case-insensitively. NOTE: `order` must be ASC/DESC —
+    the helper uppercases it. --statuses is the closest analogue to a state
+    probe (resource templates have no soft-delete — see delete).
 
 python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_resource_template.py" get --id UUID
     GET .../resource-templates/<id> — full ResourceTemplateDto incl. fields.
