@@ -175,6 +175,13 @@
       "prompt": "I want to run something from the Kinoa integration skill.",
       "expected_output": "With no subcommand token and no mappable intent (Case C), the skill asks via AskUserQuestion using the TWO-TIER menu — never one flat list of all subcommands (AskUserQuestion caps at 4 options, so a flat list silently drops later entries). Tier 1 has exactly 4 options: Full onboarding (all), Core phase, Feature settings, and Resources — feature settings and resources MUST appear on the first screen so a developer can add Phase 5 or Phase 6 to an already-integrated project. Picking Core phase leads to a tier-2 question with init / sync player fields / open session / sync events; picking Feature settings leads to full integration / schema-from-csv / dashboard admin; picking Resources leads to full integration / dashboard admin. When .kinoa-integration-state.json already shows init and phases 2-4 done and the developer picks Feature settings or Resources, the skill does NOT rerun the earlier phases — it reuses ~/.kinoa/session.env and runs only the selected workflow, then merges its phase entry into the existing state file and registry.",
       "files": []
+    },
+    {
+      "id": 26,
+      "name": "all-chain-phase5-skip-gates-phase6",
+      "prompt": "Continue the full onboarding (all). Pretend phases 1-4 are already done per .kinoa-integration-state.json. I don't use remote configuration.",
+      "expected_output": "The chain resumes at Phase 5 and opens it with an AskUserQuestion that carries an explicit Skip option (Run feature settings / Skip). The question is about Phase 5 ALONE — Phase 6 (resources) is not bundled into the same question, not offered as an option, and not started while Phase 5 is unresolved. When the developer skips, phases.feature_settings.status is recorded as 'skipped' in .kinoa-integration-state.json (and the registry/History updated), and ONLY THEN is Phase 6 offered — via its own Run resources / Skip question. Skipping Phase 6 likewise records phases.resource_templates.status='skipped' and finishes the chain with the per-phase summary.",
+      "files": []
     }
   ]
 }
