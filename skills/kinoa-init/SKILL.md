@@ -19,7 +19,7 @@ The two modes expect different `integration_type` values on the dashboard and ha
 This skill is Phase 1 of the orchestrator's chain. Fire telemetry via `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/kinoa_webhook.py`:
 
 - `phase-start --phase "Phase 1 — kinoa-init"` at the top of Step 1.
-- `qa --question "<text>" --answer "<text>"` after every `AskUserQuestion` exchange (Reuse/Replace, the three credential prompts, the fix-integration-type prompt).
+- `qa --question "<text>" --answer "<text>"` after every `AskUserQuestion` exchange (the reuse/rotate/scratch choice, the credential prompts, the fix-integration-type prompt).
 - `phase-end --phase "Phase 1 — kinoa-init" --summary "<outcome>"` once Step 4 finishes (or earlier if the developer aborts).
 
 The helper exits 0 even on failure — if it errors, log the JSON and continue. Before `KINOA_GAME_ID` is persisted (the very first `phase-start`), the helper will return `error: missing_game_id`; that's expected — once Step 2 writes the env file, the rest of the calls go through.
@@ -57,9 +57,14 @@ Existing credentials in ~/.kinoa/session.env:
   KINOA_BEARER_TOKEN = eyJhbGci…X9ig
 ```
 
-Then ask: **Reuse the existing values, or replace them with new ones?**
-- **Reuse** — Continue to Step 2 with the existing values (the dashboard validation step will catch an expired session token cleanly, in which case loop back here and ask for a fresh token only). No prompt for new values.
-- **Replace** — Drop into the new-values flow below.
+Then ask **one** three-way question — this is the only reuse/replace decision in the whole flow; it is asked exactly once and never re-confirmed per credential:
+
+> "Found existing Kinoa credentials (above). What do you want to do?"
+> - **Reuse everything** — Continue to Step 2 with the existing values as-is. No prompt for new values. (The dashboard validation step will catch an expired session token cleanly, in which case loop back here and collect a fresh session token only.)
+> - **Replace session token only** — Keep `KINOA_GAME_ID` and `KINOA_GAME_SECRET`; collect just the new session token (they expire ~24h, so this is the common case).
+> - **Start from scratch** — Discard all three values; collect game ID, game secret, and session token fresh.
+
+The answer is **binding for the rest of the run**: once the developer has chosen, collect exactly the values that choice calls for and nothing else. Do NOT ask "reuse or enter new?" again for any individual credential, and do NOT put a "Reuse existing" option on any of the collection prompts below — the developer already decided. Re-confirming per field is exactly the annoyance this question exists to remove.
 
 If `~/.kinoa/session.env` does **not** exist, skip the question and go straight to "Collect new values" below.
 
@@ -67,15 +72,13 @@ If `~/.kinoa/session.env` does **not** exist, skip the question and go straight 
 
 If `$ARGUMENTS` or the conversation already contains them, reuse those values and skip to Step 2.
 
-Otherwise ask via `AskUserQuestion`:
+Otherwise ask via `AskUserQuestion` — only for the values the Step 1 choice requires (all three from scratch / missing file, or just the session token). Each prompt is a plain paste-the-value question whose free text comes through the "Other" input; no reuse options:
 
 - **Game ID (UUID)** — "What is the internal game UUID for this project?" Found in the Kinoa dashboard URL when viewing the project (a UUID like `aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa`). This is *different* from the game secret — the dashboard admin API rejects requests without it.
 - **Game secret** — "Paste the game secret from Kinoa → Integration menu." (used as the `game` header on the public Player Events API.)
 - **Session token** — "Paste the session token from Kinoa → Integration menu."
 
-Free-text values come through the "Other" input on each question.
-
-When the developer just wants to **rotate only the session token** (Reuse-but-session-token-expired branch above), reuse the existing `KINOA_GAME_ID` and `KINOA_GAME_SECRET` and only ask for the new session token.
+**Terminology (user-facing):** always call it the **session token** in prompts, summaries, and error messages — never "bearer token". That's the name the Kinoa dashboard's Integration menu uses, so it's the name the developer can act on. `KINOA_BEARER_TOKEN` and `--bearer-token` are internal identifiers (env var / CLI flag) and stay as they are — just don't surface "bearer" as the thing the developer is asked to paste.
 
 ## Step 2: Run init
 

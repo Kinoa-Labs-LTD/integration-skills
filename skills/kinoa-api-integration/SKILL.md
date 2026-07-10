@@ -231,19 +231,33 @@ If the token matches, use it. Pass remaining tokens through as `$ARGUMENTS` to t
 | "list / create / activate / deprecate / delete a resource template", "publish resource X", "clone a resource template" | `dashboard-resource-template` |
 | "infer column types from this CSV", "turn this CSV into a schema body / SchemaDto" — wants the types/body only, no API call | `csv-schema-infer` |
 
-**Case C: still ambiguous.** Ask via `AskUserQuestion`. Offer the workflow steps first, dashboard helpers as a second group:
-- "Init — set up Kinoa credentials and validate the project."
-- "Sync player fields — mirror the app's player model into Kinoa and verify."
-- "Open session — start a player session (verification helper)."
-- "Sync events — mirror the app's emitted events into Kinoa and verify."
-- "Sync feature settings — build/activate a schema, create a setting + config, generate a FeatureSettingsFacade, and verify a player resolves it."
-- "Schema from CSV — just infer types from a CSV and create + publish the schema (no setting/config/facade)."
-- "Sync resources — discover sellable / prize items, confirm them on an interactive page, register them as resource templates, and generate KinoaResources."
-- "All — run the full onboarding sequence end-to-end."
-- "Dashboard player fields — direct admin tools for player-field defs."
-- "Dashboard event — direct admin tools for event defs."
-- "Dashboard feature settings — direct admin tools for schemas / settings / configurations."
-- "Dashboard resource template — direct admin tools for resource-template defs."
+**Case C: still ambiguous.** Ask via `AskUserQuestion`, in **two tiers** — `AskUserQuestion` allows at most 4 options per question, so never present the subcommands as one flat list (that silently drops the ones past the cap, hiding feature settings and resources). Tier 1 picks the area; tier 2 (when the area has more than one subcommand) picks the exact subcommand.
+
+**Tier 1** — one question, exactly these 4 options:
+
+1. **Full onboarding (all)** — "Run the complete sequence: init → player fields → open session → events → feature settings → resources. Best for a first-time integration of this app." → dispatch `all`.
+2. **Core phase** — "Run one core step on this project: init (credentials), sync player fields, open a session, or sync events." → tier 2a.
+3. **Feature settings** — "Add remote configuration to this project (works on an already-integrated project): build/activate a schema, create a setting + config, generate a FeatureSettingsFacade — or just publish a schema from a CSV." → tier 2b.
+4. **Resources** — "Register the game's sellable / prize items as resource templates and generate KinoaResources (works on an already-integrated project)." → tier 2c.
+
+**Tier 2a — core phase**, exactly these 4 options:
+- "Init — set up Kinoa credentials and validate the project." → `init`
+- "Sync player fields — mirror the app's player model into Kinoa and verify." → `sync-player-fields-integration`
+- "Open session — start a player session (verification helper)." → `open-session`
+- "Sync events — mirror the app's emitted events into Kinoa and verify." → `sync-event-integration`
+
+**Tier 2b — feature settings**:
+- "Full feature-settings integration — schema + setting + config + FeatureSettingsFacade, verified end-to-end." → `sync-feature-settings-integration`
+- "Schema from CSV — just infer types from a CSV and create + publish the schema (no setting/config/facade)." → `schema-from-csv`
+- "Dashboard admin — one-off ops on schemas / settings / configurations." → `dashboard-feature-settings`
+
+**Tier 2c — resources**:
+- "Full resource integration — discover sellable / prize items, confirm on an interactive page, register as resource templates, generate KinoaResources." → `sync-resource-template-integration`
+- "Dashboard admin — one-off ops on resource templates (list / create / activate / deprecate / clone / delete)." → `dashboard-resource-template`
+
+The remaining dashboard helpers (`dashboard-player-fields`, `dashboard-event`) and `csv-schema-infer` are reached via the Case B intent table or an explicit token — if the developer types free text under "Other" at any tier, map it through the Case B table before asking again.
+
+**Adding to an existing project.** Tiers 3 (Feature settings) and 4 (Resources) are the standard way to bolt Phase 5 / Phase 6 onto a project whose core integration is already done. When `.kinoa-integration-state.json` shows `init` (and typically phases 2–4) as `done`, do NOT rerun the earlier phases — reuse the stored credentials (`~/.kinoa/session.env`) and run just the selected workflow, then merge its entry into the existing state file and registry as usual.
 
 ### Step 2 — For a single subcommand, read and follow its SKILL.md
 
@@ -276,7 +290,7 @@ The chain adapts to the architecture mode (see "Architecture modes"):
 - **`MONOREPO`** — before each of Phases 2, 4, 5, 6, the workflow asks which service directory that module lives in; different phases may target different services. Phase 3 (open-session) is a network call, not code discovery — just record which service owns session-opening.
 - **`MULTI_REPO`** — only the modules that live in the *current* repo can run here. At the start of the chain, ask the developer which modules this service implements, run those phases, and mark the rest as pending-elsewhere. In the final summary, show the cross-repo picture from the central index and tell the developer which repos to run the remaining subcommands from.
 
-1. **Phase 1 — `kinoa-init`.** Read `${CLAUDE_SKILL_DIR}/../kinoa-init/SKILL.md` and follow it. If `~/.kinoa/session.env` already exists, that skill will show the current values and let the developer pick **Reuse** (re-validate the existing creds) or **Replace** (collect new ones) — pass that choice through and don't re-prompt. Verify the run ends with `ok: true`. Capture `KINOA_INTEGRATION_TYPE` for later — the event sync phase branches on it.
+1. **Phase 1 — `kinoa-init`.** Read `${CLAUDE_SKILL_DIR}/../kinoa-init/SKILL.md` and follow it. If `~/.kinoa/session.env` already exists, that skill will show the current values and ask **once**: reuse everything, replace just the session token, or start from scratch — pass that choice through and never re-confirm per credential. Verify the run ends with `ok: true`. Capture `KINOA_INTEGRATION_TYPE` for later — the event sync phase branches on it.
 2. **Phase 2 — `kinoa-sync-player-fields-integration`.** Drive the player-fields workflow to completion. After the workflow's internal verification step, summarize: how many fields activated / created / verified.
 3. **Phase 3 — `kinoa-open-session`.** Run it once with a real player_id chosen by the developer. This both verifies the endpoint and (in API + direct-endpoint projects) seeds the auto-fired `session_start` so the next phase has data to inspect. Hand off `KINOA_LAST_PLAYER_ID` / `KINOA_LAST_SESSION_ID` (already persisted by the helper) to Phase 4.
 4. **Phase 4 — `kinoa-sync-event-integration`.** Drive the event workflow. The workflow's internal `SESSION_START_AUTO_FIRES` branch will read `KINOA_INTEGRATION_TYPE` and decide whether `session_start` is auto-published (🔄) or must be wired as an explicit emission (🔁). After the workflow's internal verification step, summarize the run.

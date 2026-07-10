@@ -103,7 +103,7 @@
       "id": 15,
       "name": "init-reuse-existing-credentials",
       "prompt": "Run init. ~/.kinoa/session.env already exists with KINOA_GAME_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa, KINOA_GAME_SECRET=FAKE_GAME_SECRET_VALUE, KINOA_BEARER_TOKEN=FAKE_BEARER_TOKEN_VALUE.",
-      "expected_output": "Before asking for anything, the skill reads ~/.kinoa/session.env and surfaces the current values with the game secret and session token MASKED (first 4 + last 4 chars with … between); the game id is shown in full (a UUID, not sensitive). It then asks via AskUserQuestion: Reuse or Replace. On Reuse it proceeds straight to validation with the existing values — no re-prompt for the three credentials. If validation later returns 401, it loops back asking only for a fresh session token (keeping game id + secret). It never prints the full secret or session token into the transcript.",
+      "expected_output": "Before asking for anything, the skill reads ~/.kinoa/session.env and surfaces the current values with the game secret and session token MASKED (first 4 + last 4 chars with … between); the game id is shown in full (a UUID, not sensitive). It then asks ONE three-way AskUserQuestion: Reuse everything / Replace session token only / Start from scratch — this is the only reuse-vs-replace decision in the whole run. On Reuse everything it proceeds straight to validation with the existing values — no re-prompt for any credential. On Replace session token only it keeps game id + secret and collects just the new session token. On Start from scratch it collects all three fresh. In every branch the collection prompts are plain paste-the-value questions — NO per-credential 'Reuse existing / Enter new' options; the tier-1 answer is binding. If validation later returns 401, it loops back asking only for a fresh session token (keeping game id + secret). User-facing wording always says 'session token', never 'bearer token' (KINOA_BEARER_TOKEN / --bearer-token stay as internal identifiers). It never prints the full secret or session token into the transcript.",
       "files": []
     },
     {
@@ -167,6 +167,13 @@
       "name": "resource-template-delete-hard-draft-only-confirmation",
       "prompt": "Delete the resource template 'beta_reward' from our Kinoa dashboard — it was a beta-only item. (Credentials are already set up.)",
       "expected_output": "This is a direct admin task → dashboard-resource-template, NOT the sync workflow (the workflow never deletes). The skill lists/resolves 'beta_reward' to a concrete id and status first, then — even though the user already asked for the deletion — asks via AskUserQuestion naming the resolved id AND name and stating the delete is HARD, irreversible, and DRAFT-only. kinoa_dashboard_resource_template.py delete is invoked only after an explicit Yes; if the template is ACTIVE/DEPRECATED the server returns 409 and the helper's hint recommends deprecate instead — the skill surfaces that rather than forcing it. --expect-game is passed to guard against a stale cross-game session. Nothing is deleted based solely on the original request text.",
+      "files": []
+    },
+    {
+      "id": 25,
+      "name": "ambiguous-dispatch-two-tier-menu",
+      "prompt": "I want to run something from the Kinoa integration skill.",
+      "expected_output": "With no subcommand token and no mappable intent (Case C), the skill asks via AskUserQuestion using the TWO-TIER menu — never one flat list of all subcommands (AskUserQuestion caps at 4 options, so a flat list silently drops later entries). Tier 1 has exactly 4 options: Full onboarding (all), Core phase, Feature settings, and Resources — feature settings and resources MUST appear on the first screen so a developer can add Phase 5 or Phase 6 to an already-integrated project. Picking Core phase leads to a tier-2 question with init / sync player fields / open session / sync events; picking Feature settings leads to full integration / schema-from-csv / dashboard admin; picking Resources leads to full integration / dashboard admin. When .kinoa-integration-state.json already shows init and phases 2-4 done and the developer picks Feature settings or Resources, the skill does NOT rerun the earlier phases — it reuses ~/.kinoa/session.env and runs only the selected workflow, then merges its phase entry into the existing state file and registry.",
       "files": []
     }
   ]
