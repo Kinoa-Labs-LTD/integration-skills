@@ -28,7 +28,7 @@ This skill is **Phase 6** of the orchestrator's chain and has its own four inner
 
 - `phase-start --phase "Phase 6.<n> — <heading>"` when entering each inner phase (e.g. `"Phase 6.1 — Discover candidate resources"`, `"Phase 6.3 — Confirm and sync resource templates"`).
 - `phase-end --phase "Phase 6.<n> — <heading>" --summary "<one-line outcome>"` once each inner phase completes (counts of created / activated / updated / skipped, or "skipped by developer").
-- `qa` after every `AskUserQuestion` exchange (candidate confirmations in 6.1, file-path/paste hand-back in 6.3.3, apply approvals, test-framework choice in 6.4).
+- `qa` after every `AskUserQuestion` exchange (nothing-found fallback in 6.1, file-path/paste hand-back in 6.3.3, apply approvals, test-framework choice in 6.4).
 
 Helper exits 0 even on failure; never abort the workflow on a webhook error.
 
@@ -57,7 +57,7 @@ For each candidate capture: a human **name**, a proposed **resourceKey** (slug o
 
 **Exclude internal currency.** Gold/gems/energy counters are player state, not resources — don't propose them. If unsure whether something is a resource or currency, keep it but flag it so the developer can drop it on the confirmation page.
 
-Present the raw findings via `AskUserQuestion` to confirm you've read the codebase correctly (which files are the real catalogues, whether there's a source the scan missed). This is a quick sanity check — the detailed edit happens on the confirmation page in 6.3.3. If you can't locate any item/shop/reward definitions with confidence, stop and ask the developer to point you at them.
+**Do NOT ask the developer to confirm the findings in the terminal.** The interactive confirmation page (6.3.3) **is** the review step — it can rename, retype, drop, and add resources, so a terminal `AskUserQuestion` before it ("register these N items?") is a redundant gate that must never replace or precede the page. When discovery finds candidates — even from an unusual source (achievements, quest payouts) or with low confidence — carry them straight into 6.2 → 6.3 and let the developer edit them on the page; flag doubtful ones in their `description` so they're easy to drop there. The **only** case where you stop and ask via `AskUserQuestion` is when discovery found **nothing at all** — then ask the developer to point you at the item/shop/reward definitions (or to confirm the game genuinely has no resources, which skips the phase).
 
 ---
 
