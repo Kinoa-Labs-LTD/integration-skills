@@ -32,6 +32,13 @@ integration-skills/
 ├── kinoa-dashboard-feature-settings/            ← admin CLI wrapper for Phase 5 (schemas/settings/configs + runtime get-config)
 │   ├── SKILL.md
 │   └── kinoa_dashboard_feature_settings.py
+├── kinoa-sync-resource-template-integration/    ← Phase 6 workflow (optional; interactive confirm page + HTML report)
+│   ├── SKILL.md   ← delegates admin calls to kinoa-dashboard-resource-template
+│   ├── generate_confirm_page.py   ← interactive page where the developer confirms/edits the resource list
+│   └── generate_report.py
+├── kinoa-dashboard-resource-template/           ← admin CLI wrapper for Phase 6 (resource templates on gate.kinoa.io/bundle)
+│   ├── SKILL.md
+│   └── kinoa_dashboard_resource_template.py
 └── kinoa-csv-schema-infer/                       ← utility — CSV → feature-schema type inference (no API)
     ├── SKILL.md
     └── kinoa_csv_schema_infer.py
@@ -63,7 +70,7 @@ for d in "$PWD"/skills/*/; do
 done
 ```
 
-Restart Claude Code; the skills become available as slash commands in any project: `/kinoa-api-integration`, `/kinoa-init`, `/kinoa-sync-player-fields-integration`, `/kinoa-dashboard-player-fields`, `/kinoa-open-session`, `/kinoa-sync-event-integration`, `/kinoa-dashboard-event`, `/kinoa-sync-feature-settings-integration`, `/kinoa-dashboard-feature-settings`, `/kinoa-csv-schema-infer`.
+Restart Claude Code; the skills become available as slash commands in any project: `/kinoa-api-integration`, `/kinoa-init`, `/kinoa-sync-player-fields-integration`, `/kinoa-dashboard-player-fields`, `/kinoa-open-session`, `/kinoa-sync-event-integration`, `/kinoa-dashboard-event`, `/kinoa-sync-feature-settings-integration`, `/kinoa-dashboard-feature-settings`, `/kinoa-sync-resource-template-integration`, `/kinoa-dashboard-resource-template`, `/kinoa-csv-schema-infer`.
 
 To verify:
 
@@ -83,8 +90,8 @@ These skills talk to **two distinct surfaces**. Mixing them up is a security mis
 
 | Surface | Host | Auth header | Who calls it |
 |---|---|---|---|
-| **Admin / dashboard** | `dashboard.kinoa.io` | `Authorization: Bearer <token>` + `Game: <uuid>` + `Game-Id: <uuid>` (both headers carry the same UUID) | **Skill only**, during integration setup. Used by `kinoa-init` (validate project) and the dashboard helpers (`kinoa-dashboard-player-fields`, `kinoa-dashboard-event`) which the workflow skills (`kinoa-sync-*-integration`) delegate to. The session token is admin-tier and must never ship in application binaries, configs, or runtime calls. |
-| **Public Player Events API** | `gate.kinoa.io`, `pevents.kinoa.io`, `gate.kinoa.io/featureset` | `game: <game_secret>` (no bearer) | **Application runtime code.** Open session, send events, read player state. The Postman collection at `references/postman-collection.json` is the canonical spec — it deliberately contains only public hosts. |
+| **Admin / dashboard** | `dashboard.kinoa.io`; **also** `gate.kinoa.io/bundle/resource-templates` (bundles admin) | `Authorization: Bearer <token>` + `Game: <uuid>` + `Game-Id: <uuid>` (bundles reads only `Game-Id`) | **Skill only**, during integration setup. Used by `kinoa-init` (validate project) and the dashboard helpers (`kinoa-dashboard-player-fields`, `kinoa-dashboard-event`, `kinoa-dashboard-feature-settings`, `kinoa-dashboard-resource-template`) which the workflow skills (`kinoa-sync-*-integration`) delegate to. The session token is admin-tier and must never ship in application binaries, configs, or runtime calls. |
+| **Public Player Events API** | `gate.kinoa.io`, `pevents.kinoa.io`, `gate.kinoa.io/featureset`, `gate.kinoa.io/bundle/public/*` | `game: <game_secret>` (no bearer) | **Application runtime code.** Open session, send events, read player state. The Postman collection at `references/postman-collection.json` is the canonical spec — it deliberately contains only public hosts. Note `gate.kinoa.io` also fronts the *admin* bundles routes above — the **bearer** is what makes a call admin, not the host. |
 
 When `kinoa-sync-player-fields-integration` writes code into your application (e.g., `KinoaPlayerState`), or `kinoa-sync-event-integration` writes `KinoaEvents`, the result is a pure data class. The application's existing integration code is responsible for the runtime API calls using the game-secret header.
 

@@ -13,7 +13,7 @@ There are two consumption modes:
 
 ## What's in the box
 
-This repo doubles as a **Claude Code plugin marketplace** ([`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json)) exposing a single plugin — **`kinoa-dashboard`** — that bundles every skill under [`skills/`](skills/). Installing the plugin makes all 11 skills available at once.
+This repo doubles as a **Claude Code plugin marketplace** ([`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json)) exposing a single plugin — **`kinoa-dashboard`** — that bundles every skill under [`skills/`](skills/). Installing the plugin makes all 13 skills available at once.
 
 ---
 
@@ -72,6 +72,7 @@ Full walkthrough (token acquisition, layout, troubleshooting): [`skills/kinoa-ap
 3. `/kinoa-open-session` — verify the runtime session-open call.
 4. `/kinoa-sync-event-integration` — generate `KinoaEvents`, drive publishes/creations, verify.
 5. `/kinoa-sync-feature-settings-integration` *(optional)* — build/activate a schema, create a setting + config, generate a `FeatureSettingsFacade`, verify a player resolves the config at runtime.
+6. `/kinoa-sync-resource-template-integration` *(optional)* — discover sellable / prize items, confirm them on an interactive page, register as resource templates, generate `KinoaResources`, verify.
 
 ### SDK dashboard sync
 
@@ -87,7 +88,7 @@ It mirrors the manifest's events and player fields onto the Dashboard — never 
 
 ## Skills reference
 
-The 11 skills split by **flavor**: an **orchestrator** dispatches; **workflow** skills (`kinoa-sync-*`) drive discover → generate → sync → verify but make no API calls; **dashboard helpers** (`kinoa-dashboard-*`) are pure admin-API CLI wrappers; plus **utility**, **runtime**, and **setup** pieces.
+The 13 skills split by **flavor**: an **orchestrator** dispatches; **workflow** skills (`kinoa-sync-*`) drive discover → generate → sync → verify but make no API calls; **dashboard helpers** (`kinoa-dashboard-*`) are pure admin-API CLI wrappers; plus **utility**, **runtime**, and **setup** pieces.
 
 | Skill | Flavor | Purpose |
 |---|---|---|
@@ -101,6 +102,8 @@ The 11 skills split by **flavor**: an **orchestrator** dispatches; **workflow** 
 | [`kinoa-dashboard-event`](skills/kinoa-dashboard-event/) | Dashboard helper | Admin CLI for `game_event` definitions (list, get, publish, create, add-params, delete). |
 | [`kinoa-sync-feature-settings-integration`](skills/kinoa-sync-feature-settings-integration/) | Workflow | Build/activate a schema, create setting + config, generate `FeatureSettingsFacade`, verify runtime resolution. |
 | [`kinoa-dashboard-feature-settings`](skills/kinoa-dashboard-feature-settings/) | Dashboard helper | Admin CLI for schemas / settings / configurations + the public features-configurations read. |
+| [`kinoa-sync-resource-template-integration`](skills/kinoa-sync-resource-template-integration/) | Workflow | Discover sellable / prize items (resources — not currency), confirm them on an interactive HTML page, register as resource templates (create DRAFT → activate), generate `KinoaResources`, verify. |
+| [`kinoa-dashboard-resource-template`](skills/kinoa-dashboard-resource-template/) | Dashboard helper | Admin CLI for resource-template definitions (list, get, create, update, activate, deprecate, clone, delete — HARD + DRAFT-only). |
 | [`kinoa-csv-schema-infer`](skills/kinoa-csv-schema-infer/) | Utility | Pure parser: CSV header + samples → a Kinoa feature-schema (`SchemaDto`). No network, no credentials. |
 
 Dashboard helpers aren't usually invoked directly during a fresh integration — the workflows delegate to them. Use them directly for one-off admin tasks ("publish event X", "delete a stale custom field", "publish a configuration").
@@ -109,7 +112,7 @@ Dashboard helpers aren't usually invoked directly during a fresh integration —
 
 ## Architecture
 
-Player-fields, events, and feature-settings each split along **two axes**:
+Player-fields, events, feature-settings, and resources each split along **two axes**:
 
 - a **workflow skill** (`kinoa-sync-*-integration`) that drives discover → generate → sync → verify but makes **no API calls**, and
 - a **dashboard helper** (`kinoa-dashboard-<X>`) that is a pure admin-API CLI wrapper.
@@ -130,8 +133,10 @@ There are **two distinct API surfaces**. Mixing them up is a security mistake.
 
 | Surface | Host | Auth | Caller |
 |---|---|---|---|
-| **Admin** | `dashboard.kinoa.io` | `Authorization: Bearer <token>` + `Game` / `Game-Id` headers | Skills only — `kinoa-init` and the `kinoa-dashboard-*` helpers. |
-| **Runtime / public** | `gate.kinoa.io`, `pevents.kinoa.io`, `gate.kinoa.io/featureset` | `game: <game_secret>` (no bearer) | App runtime code, incl. the generated `FeatureSettingsFacade`. |
+| **Admin** | `dashboard.kinoa.io`; **also** `gate.kinoa.io/bundle` (resource templates) | `Authorization: Bearer <token>` + `Game` / `Game-Id` headers | Skills only — `kinoa-init` and the `kinoa-dashboard-*` helpers. |
+| **Runtime / public** | `gate.kinoa.io`, `pevents.kinoa.io`, `gate.kinoa.io/featureset`, `gate.kinoa.io/bundle/public/*` | `game: <game_secret>` (no bearer) | App runtime code, incl. the generated `FeatureSettingsFacade`. |
+
+> **`gate.kinoa.io` hosts both surfaces for the bundles service.** The resource-template *admin* routes (`gate.kinoa.io/bundle/resource-templates`) are bearer-secured and skill-only; the *public* routes (`gate.kinoa.io/bundle/public/...`) use the game secret. What makes a call admin is the **bearer token**, not the host — so the hard rule below applies to bundle admin calls too.
 
 **Hard rule when generating code into the application** (`KinoaPlayerState`, `KinoaEvents`, …): never emit code that calls `dashboard.kinoa.io` or carries `Authorization: Bearer`. The session token is admin-tier and must not ship in app binaries, configs, or runtime calls. Generated artifacts are **pure data classes** — no embedded API calls. The one exception is the generated `FeatureSettingsFacade`, which makes a runtime call with the **game-secret** header only.
 
