@@ -35,6 +35,12 @@ python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-feature-settings/kinoa_dashboard_
 A `missing_credentials` or `401` means init wasn't run (or the ~24h token expired)
 — tell the user to run `/kinoa-init` and stop.
 
+**Truncation guard for every listing** (`list-schemas`, `list-settings`,
+`list-configs`): the helpers fetch one page (default 100 rows). If
+`totalCount > elements.length`, re-run with `--rows <totalCount or more>` before
+reasoning about "what exists" — deciding to create a schema/setting from a
+truncated listing duplicates one that already exists past the page boundary.
+
 ## The three-resource model (internalize this)
 
 ```
@@ -108,14 +114,14 @@ telemetry via `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/kinoa_webhook.py`:
 
 The helper exits 0 even on failure; never abort the workflow on a webhook error.
 
-**Run state.** On start, read `./.kinoa-integration-state.json` if present — if `phases.feature_settings` records finished inner phases, resume from the first unfinished one. Alongside every inner `phase-end`, read-merge-write the file's `phases.feature_settings` entry: `status`, `service_root` (MONOREPO), `schema_id`/`schema_version`, `setting_id`/`setting_key`, `config_id`, `facade_path` (5.2), `report` (5.5). Record each id the moment 5.3 creates the resource, so an interrupted run resumes without re-creating schemas/settings/configs. Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/SKILL.md` → "Run state".
+**Run state.** On start, read `./.kinoa-integration-state.json` if present — if `phases.feature_settings` records finished inner phases, resume from the first unfinished one. Alongside every inner `phase-end`, read-merge-write the file's `phases.feature_settings` entry: `status`, `service_root` (MONOREPO), `schema_id`/`schema_version`, `setting_id`/`setting_key`, `config_id`, `facade_path` (5.2), `report` (5.5). Record each id the moment 5.3 creates the resource, so an interrupted run resumes without re-creating schemas/settings/configs. Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/references/run-state.md`.
 
-**Architecture & service scope.** Read `KINOA_ARCHITECTURE` from `~/.kinoa/session.env` (default `SINGLE`; semantics: orchestrator SKILL.md → "Architecture modes") before 5.1:
+**Architecture & service scope.** Read `KINOA_ARCHITECTURE` from `~/.kinoa/session.env` (default `SINGLE`; semantics: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/references/architecture-modes.md`) before 5.1:
 
 - `MONOREPO` — ask which service directory consumes this feature setting (offer candidate dirs found via Glob). The `FeatureSettingsFacade` (5.2) and the runtime verification (5.4) are scoped to that `service_root`; record it in the phase entry. The dashboard resources themselves (schema/setting/config) are game-wide, not per-service.
 - `MULTI_REPO` — the current repo is the service. On start read the central index `~/.kinoa/<game_id>/services.json`: if `shared_decisions.feature_settings` already carries resource ids from another service's run, offer to **reuse** that schema/setting instead of creating new ones (a second service often consumes the same setting via its own facade). Mirror every id 5.3 creates into `shared_decisions.feature_settings` at the moment of creation; at every module-level `phase-end`, update this service's entry (`modules.feature_settings`, `last_sync`).
 
-**Integration registry.** Alongside every state-file write, update `KINOA-INTEGRATION.md` next to it (bootstrap from the orchestrator's template if missing): rewrite the "Feature settings" section under `## Modules` to the current state (service, setting key, schema id/version, config id/status, facade path) and append a dated entry to `## History` describing what this run changed. Append-only — never rewrite old History entries.
+**Integration registry.** Alongside every state-file write, update `KINOA-INTEGRATION.md` next to it (bootstrap from the template in `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/references/integration-registry.md` if missing): rewrite the "Feature settings" section under `## Modules` to the current state (service, setting key, schema id/version, config id/status, facade path) and append a dated entry to `## History` describing what this run changed. Append-only — never rewrite old History entries.
 
 Drive each phase to completion with the developer before moving on.
 
@@ -234,16 +240,34 @@ the rest of the app calls, e.g. `featureSettings.get("BoostersConfig")`.
 
 ## Phase 5.3 — Sync: stand up schema → setting → configuration
 
-Delegate every call to `kinoa-dashboard-feature-settings`. After each, read the
-JSON; if `ok == false`, surface `http_status` + `response` and ask whether to
-retry, skip, or stop. Let `H` =
+Delegate every call to `kinoa-dashboard-feature-settings`. **Every mutating call
+(`create-schema`, `publish-schema`, `create-setting`, `create-config`,
+`import-config-data`, `submit-config`, `publish-config`, `mark-config-default`,
+`add-test-players`, `delete-config`) carries `--expect-game <game_id>`** — the game id
+recorded in `.kinoa-integration-state.json` at run start (NOT a fresh session.env
+read: this catches a session.env another terminal's `/kinoa-init` swapped
+mid-run). On `session_game_mismatch`, stop the phase and route the developer to
+re-run `/kinoa-init` for the intended game.
+
+After each call, read the JSON and branch on the failure kind:
+
+- `ok == false` with a real HTTP status (4xx/5xx) — surface `http_status` +
+  `response` and ask whether to retry, skip, or stop. **Exception — 401:** the
+  session token has expired; don't offer a blind retry — collect a fresh session
+  token via `/kinoa-init`, then resume from the current step (already-created
+  ids are in the state file; never re-create them).
+- `http_status: 0` or no JSON (network error / timeout) — **ambiguous: the server
+  may have applied the request.** Never retry a `create-*` blind; re-run the
+  matching `list-*`/`get-*` first and retry only if the resource is absent.
+
+Let `H` =
 `${CLAUDE_SKILL_DIR}/../kinoa-dashboard-feature-settings/kinoa_dashboard_feature_settings.py`.
 
 1. **Schema** (5.1b only — skip if reusing an existing ACTIVE schema):
    ```
    python .../kinoa_csv_schema_infer.py infer --csv <path> --name <SchemaName> --emit body [--type ...] \
-     | python "$H" create-schema
-   python "$H" publish-schema --schema-id <new_id>
+     | python "$H" create-schema --expect-game <game_id>
+   python "$H" publish-schema --schema-id <new_id> --expect-game <game_id>
    ```
    (5.1a: if the existing schema was `DRAFT`, publish it now.)
 2. **Resolve the latest version** — a configuration binds to a version UUID, not a
@@ -255,12 +279,12 @@ retry, skip, or stop. Let `H` =
 3. **Setting** — binds a runtime key to the schema. Confirm the `key` with the
    developer (default to the schema name; it's what the app passes to the facade):
    ```
-   python "$H" create-setting --key <RuntimeKey> --name "<Display name>" --schema-id <schema_id>
+   python "$H" create-setting --key <RuntimeKey> --name "<Display name>" --schema-id <schema_id> --expect-game <game_id>
    ```
 4. **Configuration** — create a **default** DRAFT, then load data:
    ```
-   python "$H" create-config --setting-id <setting_id> --schema-id <schema_id> --schema-version-id <version_id> --name "v1 defaults" --default
-   python "$H" import-config-data --config-id <config_id> --csv <path>
+   python "$H" create-config --setting-id <setting_id> --schema-id <schema_id> --schema-version-id <version_id> --name "v1 defaults" --default --expect-game <game_id>
+   python "$H" import-config-data --config-id <config_id> --csv <path> --expect-game <game_id>
    ```
    `create-config` fetches the schema to auto-build the required `tableColumns`
    (one per field — the backend rejects a config whose columns don't cover the
@@ -277,11 +301,11 @@ retry, skip, or stop. Let `H` =
    (→ auto-ACTIVE once the start time passes); `/publish` only accepts an
    IN_REVIEW config, so submit first:
    ```
-   python "$H" submit-config  --config-id <config_id>   # DRAFT → IN_REVIEW
-   python "$H" publish-config --config-id <config_id>    # IN_REVIEW → SCHEDULED
+   python "$H" submit-config  --config-id <config_id> --expect-game <game_id>   # DRAFT → IN_REVIEW
+   python "$H" publish-config --config-id <config_id> --expect-game <game_id>   # IN_REVIEW → SCHEDULED
    ```
    (Alternative visibility: instead of `--default`, scope to a specific player with
-   `add-test-players --config-id <id> --player-id <id>` before submit/publish; note
+   `add-test-players --config-id <id> --player-id <id> --expect-game <game_id>` before submit/publish; note
    that choice for 5.4. `mark-config-default` is for promoting an *already-published*
    config and rejects a DRAFT — prefer `create-config --default` here.)
 

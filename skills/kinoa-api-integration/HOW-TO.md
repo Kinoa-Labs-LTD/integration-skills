@@ -46,7 +46,7 @@ integration-skills/
 
 The split between `*-integration` (workflow) and `kinoa-dashboard-*` (admin CLI wrapper) keeps each role single-purpose: the integration skill owns the discover→diff→apply prompts, the dashboard skill owns one HTTP call per subcommand. Integration skills delegate admin calls via `${CLAUDE_SKILL_DIR}/../kinoa-dashboard-*/...`, so both must be installed as siblings.
 
-Each sub-skill ships its own Python helper and has no cross-skill imports — you can install one sub-skill in isolation if a future skill only needs that one piece. The orchestrator skill bundles them together for convenience but is not required for the sub-skills to work on their own.
+Each sub-skill ships its own Python helper and has no cross-skill Python imports. The skills are still meant to be **co-installed as one tree**: workflows delegate admin calls to sibling `kinoa-dashboard-*` helpers, fire telemetry via `../kinoa-api-integration/kinoa_webhook.py`, and read `../kinoa-api-integration/references/*.md` — install the whole `skills/` directory (the plugin and the symlink loop both do), not individual folders.
 
 ## Install all skills globally
 
@@ -117,7 +117,7 @@ In any Claude Code session:
 
 (or call the sub-skill directly with `/kinoa-init`.)
 
-The skill first asks how the project is laid out — **single app**, **monorepo with services**, or **separate repositories per service** (microservice clients integrate each Kinoa module from a different service; see the "Architecture modes" section of `SKILL.md`). It then prompts for three values (integration type is always `API` — hardcoded, no longer asked):
+The skill first asks how the project is laid out — **single app**, **monorepo with services**, or **separate repositories per service** (microservice clients integrate each Kinoa module from a different service; see `references/architecture-modes.md`). It then prompts for three values (integration type is always `API` — hardcoded, no longer asked):
 
 - **game ID** — internal game UUID (from the Kinoa dashboard URL when viewing the project).
 - **game secret** — public Player Events API auth.
