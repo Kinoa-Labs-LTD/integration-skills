@@ -16,7 +16,7 @@ This skill makes calls against **two distinct surfaces**, and they must not be c
 | Surface | Host | Auth | Caller |
 |---|---|---|---|
 | **Admin / dashboard API** | `dashboard.kinoa.io` | `Authorization: Bearer <token>` + `Game: <uuid>` + `Game-Id: <uuid>` (both headers carry the same UUID) | **Skill only.** Delegated to `kinoa-dashboard-player-fields` (CLI: `python ../kinoa-dashboard-player-fields/kinoa_dashboard_player_fields.py ...`) for list, activate, create, delete, plus the public-API `get-player-state` read used during verification. |
-| **Public Player Events API** | `gate.kinoa.io`, `pevents.kinoa.io`, `featureset.kinoa.io` | `game: <game_secret>` (no bearer) | **App code.** Runtime calls from the application — open session, send events, fetch player state, etc. The Postman collection at `../kinoa-api-integration/references/postman-collection.json` is the canonical spec. |
+| **Public Player Events API** | `gate.kinoa.io`, `pevents.kinoa.io`, `gate.kinoa.io/featureset` | `game: <game_secret>` (no bearer) | **App code.** Runtime calls from the application — open session, send events, fetch player state, etc. The Postman collection at `../kinoa-api-integration/references/postman-collection.json` is the canonical spec. |
 
 **Hard rule when generating code into the application:** never emit code that calls `dashboard.kinoa.io` or sends an `Authorization: Bearer` header. The session token is admin-tier and must not ship in application binaries, configs, or runtime calls. If a Phase asks you to add code to the app, only use endpoints from the Postman collection (game-secret header).
 
@@ -27,19 +27,19 @@ When `Phase 4` verifies the integration, the skill itself calls `gate.kinoa.io/p
 This skill is Phase 2 of the orchestrator's chain and has its own four inner phases. Fire telemetry via `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/kinoa_webhook.py`:
 
 - `phase-start --phase "Phase 2.<n> — <heading>"` immediately when entering each inner phase 1–4 (use the heading text after the dash, e.g. `"Phase 2.1 — Discover the application's player class"`, `"Phase 2.3 — Sync field definitions with Kinoa"`).
-- `phase-end --phase "Phase 2.<n> — <heading>" --summary "<one-line outcome>"` once that inner phase completes. Summaries should be terse — counts, "skipped by developer", or the C.5 report's bucket totals.
+- `phase-end --phase "Phase 2.<n> — <heading>" --summary "<one-line outcome>"` once that inner phase completes. Summaries should be terse — counts, "skipped by developer", or the 3.5 report's bucket totals.
 - `qa` after every `AskUserQuestion` exchange (file-path confirmation, checklist approvals in 2.3, more-fields review loop in 2.5, custom-kind prompts in 2.3.4, integration-test framework choice in 2.4.1).
 
 Helper exits 0 even on failure; never abort the workflow on a webhook error.
 
-**Run state.** On start, read `./.kinoa-integration-state.json` if present — if `phases.player_fields` records finished inner phases, resume from the first unfinished one instead of redoing work. Alongside every inner `phase-end`, read-merge-write the file's `phases.player_fields` entry: `status`, `service_root` (MONOREPO), `kinoa_player_state_path` (set in Phase 2), `report` (set in 3.5). Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/SKILL.md` → "Run state".
+**Run state.** On start, read `./.kinoa-integration-state.json` if present — if `phases.player_fields` records finished inner phases, resume from the first unfinished one instead of redoing work. Alongside every inner `phase-end`, read-merge-write the file's `phases.player_fields` entry: `status`, `service_root` (MONOREPO), `kinoa_player_state_path` (set in Phase 2), `report` (set in 3.5). Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/references/run-state.md`.
 
-**Architecture & service scope.** Read `KINOA_ARCHITECTURE` from `~/.kinoa/session.env` (default `SINGLE`; semantics: orchestrator SKILL.md → "Architecture modes") before Phase 1:
+**Architecture & service scope.** Read `KINOA_ARCHITECTURE` from `~/.kinoa/session.env` (default `SINGLE`; semantics: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/references/architecture-modes.md`) before Phase 1:
 
 - `MONOREPO` — ask which service directory owns the player model (offer candidate dirs found via Glob). Scope all Phase 1 discovery and the Phase 2 generated `KinoaPlayerState` to that `service_root`, and record it in the phase entry.
 - `MULTI_REPO` — the current repo is the service. On start also read the central index `~/.kinoa/<game_id>/services.json`; if another service already integrated player fields, say so and confirm the developer really wants a second integration from this repo. At every module-level `phase-end`, update this service's entry in the index (`modules.player_fields`, `last_sync`).
 
-**Integration registry.** Alongside every state-file write, update `KINOA-INTEGRATION.md` next to it (bootstrap from the orchestrator's template if missing): rewrite the "Player fields" section under `## Modules` to the current state (service, generated file path, field counts) and append a dated entry to `## History` describing what this run changed (fields activated/created, artifact paths). Append-only — never rewrite old History entries.
+**Integration registry.** Alongside every state-file write, update `KINOA-INTEGRATION.md` next to it (bootstrap from the template in `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/references/integration-registry.md` if missing): rewrite the "Player fields" section under `## Modules` to the current state (service, generated file path, field counts) and append a dated entry to `## History` describing what this run changed (fields activated/created, artifact paths). Append-only — never rewrite old History entries.
 
 The skill works in four phases. Drive each phase to completion with the developer before moving to the next; they are sequential and each builds on the previous.
 
@@ -102,6 +102,8 @@ python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-player-fields/kinoa_dashboard_pla
 
 Each response is `{ http_status, ok, response: { totalCount, elements: [...] } }`. Elements have at least `id`, `name`, `path`, `kind`, `state`, and (for `kind: enumeration`) `extra` with comma-separated allowed values.
 
+**Truncation guard — never diff a partial listing.** The helper fetches one page (default 100 rows). If `totalCount > elements.length` on either call, re-run it with `--rows <totalCount or more>` before computing the diff — diffing a truncated listing misclassifies the missing fields as 🔵 CREATE CUSTOM and produces duplicate/colliding creates against the live dashboard.
+
 `list-custom` defaults to `state: active` only (excludes soft-deleted fields). For predefined fields the relevant states are `active` and `not_implemented`.
 
 ### 3.2 Compute the diff
@@ -142,11 +144,16 @@ Ask the developer which actions to apply: comma-separated indices, `all`, or `no
 
 ### 3.4 Apply approved actions
 
-Execute in order. After each call, read the JSON; if `ok == false`, surface `http_status` and `response`, then ask whether to retry, skip, or stop the whole phase.
+**Every mutating call carries `--expect-game <game_id>`** — the game id recorded in `.kinoa-integration-state.json` at run start (NOT a fresh session.env read: the whole point is catching a session.env that another terminal's `/kinoa-init` swapped mid-run). On `session_game_mismatch`, stop the phase and route the developer to re-run `/kinoa-init` for the intended game.
+
+Execute in order. After each call, read the JSON and branch on the failure kind:
+
+- `ok == false` with a real HTTP status (4xx/5xx) — the server rejected it; surface `http_status` and `response`, then ask whether to retry, skip, or stop the whole phase. **Exception — 401:** the session token has expired; don't offer a blind retry (it will 401 forever) — ask the developer for a fresh session token from the dashboard → Integration menu, re-run `/kinoa-init`, then resume from the current action.
+- `http_status: 0` or no JSON at all (network error / timeout) — **the outcome is ambiguous: the server may have applied the request.** Never retry a `create` blind. Re-run the matching `list-*` first and check whether the record now exists; retry only if it is absent. A blind retry after a committed create produces a duplicate whose cleanup needs a delete.
 
 - 🟢 **Activate** an existing predefined field:
   ```
-  python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-player-fields/kinoa_dashboard_player_fields.py" activate --field-id <uuid>
+  python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-player-fields/kinoa_dashboard_player_fields.py" activate --field-id <uuid> --expect-game <game_id>
   ```
 
 - 🟡 **Implement + activate** (predefined that's not yet implemented):
@@ -163,8 +170,8 @@ Execute in order. After each call, read the JSON; if `ok == false`, surface `htt
   3. Run:
      ```
      python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-player-fields/kinoa_dashboard_player_fields.py" create \
-         --name "<name>" --path "<path>" --kind <kind> [--extra "v1,v2"] \
-         [--description "<desc>"] [--default-value "<value>"]
+         --name "<name>" --path "<path>" --kind <kind> --expect-game <game_id> \
+         [--extra "v1,v2"] [--description "<desc>"] [--default-value "<value>"]
      ```
 
 After the loop completes, summarize: how many activated, how many created, how many failed.

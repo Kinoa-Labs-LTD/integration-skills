@@ -30,14 +30,14 @@ This skill is Phase 4 of the orchestrator's chain and has its own four inner pha
 
 Helper exits 0 even on failure; never abort the workflow on a webhook error.
 
-**Run state.** On start, read `./.kinoa-integration-state.json` if present — if `phases.events` records finished inner phases, resume from the first unfinished one. Alongside every inner `phase-end`, read-merge-write the file's `phases.events` entry: `status`, `service_root` (MONOREPO), `kinoa_events_path` (Phase 2), `session_start_auto_fires` (record it the moment Phase 1 decides it — this flag must survive context compaction), `player_state_strategy` (3.5), `approved_events` (the final emission contract from 3.3/3.4), `report` (3.6). Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/SKILL.md` → "Run state".
+**Run state.** On start, read `./.kinoa-integration-state.json` if present — if `phases.events` records finished inner phases, resume from the first unfinished one. Alongside every inner `phase-end`, read-merge-write the file's `phases.events` entry: `status`, `service_root` (MONOREPO), `kinoa_events_path` (Phase 2), `session_start_auto_fires` (record it the moment Phase 1 decides it — this flag must survive context compaction), `player_state_strategy` (3.5), `approved_events` (the final emission contract from 3.3/3.4), `report` (3.6). Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/references/run-state.md`.
 
-**Architecture & service scope.** Read `KINOA_ARCHITECTURE` from `~/.kinoa/session.env` (default `SINGLE`; semantics: orchestrator SKILL.md → "Architecture modes") before Phase 1:
+**Architecture & service scope.** Read `KINOA_ARCHITECTURE` from `~/.kinoa/session.env` (default `SINGLE`; semantics: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/references/architecture-modes.md`) before Phase 1:
 
-- `MONOREPO` — ask which service directory this run integrates events from (offer candidate dirs found via Glob). Scope Phase 1 discovery, the generated `KinoaEvents`, and the Phase 4 emission wiring to that `service_root`. Events are the module most likely to span several services — when a second service is integrated later, keep per-service artifacts under the `services` map in `phases.events` (schema in the orchestrator's "Run state") while game-wide decisions (`session_start_auto_fires`, `player_state_strategy`) stay at the module level: they are per game, not per service, so a later service run must reuse them, not re-decide them.
+- `MONOREPO` — ask which service directory this run integrates events from (offer candidate dirs found via Glob). Scope Phase 1 discovery, the generated `KinoaEvents`, and the Phase 4 emission wiring to that `service_root`. Events are the module most likely to span several services — when a second service is integrated later, keep per-service artifacts under the `services` map in `phases.events` (schema in `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/references/run-state.md`) while game-wide decisions (`session_start_auto_fires`, `player_state_strategy`) stay at the module level: they are per game, not per service, so a later service run must reuse them, not re-decide them.
 - `MULTI_REPO` — the current repo is the service. On start read the central index `~/.kinoa/<game_id>/services.json`: if `shared_decisions` already carries `session_start_auto_fires` or `player_state_strategy` from another service's run, adopt those values and tell the developer instead of re-deriving/re-asking. The moment this run decides either value (Phase 1 step 6, or 3.5), mirror it into `shared_decisions`; at every module-level `phase-end`, update this service's entry (`modules.events`, `last_sync`).
 
-**Integration registry.** Alongside every state-file write, update `KINOA-INTEGRATION.md` next to it (bootstrap from the orchestrator's template if missing): rewrite the "Events" section under `## Modules` to the current state (service, `KinoaEvents` path, published/created event names, strategy) and append a dated entry to `## History` describing what this run changed. Append-only — never rewrite old History entries.
+**Integration registry.** Alongside every state-file write, update `KINOA-INTEGRATION.md` next to it (bootstrap from the template in `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/references/integration-registry.md` if missing): rewrite the "Events" section under `## Modules` to the current state (service, `KinoaEvents` path, published/created event names, strategy) and append a dated entry to `## History` describing what this run changed. Append-only — never rewrite old History entries.
 
 The skill works in four phases. Drive each phase to completion with the developer before moving on.
 
@@ -96,7 +96,11 @@ python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-event/kinoa_dashboard_event.py" l
 python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-event/kinoa_dashboard_event.py" list-custom
 ```
 
-Each response is `{ http_status, ok, response: { totalCount, elements: [...] } }`. Important fields per element:
+Each response is `{ http_status, ok, response: { totalCount, elements: [...] } }`.
+
+**Truncation guard — never diff a partial listing.** The helper fetches one page (default 100 rows). If `totalCount > elements.length` on either call, re-run it with `--rows <totalCount or more>` before computing the diff — diffing a truncated listing misclassifies the missing events as 🔵 CREATE CUSTOM and produces duplicate creates against the live dashboard.
+
+Important fields per element:
 
 - `id` (UUID), `name`, `type` (`PREDEFINED` or `USER`)
 - `status`: `ACTIVE` (published / integrated) or `NOT_IMPLEMENTED` (not yet published).
@@ -155,11 +159,16 @@ Ask the developer which actions to apply: comma-separated indices, `all`, or `no
 
 ### 3.4 Apply approved actions
 
-Execute in order. After each call, read the JSON; if `ok == false`, surface `http_status` and `response`, then ask whether to retry, skip, or stop.
+**Every mutating call carries `--expect-game <game_id>`** — the game id recorded in `.kinoa-integration-state.json` at run start (NOT a fresh session.env read: the whole point is catching a session.env that another terminal's `/kinoa-init` swapped mid-run). On `session_game_mismatch`, stop the phase and route the developer to re-run `/kinoa-init` for the intended game.
+
+Execute in order. After each call, read the JSON and branch on the failure kind:
+
+- `ok == false` with a real HTTP status (4xx/5xx) — the server rejected it; surface `http_status` and `response`, then ask whether to retry, skip, or stop. **Exception — 401:** the session token has expired; don't offer a blind retry (it will 401 forever) — ask the developer for a fresh session token from the dashboard → Integration menu, re-run `/kinoa-init`, then resume from the current action.
+- `http_status: 0` or no JSON at all (network error / timeout) — **the outcome is ambiguous: the server may have applied the request.** Never retry a `create` blind. Re-run `list-custom` first and check whether the event now exists; retry only if it is absent. A blind retry after a committed create produces a duplicate event whose only cleanup is the HARD, irreversible delete.
 
 - 🟢 **Publish** an existing predefined event:
   ```
-  python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-event/kinoa_dashboard_event.py" publish --event-id <uuid>
+  python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-event/kinoa_dashboard_event.py" publish --event-id <uuid> --expect-game <game_id>
   ```
   The script GETs the full event record and PUTs it to `/game_events/<id>/publish`. The body intentionally includes the current state (Kinoa flips `status` server-side).
 
@@ -175,14 +184,14 @@ Execute in order. After each call, read the JSON; if `ok == false`, surface `htt
   - The server fires `session_start` on every open-session call; the app must not also emit it from a regular event call site (would double-count).
   - Publish `session_start` once open-session is wired up:
     ```
-    python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-event/kinoa_dashboard_event.py" publish --event-id <session_start_uuid>
+    python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-event/kinoa_dashboard_event.py" publish --event-id <session_start_uuid> --expect-game <game_id>
     ```
 
 - 🔁 **`session_start` explicit emit** (when `SESSION_START_AUTO_FIRES == False` — the app opens sessions without hitting the direct endpoint):
   - The app must emit `session_start` like any other event, immediately after its session-open code runs.
   - Treat it as a normal 🟡 implement+publish item: add `session_start` to `KinoaEvents`, wire an emission call site right after the session-open step, then publish:
     ```
-    python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-event/kinoa_dashboard_event.py" publish --event-id <session_start_uuid>
+    python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-event/kinoa_dashboard_event.py" publish --event-id <session_start_uuid> --expect-game <game_id>
     ```
   - Place the call so it cannot run before the session is open — `session_start` with no active session is a usage error.
 
@@ -196,7 +205,7 @@ Execute in order. After each call, read the JSON; if `ok == false`, surface `htt
   3. Run:
      ```
      python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-event/kinoa_dashboard_event.py" create \
-         --name "<event_name>" \
+         --name "<event_name>" --expect-game <game_id> \
          --param amount:number \
          --param tier:enumeration:bronze,silver,gold
      ```
@@ -334,15 +343,10 @@ The test should:
 2. **Open a Kinoa session via the application's own session-open path** — not by calling `gate.kinoa.io` directly from the test. Whatever class/function the app uses to start a session, the test should call it. This exercises the real wiring and (in API-mode projects) auto-fires `session_start`.
 3. **Populate `KinoaPlayerState`** — set at least one field to a non-default value via the same storage layer wired in Phase 2.1 (the developer's `PlayerRepository` / state singleton / etc.).
 4. **Emit one of the events published in 3.4** through the application's emission code — pick a meaningful one (preferably a critical event from {`watch_ad`, `install`, `payment`} if any are integrated, otherwise something like `level_up`).
-5. **Read back the event definition from Kinoa** using the dashboard helper to assert `last_event_at` advanced within the last few seconds:
-   ```
-   python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-event/kinoa_dashboard_event.py" get --event-id <uuid>
-   ```
-6. **Optionally read back the player_state** to confirm the strategy chosen in 3.5 propagated correctly:
-   ```
-   python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-player-fields/kinoa_dashboard_player_fields.py" get-player-state --player-id <id>
-   ```
-7. **Print one line to stdout** naming `player_id`, `session_id`, and event name, so the developer can find the record in the Kinoa dashboard if the assertion fails.
+5. **Assert via the PUBLIC surface only** — read back the player_state through the public endpoint (`GET gate.kinoa.io/playerevents/api/v3/player-state`, `game: <game_secret>` header, per the Postman collection) and assert the field touched in step 3 is reflected. Since every event carries `event.player_state`, a reflected value is the receipt that the emission landed end-to-end.
+6. **Print one line to stdout** naming `player_id`, `session_id`, and event name, so the developer (and the skill, in the verification below) can find the record in the Kinoa dashboard if the assertion fails.
+
+**Hard boundary — the committed test never touches the admin surface.** No `Authorization: Bearer`, no `dashboard.kinoa.io`, no shelling out to the `kinoa-dashboard-*` helpers: (a) the session token is admin-tier and must not become a standing dependency of the app's test suite or CI secret store; (b) the `${CLAUDE_SKILL_DIR}/...` helper paths exist only on machines with the plugin installed — a committed test referencing them breaks on every teammate's machine and every CI runner. The only credential the test may use is the **game secret** (the same one production code ships with).
 
 Skeleton (adapt to the project's framework and language — the exact API of the app's emission code varies):
 
@@ -356,19 +360,25 @@ void publishedEventIsReceivedByKinoa() throws Exception {
     eventEmitter.emit(KinoaEvents.LEVEL_UP, Map.of("level", 5, "place", "arena"));
     System.out.printf("emitted: player_id=%s session_id=%s event=level_up%n",
         playerId, session.getSessionId());
-    awaitEventLandedRecently("level_up");                            // helper hitting kinoa_dashboard_event.py get
+    awaitPlayerStateReflects(playerId, "level", 5);   // polls the PUBLIC player-state endpoint (game-secret header)
 }
 ```
 
-The test uses the project's real Kinoa credentials (the same `~/.kinoa/session.env` or the project's existing config-loading path). It hits the same `gate.kinoa.io` endpoints production code will hit.
+The test uses only the game secret (from the project's existing config-loading path). It hits the same `gate.kinoa.io` public endpoints production code will hit.
+
+**Skill-side admin verification (in-session, not in the test).** After the test run passes, the skill itself — never the committed code — confirms the definition-level receipt with the admin helper, correlating via the `player_id`/event name the test printed:
+```
+python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-event/kinoa_dashboard_event.py" get --event-id <uuid>
+```
+Assert `last_event_at` advanced to within the last few minutes. This keeps the admin surface where it belongs (skill-only) while the verification stays end-to-end.
 
 ### 4.3 Run it and verify
 
 Tell the developer to run the test using the project's normal command (`mvn test`, `gradle test`, `npm test`, `pytest`, etc.). They confirm here once it passes — or paste any failure so you can help diagnose. Common failures:
 
-- Test 401s against Kinoa → credentials not loaded in the test JVM/process; check the project's env-loading.
-- Test passes locally but `last_event_at` never updates → event isn't reaching `gate.kinoa.io`; check the app's emission code's URL/headers.
-- `last_event_at` updates but `player_state` lookup is empty → 3.5 strategy not implemented (the `KinoaEvents` file's strategy comment is the contract; emission code must follow it).
+- Test 401s against Kinoa → the game secret isn't loaded in the test JVM/process; check the project's env/config-loading.
+- Test's player-state readback stays empty → the event isn't reaching `gate.kinoa.io` (check the app's emission code's URL/headers) or the 3.5 strategy isn't implemented (the `KinoaEvents` file's strategy comment is the contract; emission code must follow it).
+- Test passes but the skill-side `last_event_at` check doesn't advance → the emission landed for the player but the event definition doesn't match (wrong event name/casing); compare against the definitions from 3.1.
 
 ### 4.4 Fallback — synthetic send (only when 4.2 is not feasible)
 

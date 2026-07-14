@@ -59,6 +59,9 @@ def _load_session_env():
 _load_session_env()
 
 
+REQUEST_TIMEOUT_SECONDS = 30
+
+
 def _request(method, url, headers=None, body=None):
     data = None
     if body is not None:
@@ -67,13 +70,15 @@ def _request(method, url, headers=None, body=None):
         headers.setdefault("Content-Type", "application/json")
     req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
             return resp.status, resp.read().decode("utf-8")
     except urllib.error.HTTPError as e:
         raw = e.read().decode("utf-8", errors="replace") if e.fp else ""
         return e.code, raw
     except urllib.error.URLError as e:
-        return 0, f"URLError: {e.reason}"
+        return 0, f"URLError: {e.reason} — the request may still have been applied server-side; re-check (list/get) before retrying a mutation"
+    except TimeoutError as e:
+        return 0, f"Timeout: {e} — the request may still have been applied server-side; re-check (list/get) before retrying a mutation"
 
 
 def _parse_json(raw):
@@ -105,10 +110,18 @@ def _guard_expected_game(args):
     game's dashboard. Fatal, before any state-changing call. Read-only and
     flagless calls are unaffected."""
     expected = getattr(args, "expect_game", None)
-    if not expected:
+    if expected is None:
         return
+    expected = expected.strip()
+    if not expected:
+        print(json.dumps({
+            "error": "empty_expect_game",
+            "hint": "--expect-game was passed but empty (unset shell variable?). "
+                    "Pass the literal game UUID recorded at run start.",
+        }, indent=2))
+        sys.exit(2)
     session_game = (os.environ.get("KINOA_GAME_ID") or "").strip()
-    if expected.strip().lower() != session_game.lower():
+    if expected.lower() != session_game.lower():
         print(json.dumps({
             "error": "session_game_mismatch",
             "expected_game": expected,

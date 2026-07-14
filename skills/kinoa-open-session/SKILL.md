@@ -2,7 +2,7 @@
 name: kinoa-open-session
 description: Internal sub-skill of kinoa-api-integration — do NOT trigger directly. Invoked as the orchestrator's `open-session` dispatch (Phase 3 of onboarding, the runtime-verification step). Opens a Kinoa player session by POSTing to https://gate.kinoa.io/playerevents/api/v3/player/session/start (recommended endpoint, which also auto-fires session_start server-side in hidden mode). Generates a UUID and persists KINOA_LAST_SESSION_ID / KINOA_LAST_PLAYER_ID for subsequent event calls. When the user wants to open or verify a Kinoa session, log a session start, or test the open-session endpoint, route via kinoa-api-integration open-session — the orchestrator ensures init has been done so credentials exist and that player-fields are synced so the session payload is meaningful.
 argument-hint: [player_id] [level] [optional key=value fields]
-allowed-tools: Bash(python *) Bash(cat *) Read AskUserQuestion
+allowed-tools: Bash(python *) Read Write Edit Grep AskUserQuestion
 ---
 
 This skill opens a Kinoa player session. The helper script `kinoa_open_session.py` lives in this skill's folder and has no external imports, so the skill is fully self-contained.
@@ -19,9 +19,9 @@ This skill is Phase 3 of the orchestrator's chain. Fire telemetry via `${CLAUDE_
 
 Helper exits 0 even on failure; never abort the integration on a webhook error.
 
-**Run state.** Alongside `phase-end`, read-merge-write `./.kinoa-integration-state.json`: set `phases.open_session` to `{"status": "done", "player_id": "...", "session_id": "..."}` (plus `service_root` in `MONOREPO` mode — the service that owns session-opening; this is a network verification, not code discovery, so just ask which service that is if it isn't obvious). Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/SKILL.md` → "Run state".
+**Run state.** Alongside `phase-end`, read-merge-write `./.kinoa-integration-state.json`: set `phases.open_session` to `{"status": "done", "player_id": "...", "session_id": "..."}` (plus `service_root` in `MONOREPO` mode — the service that owns session-opening; this is a network verification, not code discovery, so just ask which service that is if it isn't obvious). Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/references/run-state.md`.
 
-**Architecture & registry.** In `MULTI_REPO` mode (per `KINOA_ARCHITECTURE` in `~/.kinoa/session.env`), also update this service's entry in the central index `~/.kinoa/<game_id>/services.json` (`modules.open_session`, `last_sync`). In every mode, update `KINOA-INTEGRATION.md` next to the state file (bootstrap from the orchestrator's template if missing): rewrite the "Open session" section under `## Modules` and append a dated `## History` entry (`session opened, player_id=…, endpoint verified`). Semantics: orchestrator SKILL.md → "Architecture modes" / "Integration registry".
+**Architecture & registry.** In `MULTI_REPO` mode (per `KINOA_ARCHITECTURE` in `~/.kinoa/session.env`), also update this service's entry in the central index `~/.kinoa/<game_id>/services.json` (`modules.open_session`, `last_sync`). In every mode, update `KINOA-INTEGRATION.md` next to the state file (bootstrap from the template if missing): rewrite the "Open session" section under `## Modules` and append a dated `## History` entry (`session opened, player_id=…, endpoint verified`). Semantics + template: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/references/architecture-modes.md` / `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/references/integration-registry.md`.
 
 ## Step 1: Collect inputs
 
@@ -42,7 +42,7 @@ python "${CLAUDE_SKILL_DIR}/kinoa_open_session.py" \
 The script:
 - Generates a fresh UUID for the `session_id` header (override with `--session-id <uuid>` if needed).
 - POSTs to `https://gate.kinoa.io/playerevents/api/v3/player/session/start` with headers `{game: <secret>, session_id: <uuid>}` and a JSON body containing `player_state` (with `player_identifiers.player_id`, `level`, and any extra fields merged in).
-- Persists `KINOA_LAST_PLAYER_ID` and `KINOA_LAST_SESSION_ID` back into `~/.kinoa/session.env` so a follow-up sync-event call can reuse them.
+- Persists `KINOA_LAST_PLAYER_ID` and `KINOA_LAST_SESSION_ID` back into `~/.kinoa/session.env` so a follow-up sync-event call can reuse them — **only on a 2xx response** (`last_ids_persisted` in the output). A failed call leaves no phantom ids for Phases 4/5 to trust.
 
 ## Step 3: Report
 

@@ -387,6 +387,7 @@ function td(child, cls) {{ const t = document.createElement("td"); if (cls) t.cl
 function buildConfirmed() {{
   return {{
     confirmed_at: new Date().toISOString(),
+    page_generated_at: INITIAL.generated_at,
     resources: state.map(r => {{
       const out = {{
         name: r.name.trim(),
@@ -421,7 +422,8 @@ document.getElementById("download").addEventListener("click", () => {{
   const blob = new Blob([JSON.stringify(buildConfirmed(), null, 2)], {{type: "application/json"}});
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = "kinoa-resources-confirmed.json";
+  // Timestamped name so a stale file from an earlier run can't be handed back by mistake.
+  a.download = "kinoa-resources-confirmed-" + String(INITIAL.generated_at).replace(/[:.]/g, "-") + ".json";
   document.body.appendChild(a); a.click(); a.remove();
 }});
 
@@ -467,6 +469,14 @@ def main() -> int:
         payload = json.loads(raw)
     except json.JSONDecodeError as e:
         print(json.dumps({"ok": False, "error": "invalid_json", "detail": str(e)}))
+        return 2
+
+    if not payload.get("generated_at"):
+        # generated_at doubles as the run nonce: the page echoes it into the
+        # confirmed JSON (page_generated_at) and the workflow's freshness gate
+        # compares it. An empty value would make every hand-back "stale".
+        print(json.dumps({"ok": False, "error": "missing_generated_at",
+                          "hint": "The candidates payload must carry a non-empty generated_at (ISO timestamp)."}))
         return 2
 
     html_doc = render(payload)
