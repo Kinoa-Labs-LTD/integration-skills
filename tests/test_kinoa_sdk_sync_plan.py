@@ -442,6 +442,28 @@ class FeatureSettingsPlanTests(unittest.TestCase):
         self.assertEqual(len(fsp["version_conflict"]), 1)
         self.assertEqual(fsp["version_conflict"][0]["dashboard_only_columns"], ["extra"])
 
+    def test_draft_schema_single_bucket_never_also_already_ok(self):
+        # ENTITY status drives the publish plan; a schema planned for publish must NOT also
+        # appear in already_ok (one bucket per schema — the shape verdict rides in the reason).
+        plan = self._plan(
+            schemas=[{"name": "Wof", "fields": [{"name": "prize", "kind": "string"}]}],
+            fs_schemas=[_live_schema("Wof", [("prize", "string")], status="DRAFT")])
+        fsp = plan["feature_settings"]
+        self.assertEqual([s["name"] for s in fsp["schema_publish"]], ["Wof"])
+        self.assertIn("matching column shape", fsp["schema_publish"][0]["reason"])
+        self.assertIn("ENTITY", fsp["schema_publish"][0]["reason"])
+        self.assertEqual([s for s in fsp["already_ok"] if s.get("name") == "Wof"], [])
+
+    def test_draft_schema_with_shape_conflict_publish_plus_conflict(self):
+        plan = self._plan(
+            schemas=[{"name": "Wof", "fields": [{"name": "prize", "kind": "string"}]}],
+            fs_schemas=[_live_schema("Wof", [("prize", "string"), ("extra", "integer")], status="DRAFT")])
+        fsp = plan["feature_settings"]
+        self.assertEqual([s["name"] for s in fsp["schema_publish"]], ["Wof"])
+        self.assertIn("version_conflict", fsp["schema_publish"][0]["reason"])
+        self.assertEqual([s["name"] for s in fsp["version_conflict"]], ["Wof"])
+        self.assertEqual([s for s in fsp["already_ok"] if s.get("name") == "Wof"], [])
+
     def test_schema_present_draft_planned_as_publish(self):
         plan = self._plan(
             schemas=[{"name": "Wof", "fields": [{"name": "prize", "kind": "string"}]}],

@@ -512,15 +512,21 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
         live_fields = _fs_fields_map(live)
         if live_fields is not None:
             live_fields = {k: v for k, v in live_fields.items() if not _is_filter_or_placeholder(k)}
+        # ENTITY status (the record's top-level `status`), NOT a version's: a created schema's
+        # v1 auto-activates while the entity itself can stay DRAFT until an explicit
+        # publish-schema (live-verified 2026-07-16 — a DRAFT-entity/ACTIVE-version residue).
+        status = str(live.get("status") or "").strip().lower()
+        needs_publish = bool(status) and status != "active"
+        shape_note = None
         if live_fields is None:
-            fsp["already_ok"].append(dict(item,
-                reason="feature schema exists — column shape NOT verified (no version fields in the listing); "
-                       "fetch get-schema to confirm the columns match the code before relying on it"))
+            shape_note = ("column shape NOT verified (no version fields in the listing); "
+                          "fetch get-schema to confirm the columns match the code before relying on it")
         else:
             want_map = {_norm(f["name"]): f["kind"] for f in want_fields}
             if want_map == live_fields:
-                fsp["already_ok"].append(dict(item, reason="feature schema exists with matching column shape"))
+                shape_note = "matching column shape"
             else:
+                shape_note = None  # conflict row below carries the shape verdict
                 fsp["version_conflict"].append(dict(item,
                     code_only_columns=sorted(k for k in want_map if k not in live_fields),
                     dashboard_only_columns=sorted(k for k in live_fields if k not in want_map),
@@ -528,9 +534,16 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                     reason="code column shape differs from the live ACTIVE schema version — the helpers cannot edit a "
                            "published version; needs a developer-approved NEW schema version, after which the code's "
                            "requested version at the four wiring sites must be re-aligned and Default Feature Settings.zip re-exported"))
-        status = str(live.get("status") or "").strip().lower()
-        if status and status != "active":
-            fsp["schema_publish"].append(dict(item, reason="feature schema exists but is not ACTIVE — publish"))
+        if needs_publish:
+            # One bucket per schema: a planned publish subsumes the already_ok row (the shape
+            # verdict rides along in its reason) — never both.
+            fsp["schema_publish"].append(dict(item,
+                reason="feature schema ENTITY is not ACTIVE — publish"
+                       + (f" ({shape_note})" if shape_note else " (column shape differs — see version_conflict)")))
+        elif shape_note == "matching column shape":
+            fsp["already_ok"].append(dict(item, reason="feature schema exists with matching column shape"))
+        elif shape_note is not None:
+            fsp["already_ok"].append(dict(item, reason="feature schema exists — " + shape_note))
 
     for st in fs.get("settings") or []:
         key = _norm(st.get("key"))
