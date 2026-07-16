@@ -35,7 +35,9 @@ REQUEST_VARIANT_BASENAMES = {"kinoa_dashboard_feature_settings.py", WEBHOOK_BASE
 
 def _function_sources(path):
     """Map of top-level function name -> exact source segment."""
-    with open(path, "r") as f:
+    # Explicit utf-8: helper docstrings carry non-ASCII (em-dashes etc.), and
+    # Windows' default cp1252 open() would UnicodeDecodeError on them.
+    with open(path, "r", encoding="utf-8") as f:
         source = f.read()
     tree = ast.parse(source)
     out = {}
