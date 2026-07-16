@@ -11,7 +11,7 @@ the single `get-config` read talks to the public gate.kinoa.io/featureset host.
 
 Three resources stack up: a SCHEMA (typed columns) has one or more VERSIONS; a
 SETTING binds a runtime `key` to a schema; a CONFIGURATION holds the actual data
-rows for one schema version under a setting and has its own lifecycle (DRAFT →
+rows for one schema version under a setting and has its own lifecycle (DRAFT ->
 publish). The runtime fetches by setting `key` + schema `version` number.
 
 Subcommands
@@ -31,7 +31,7 @@ Schemas (https://dashboard.kinoa.io/featuresettingsapi/schemas):
       --body-file/stdin (e.g. produced by kinoa-csv-schema-infer), OR build a
       single-version schema from --name + a tableFields JSON array.
   publish-schema --schema-id UUID
-      POST /schemas/{id}/publish — DRAFT → ACTIVE. Required before a setting can
+      POST /schemas/{id}/publish — DRAFT -> ACTIVE. Required before a setting can
       bind it in production.
 
 Settings (https://dashboard.kinoa.io/featuresettingsapi/settings):
@@ -57,14 +57,14 @@ Configurations (https://dashboard.kinoa.io/featuresettingsapi/configurations):
       PUT /configurations/{id}/import — multipart upload of the CSV holding the
       data rows (header row must match the schema field names).
   submit-config --config-id UUID
-      PATCH status DRAFT → IN_REVIEW (JSON-patch on /status). Required before
-      publish: the lifecycle is DRAFT → IN_REVIEW → SCHEDULED.
+      PATCH status DRAFT -> IN_REVIEW (JSON-patch on /status). Required before
+      publish: the lifecycle is DRAFT -> IN_REVIEW -> SCHEDULED.
   mark-config-default --config-id UUID
       PATCH /configurations/{id}/mark-as-default — promote an already-published
       (SCHEDULED/ACTIVE/PAUSED) config to default. For a fresh config prefer
       create-config --default, since mark-as-default rejects a DRAFT config.
   publish-config --config-id UUID
-      POST /configurations/{id}/publish — IN_REVIEW → SCHEDULED (then auto-ACTIVE
+      POST /configurations/{id}/publish — IN_REVIEW -> SCHEDULED (then auto-ACTIVE
       once the start time passes; visible at runtime, with a short propagation lag).
   add-test-players --config-id UUID --player-id ID [--player-id ID ...]
       POST /configurations/{id}/test-players — let specific players resolve a
@@ -329,7 +329,7 @@ def _read_text_arg(path_value, inline_value):
             return fh.read()
     if inline_value:
         return inline_value
-    # No path, no inline → read stdin if it is piped.
+    # No path, no inline -> read stdin if it is piped.
     if not sys.stdin.isatty():
         return sys.stdin.read()
     return ""
@@ -485,7 +485,7 @@ def cmd_mark_config_default(args):
 
 
 def cmd_submit_config(args):
-    # The status state machine is DRAFT → IN_REVIEW → SCHEDULED. The /publish
+    # The status state machine is DRAFT -> IN_REVIEW -> SCHEDULED. The /publish
     # endpoint only accepts an IN_REVIEW config, so a DRAFT must first be moved to
     # IN_REVIEW via a JSON-patch on /status.
     patch = [{"op": "replace", "path": "/status", "value": "IN_REVIEW"}]
@@ -583,7 +583,7 @@ def main(argv):
     p.add_argument("--fields-json", default="", help="Inline JSON array of tableFields: [{\"name\":\"x\",\"type\":\"integer\"}].")
     p.set_defaults(func=cmd_create_schema)
 
-    p = sub.add_parser("publish-schema", parents=[guard], help="POST /schemas/{id}/publish (DRAFT → ACTIVE).")
+    p = sub.add_parser("publish-schema", parents=[guard], help="POST /schemas/{id}/publish (DRAFT -> ACTIVE).")
     p.add_argument("--schema-id", required=True)
     p.set_defaults(func=cmd_publish_schema)
 
@@ -632,11 +632,11 @@ def main(argv):
     p.add_argument("--config-id", required=True)
     p.set_defaults(func=cmd_mark_config_default)
 
-    p = sub.add_parser("submit-config", parents=[guard], help="PATCH status DRAFT → IN_REVIEW (required before publish).")
+    p = sub.add_parser("submit-config", parents=[guard], help="PATCH status DRAFT -> IN_REVIEW (required before publish).")
     p.add_argument("--config-id", required=True)
     p.set_defaults(func=cmd_submit_config)
 
-    p = sub.add_parser("publish-config", parents=[guard], help="POST /configurations/{id}/publish (IN_REVIEW → SCHEDULED).")
+    p = sub.add_parser("publish-config", parents=[guard], help="POST /configurations/{id}/publish (IN_REVIEW -> SCHEDULED).")
     p.add_argument("--config-id", required=True)
     p.set_defaults(func=cmd_publish_config)
 

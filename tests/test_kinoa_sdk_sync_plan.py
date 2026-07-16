@@ -43,14 +43,35 @@ def _manifest(**overrides):
     return base
 
 
+def _fs_manifest(schemas=(), settings=()):
+    return _manifest(schema_version=2,
+                     feature_settings={"schemas": list(schemas), "settings": list(settings)})
+
+
+def _live_schema(name, fields, status="ACTIVE", version="1", schema_id=None):
+    """A get-schema-shaped live record. `fields` = [(name, type), ...]."""
+    return {
+        "id": schema_id or f"sch-{name}",
+        "name": name,
+        "status": status,
+        "versions": [{
+            "id": f"ver-{name}",
+            "version": version,
+            "status": "ACTIVE",
+            "tableFields": [{"name": n, "type": t} for n, t in fields],
+        }],
+    }
+
+
 class BuildPlanTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_module()
 
     def _plan(self, manifest, ev_predef=(), ev_custom=(), ev_deleted=(),
-              pf_predef=(), pf_custom=(), pf_deleted=()):
+              pf_predef=(), pf_custom=(), pf_deleted=(), fs_schemas=(), fs_settings=()):
         return self.mod.build_plan(manifest, list(ev_predef), list(ev_custom), list(ev_deleted),
-                                   list(pf_predef), list(pf_custom), list(pf_deleted))
+                                   list(pf_predef), list(pf_custom), list(pf_deleted),
+                                   list(fs_schemas), list(fs_settings))
 
     # ---- events: predefined ----
 
@@ -367,15 +388,277 @@ class BuildPlanTests(unittest.TestCase):
         self.assertEqual(len(plan["unsupported"]), 1)
 
     def test_unknown_manifest_sections_surface_not_silently_ignored(self):
-        # Future producers will add surfaces (feature_settings, bundles, ...) —
-        # an older planner must report them, never half-sync silently.
-        manifest = _manifest(feature_settings={"schemas": []}, bundles=[])
+        # Future producers will add surfaces (bundles, translations, ...) — an older planner must
+        # report them, never half-sync silently. feature_settings is now a KNOWN section.
+        manifest = _manifest(bundles=[], translations={})
         plan = self._plan(manifest)
-        self.assertEqual(plan["unknown_manifest_sections"], ["bundles", "feature_settings"])
+        self.assertEqual(plan["unknown_manifest_sections"], ["bundles", "translations"])
 
     def test_known_sections_are_not_flagged_unknown(self):
         plan = self._plan(_manifest())
         self.assertEqual(plan["unknown_manifest_sections"], [])
+        # feature_settings (schema_version 2) is recognized, never flagged unknown.
+        self.assertEqual(self._plan(_fs_manifest())["unknown_manifest_sections"], [])
+
+
+class FeatureSettingsPlanTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_module()
+
+    def _plan(self, schemas=(), settings=(), fs_schemas=(), fs_settings=()):
+        m = _fs_manifest(schemas, settings)
+        return self.mod.build_plan(m, [], [], [], [], [], [], list(fs_schemas), list(fs_settings))
+
+    # ---- schemas ----
+
+    def test_schema_absent_planned_as_create(self):
+        plan = self._plan(schemas=[{"name": "DailyBonusSettings",
+                                    "fields": [{"name": "day", "kind": "integer"}]}])
+        fsp = plan["feature_settings"]
+        self.assertEqual([s["name"] for s in fsp["schema_create"]], ["DailyBonusSettings"])
+        self.assertEqual(fsp["version_conflict"], [])
+        self.assertEqual(fsp["already_ok"], [])
+        # fields are carried for create-schema, normalized to the operator 5
+        self.assertEqual(fsp["schema_create"][0]["fields"][0], {"name": "day", "kind": "integer", "isRequired": True})
+
+    def test_schema_present_matching_fields_already_ok(self):
+        plan = self._plan(
+            schemas=[{"name": "Wof", "fields": [{"name": "prize", "kind": "string"},
+                                                {"name": "coins", "kind": "integer"}]}],
+            fs_schemas=[_live_schema("Wof", [("prize", "string"), ("coins", "integer")])])
+        fsp = plan["feature_settings"]
+        self.assertEqual([s["name"] for s in fsp["already_ok"]], ["Wof"])
+        self.assertEqual(fsp["schema_create"], [])
+        self.assertEqual(fsp["version_conflict"], [])
+
+    def test_schema_present_differing_fields_version_conflict(self):
+        plan = self._plan(
+            schemas=[{"name": "Wof", "fields": [{"name": "prize", "kind": "string"},
+                                                {"name": "coins", "kind": "integer"}]}],
+            fs_schemas=[_live_schema("Wof", [("prize", "string"), ("coins", "integer"),
+                                             ("extra", "string")])])
+        fsp = plan["feature_settings"]
+        self.assertEqual(fsp["schema_create"], [])
+        self.assertEqual(len(fsp["version_conflict"]), 1)
+        self.assertEqual(fsp["version_conflict"][0]["dashboard_only_columns"], ["extra"])
+
+    def test_schema_present_draft_planned_as_publish(self):
+        plan = self._plan(
+            schemas=[{"name": "Wof", "fields": [{"name": "prize", "kind": "string"}]}],
+            fs_schemas=[_live_schema("Wof", [("prize", "string")], status="DRAFT")])
+        self.assertEqual([s["name"] for s in plan["feature_settings"]["schema_publish"]], ["Wof"])
+
+    def test_schema_summary_listing_without_fields_not_verified(self):
+        # A list-schemas summary row (no versions[].tableFields) can't be field-diffed → already_ok
+        # with an explicit "shape NOT verified" reason, never a phantom conflict.
+        plan = self._plan(
+            schemas=[{"name": "Wof", "fields": [{"name": "prize", "kind": "string"}]}],
+            fs_schemas=[{"id": "s1", "name": "Wof", "status": "ACTIVE"}])
+        ok = plan["feature_settings"]["already_ok"]
+        self.assertEqual([s["name"] for s in ok], ["Wof"])
+        self.assertIn("NOT verified", ok[0]["reason"])
+        self.assertEqual(plan["feature_settings"]["version_conflict"], [])
+
+    def test_forgiving_fold_avoids_false_conflict(self):
+        # code `string` vs live `date`/`long_string`, and code `integer` vs live `long`, fold to the
+        # same operator-5 kind on both sides → NOT a conflict (the producer maps down identically).
+        plan = self._plan(
+            schemas=[{"name": "S", "fields": [{"name": "d", "kind": "string"},
+                                              {"name": "n", "kind": "integer"}]}],
+            fs_schemas=[_live_schema("S", [("d", "date"), ("n", "long")])])
+        self.assertEqual([s["name"] for s in plan["feature_settings"]["already_ok"]], ["S"])
+        self.assertEqual(plan["feature_settings"]["version_conflict"], [])
+
+    def test_real_type_change_is_conflict(self):
+        # code `integer` vs live `number` for the same column → distinct operator-5 kinds → conflict.
+        plan = self._plan(
+            schemas=[{"name": "S", "fields": [{"name": "x", "kind": "integer"}]}],
+            fs_schemas=[_live_schema("S", [("x", "number")])])
+        vc = plan["feature_settings"]["version_conflict"]
+        self.assertEqual(len(vc), 1)
+        self.assertEqual(vc[0]["type_changed_columns"], ["x"])
+
+    # ---- settings + default config ----
+
+    def test_setting_absent_creates_setting_and_default_config(self):
+        plan = self._plan(settings=[{"key": "DailyBonus", "schema_name": "DailyBonus",
+                                     "version": 1}])
+        fsp = plan["feature_settings"]
+        self.assertEqual([s["key"] for s in fsp["setting_create"]], ["DailyBonus"])
+        self.assertEqual([c["setting_key"] for c in fsp["config_create"]], ["DailyBonus"])
+        self.assertTrue(fsp["config_create"][0]["default"])
+        self.assertIsNone(fsp["config_create"][0]["seed_csv"])  # no seed_csv provided → empty default config
+        self.assertEqual([c["setting_key"] for c in fsp["config_publish"]], ["DailyBonus"])
+
+    def test_bundle_key_seed_dependency_warns(self):
+        # Live-verified 2026-07-02: import 422s when a bundle_key column's values aren't Bundles yet.
+        plan = self._plan(
+            schemas=[{"name": "S", "fields": [{"name": "sku", "kind": "bundle_key"},
+                                              {"name": "coins", "kind": "integer"}]}],
+            settings=[{"key": "K", "schema_name": "S", "version": 1,
+                       "seed_csv": "kinoa-sdk-dashboard-sync-workspace/S.csv"}])
+        warns = [w for w in plan["feature_settings"]["warnings"] if "bundle_key_columns" in w]
+        self.assertEqual(len(warns), 1)
+        self.assertEqual(warns[0]["bundle_key_columns"], ["sku"])
+        # no seed_csv → no warning (nothing to import)
+        plan2 = self._plan(
+            schemas=[{"name": "S", "fields": [{"name": "sku", "kind": "bundle_key"}]}],
+            settings=[{"key": "K", "schema_name": "S", "version": 1}])
+        self.assertEqual([w for w in plan2["feature_settings"]["warnings"] if "bundle_key_columns" in w], [])
+
+    def test_config_create_carries_seed_csv(self):
+        plan = self._plan(settings=[{"key": "DailyBonus", "schema_name": "DailyBonus", "version": 1,
+                                     "seed_csv": "kinoa-sdk-dashboard-sync-workspace/DailyBonus.csv"}])
+        cc = plan["feature_settings"]["config_create"]
+        self.assertEqual(cc[0]["seed_csv"], "kinoa-sdk-dashboard-sync-workspace/DailyBonus.csv")
+
+    def test_setting_present_already_ok_conditional_config(self):
+        # Resume path (C8): an existing setting gets a CONDITIONAL config ensure-step —
+        # a prior partial run may have created the setting but died before its default config.
+        plan = self._plan(settings=[{"key": "DailyBonus", "schema_name": "S", "version": 1}],
+                          fs_settings=[{"id": "set1", "key": "DailyBonus"}])
+        fsp = plan["feature_settings"]
+        self.assertEqual(fsp["setting_create"], [])
+        self.assertEqual([s["key"] for s in fsp["already_ok"] if s.get("surface") == "setting"], ["DailyBonus"])
+        self.assertEqual(len(fsp["config_create"]), 1)
+        self.assertEqual(fsp["config_create"][0]["conditional"], "only_if_no_configs")
+        self.assertEqual(fsp["config_publish"][0]["conditional"], "only_if_no_configs")
+
+    def test_new_setting_config_is_unconditional(self):
+        plan = self._plan(settings=[{"key": "K", "schema_name": "S", "version": 1}])
+        cc = plan["feature_settings"]["config_create"]
+        self.assertEqual(len(cc), 1)
+        self.assertNotIn("conditional", cc[0])
+
+    def test_dangling_schema_name_warns(self):
+        # Setting bound to a schema that is neither in the manifest nor live → unexecutable bind.
+        plan = self._plan(settings=[{"key": "K", "schema_name": "Ghost", "version": 1}])
+        warns = [w for w in plan["feature_settings"]["warnings"] if "dangling" in w.get("reason", "")]
+        self.assertEqual(len(warns), 1)
+        self.assertEqual(warns[0]["schema_name"], "Ghost")
+
+    def test_duplicate_schema_names_and_setting_keys_warn_once(self):
+        plan = self._plan(
+            schemas=[{"name": "S", "fields": [{"name": "a", "kind": "integer"}]},
+                     {"name": "S", "fields": [{"name": "b", "kind": "string"}]}],
+            settings=[{"key": "K", "schema_name": "S", "version": 1},
+                      {"key": "K", "schema_name": "S", "version": 1}])
+        fsp = plan["feature_settings"]
+        self.assertEqual(len(fsp["schema_create"]), 1)
+        self.assertEqual(len(fsp["setting_create"]), 1)
+        self.assertTrue(any("duplicate schema name" in w.get("reason", "") for w in fsp["warnings"]))
+        self.assertTrue(any("duplicate setting key" in w.get("reason", "") for w in fsp["warnings"]))
+
+    def test_new_schema_with_nondefault_version_warns(self):
+        # Schema created this run starts at version 1 — requesting version 3 = VERSION_NOT_FOUND.
+        plan = self._plan(schemas=[{"name": "S", "fields": [{"name": "a", "kind": "integer"}]}],
+                          settings=[{"key": "K", "schema_name": "S", "version": 3}])
+        warns = [w for w in plan["feature_settings"]["warnings"]
+                 if "created this run" in w.get("reason", "")]
+        self.assertEqual(len(warns), 1)
+
+    def test_filter_and_placeholder_columns_dropped_with_warning(self):
+        # Filters are configuration-level; unreplaced "<PlayerField>" scaffolds are junk. Both
+        # excluded from the schema plan, surfaced as a warning — never silently created.
+        plan = self._plan(schemas=[{"name": "S", "fields": [
+            {"name": "coins", "kind": "integer"},
+            {"name": "filter: Level", "kind": "number"},
+            {"name": "filter: <PlayerField>:from", "kind": "number"}]}])
+        create = plan["feature_settings"]["schema_create"][0]
+        self.assertEqual([f["name"] for f in create["fields"]], ["coins"])
+        drop = [w for w in plan["feature_settings"]["warnings"] if "dropped_columns" in w]
+        self.assertEqual(len(drop), 1)
+        self.assertEqual(sorted(drop[0]["dropped_columns"]),
+                         ["filter: <PlayerField>:from", "filter: Level"])
+
+    def test_live_filter_columns_ignored_in_shape_diff(self):
+        # A live schema polluted with filter columns must not force a version_conflict when the
+        # code's data columns match.
+        plan = self._plan(
+            schemas=[{"name": "S", "fields": [{"name": "coins", "kind": "integer"}]}],
+            fs_schemas=[_live_schema("S", [("coins", "integer"), ("filter: Level", "number")])])
+        self.assertEqual([s["name"] for s in plan["feature_settings"]["already_ok"]], ["S"])
+        self.assertEqual(plan["feature_settings"]["version_conflict"], [])
+
+    def test_schema_case_collision_warns(self):
+        plan = self._plan(schemas=[{"name": "wheeloffortune", "fields": [{"name": "a", "kind": "string"}]}],
+                          fs_schemas=[_live_schema("WheelOfFortune", [("a", "string")])])
+        fsp = plan["feature_settings"]
+        self.assertTrue(any("case-collision" in w.get("reason", "") for w in fsp["warnings"]))
+        # byte-for-byte: still planned as create (advisory, developer decides at the checklist)
+        self.assertEqual([s["name"] for s in fsp["schema_create"]], ["wheeloffortune"])
+
+    def test_setting_key_case_collision_warns(self):
+        plan = self._plan(settings=[{"key": "dailybonus", "schema_name": "S", "version": 1}],
+                          fs_settings=[{"id": "s1", "key": "DailyBonus", "schemaId": "x"}])
+        fsp = plan["feature_settings"]
+        self.assertTrue(any("case-collision" in w.get("reason", "") and w.get("dashboard_key") == "DailyBonus"
+                            for w in fsp["warnings"]))
+
+    def test_existing_setting_bound_to_different_schema_warns(self):
+        plan = self._plan(
+            schemas=[{"name": "S", "fields": [{"name": "a", "kind": "string"}]}],
+            settings=[{"key": "K", "schema_name": "S", "version": 1}],
+            fs_schemas=[_live_schema("S", [("a", "string")], schema_id="sch-right")],
+            fs_settings=[{"id": "set1", "key": "K", "schemaId": "sch-WRONG"}])
+        warns = [w for w in plan["feature_settings"]["warnings"]
+                 if "different schema" in w.get("reason", "")]
+        self.assertEqual(len(warns), 1)
+        self.assertEqual(warns[0]["live_schema_id"], "sch-WRONG")
+
+    def test_setting_version_mismatch_with_live_schema_warns(self):
+        plan = self._plan(
+            schemas=[{"name": "S", "fields": [{"name": "x", "kind": "integer"}]}],
+            settings=[{"key": "K", "schema_name": "S", "version": 2}],
+            fs_schemas=[_live_schema("S", [("x", "integer")], version="1")])
+        warns = [w for w in plan["feature_settings"]["warnings"] if w.get("key") == "K"]
+        self.assertEqual(len(warns), 1)
+        self.assertEqual((warns[0]["requested_version"], warns[0]["live_active_version"]), (2, "1"))
+
+    def test_setting_version_match_no_warning(self):
+        plan = self._plan(
+            schemas=[{"name": "S", "fields": [{"name": "x", "kind": "integer"}]}],
+            settings=[{"key": "K", "schema_name": "S", "version": 1}],
+            fs_schemas=[_live_schema("S", [("x", "integer")], version="1")])
+        self.assertEqual([w for w in plan["feature_settings"]["warnings"] if w.get("key") == "K"], [])
+
+    # ---- dashboard_only + safety ----
+
+    def test_dashboard_only_fs_schema_and_setting(self):
+        plan = self._plan(
+            fs_schemas=[_live_schema("OperatorSchema", [("a", "string")])],
+            fs_settings=[{"id": "s1", "key": "OperatorKey"}])
+        self.assertEqual([s["name"] for s in plan["dashboard_only"]["feature_schemas"]], ["OperatorSchema"])
+        self.assertEqual([s["key"] for s in plan["dashboard_only"]["feature_settings"]], ["OperatorKey"])
+
+    def test_fs_plan_never_contains_delete(self):
+        plan = self._plan(
+            schemas=[{"name": "S", "fields": [{"name": "x", "kind": "integer"}]}],
+            settings=[{"key": "K", "schema_name": "S", "version": 1}],
+            fs_schemas=[_live_schema("Other", [("a", "string")])],
+            fs_settings=[{"id": "s1", "key": "OtherKey"}])
+        self.assertNotIn("delete", json.dumps(plan["feature_settings"]).lower())
+
+    # ---- helpers ----
+
+    def test_fs_normalize_kind_folds_to_operator_five(self):
+        n = self.mod._fs_normalize_kind
+        self.assertEqual(n("integer"), "integer")
+        self.assertEqual(n("long"), "integer")
+        self.assertEqual(n("number"), "number")
+        self.assertEqual(n("boolean"), "boolean")
+        self.assertEqual(n("bundle_key"), "bundle_key")
+        for t in ("string", "long_string", "date", "version", "enumeration", "object", "weird", ""):
+            self.assertEqual(n(t), "string")
+
+    def test_fs_fields_map_none_without_versions(self):
+        self.assertIsNone(self.mod._fs_fields_map({"name": "S", "status": "ACTIVE"}))
+
+    def test_fs_fields_map_prefers_active_version(self):
+        rec = {"name": "S", "versions": [
+            {"version": "1", "status": "ARCHIVED", "tableFields": [{"name": "old", "type": "string"}]},
+            {"version": "2", "status": "ACTIVE", "tableFields": [{"name": "new", "type": "integer"}]}]}
+        self.assertEqual(self.mod._fs_fields_map(rec), {"new": "integer"})
 
 
 class CliContractTests(unittest.TestCase):
@@ -492,6 +775,53 @@ class CliContractTests(unittest.TestCase):
                                "--fields-predefined", empty, "--fields-custom", empty])
         self.assertEqual(ctx.exception.code, 2)
         self.assertEqual(json.loads(out.getvalue())["error"], "unsupported_manifest_version")
+
+    def test_main_accepts_v2_manifest_with_feature_settings(self):
+        manifest = _manifest(schema_version=2, feature_settings={
+            "schemas": [{"name": "DailyBonusSettings", "fields": [{"name": "day", "kind": "integer"}]}],
+            "settings": [{"key": "DailyBonus", "schema_name": "DailyBonusSettings", "version": 1}]})
+        manifest_path = self._write("m.json", manifest)
+        empty = self._write("e.json", self._listing([]))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = self.mod.main(["--manifest", manifest_path,
+                                  "--events-predefined", empty, "--events-custom", empty,
+                                  "--fields-predefined", empty, "--fields-custom", empty,
+                                  "--fs-schemas", empty, "--fs-settings", empty])
+        self.assertEqual(code, 0)
+        plan = json.loads(out.getvalue())
+        self.assertEqual([s["name"] for s in plan["feature_settings"]["schema_create"]], ["DailyBonusSettings"])
+        self.assertEqual([s["key"] for s in plan["feature_settings"]["setting_create"]], ["DailyBonus"])
+        self.assertEqual(plan["unknown_manifest_sections"], [])
+
+    def test_main_rejects_v2_manifest_without_fs_listings(self):
+        # FS content in the manifest but no --fs-schemas/--fs-settings → planning would mistake
+        # "not fetched" for "nothing on the dashboard" and create duplicates. Fail closed.
+        manifest = _manifest(schema_version=2, feature_settings={
+            "schemas": [{"name": "S", "fields": [{"name": "a", "kind": "integer"}]}],
+            "settings": [{"key": "K", "schema_name": "S", "version": 1}]})
+        manifest_path = self._write("m.json", manifest)
+        empty = self._write("e.json", self._listing([]))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as ctx:
+                self.mod.main(["--manifest", manifest_path,
+                               "--events-predefined", empty, "--events-custom", empty,
+                               "--fields-predefined", empty, "--fields-custom", empty])
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertEqual(json.loads(out.getvalue())["error"], "missing_fs_listings")
+
+    def test_main_allows_empty_fs_section_without_listings(self):
+        # A v2 manifest whose feature_settings is EMPTY needs no FS listings.
+        manifest = _manifest(schema_version=2, feature_settings={"schemas": [], "settings": []})
+        manifest_path = self._write("m.json", manifest)
+        empty = self._write("e.json", self._listing([]))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = self.mod.main(["--manifest", manifest_path,
+                                  "--events-predefined", empty, "--events-custom", empty,
+                                  "--fields-predefined", empty, "--fields-custom", empty])
+        self.assertEqual(code, 0)
 
     def test_main_rejects_listing_from_another_game(self):
         # session.env left over from another game → listings carry that game's id.
