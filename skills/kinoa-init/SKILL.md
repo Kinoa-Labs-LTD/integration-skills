@@ -118,7 +118,7 @@ The script:
 Read the JSON. Branch:
 
 - `ok: true` (status 200, integration_type matches expected) → "Init complete — project is set to `<type>` integration." Continue to Step 4.
-- `reason: "unauthorized"` (401/403) → tell the user the session token was rejected; ask them to recheck it in the Integration menu and re-run init. Any previously stored session.env is untouched (`saved: false`). Stop.
+- `reason: "unauthorized"` (401/403) → the server rejected the credential PAIR — **either the session token is bad/expired, OR the token doesn't cover this Game-Id** (live-verified 2026-07-16: a valid token + wrong Game-Id also answers 401, not 404). Tell the user both possibilities: recheck the Game-Id first (it's visible and cheap to compare), then the session token in the Integration menu, and re-run init. Any previously stored session.env is untouched (`saved: false`). Stop.
 - `reason: "not_found"` (404) → tell the user Kinoa returned 404 — the session token probably belongs to a different project, or the Game-Id is wrong. Stop.
 - `reason: "wrong_integration_type"` → handling depends on the mode:
   - **API mode, actual is `SDK`** — the Kinoa SDK is Unity-only (C#). Whether to ask depends on what this codebase is, so **detect the project technology first** (Glob from the project root): Unity/C# markers are `Assets/`, `ProjectSettings/`, `Packages/manifest.json`, `*.unity`, `*.csproj`, `*.cs`, `*.sln`.
