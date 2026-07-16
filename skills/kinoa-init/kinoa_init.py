@@ -193,7 +193,7 @@ def cmd_show():
                     values[k] = v
     masked = {k: (v if k in NON_SECRET_KEYS else _mask(v)) for k, v in values.items()}
     print(json.dumps({
-        "session_env_path": SESSION_ENV_PATH,
+        "session_env_path": os.path.normpath(SESSION_ENV_PATH),
         "exists": os.path.exists(SESSION_ENV_PATH),
         "values": masked,
     }, indent=2))
@@ -267,7 +267,7 @@ def main(argv):
     if args.architecture:
         env_values["KINOA_ARCHITECTURE"] = args.architecture
 
-    result = {"session_env_path": SESSION_ENV_PATH}
+    result = {"session_env_path": os.path.normpath(SESSION_ENV_PATH)}
     if args.fix_integration_type and not integration_type_explicit:
         # The flip direction silently falls back to API — in an SDK flow that papers over
         # the mismatch instead of fixing it (validates "ok", persists API into session.env).

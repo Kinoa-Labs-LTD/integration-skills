@@ -9,7 +9,7 @@ This skill captures three values, persists them (along with `KINOA_INTEGRATION_T
 
 **Integration type comes from the calling flow — never from a question.** Do NOT ask the developer "API or SDK" via `AskUserQuestion`:
 
-- Invoked from the **`kinoa-api-integration` orchestrator** (or standalone with no SDK context) → `API`. Run `kinoa_init.py` without `--integration-type` (API is the default).
+- Invoked from the **`kinoa-api-integration` orchestrator** (or standalone with no SDK context) → `API`. Run `kinoa_init.py` without `--integration-type` (API is the default). **Standalone WITH SDK context** (a `kinoa-dashboard-manifest.json` with `"integration_type": "SDK"`, or a visible Kinoa Unity-SDK integration in the project) → `SDK`, same as the preflight route below.
 - Invoked from the **`kinoa-sdk-dashboard-sync` preflight** (game integrated via the Kinoa Unity SDK; a `kinoa-dashboard-manifest.json` with `"integration_type": "SDK"` is present) → `SDK`. Run `kinoa_init.py` with `--integration-type SDK`.
 
 The two modes expect different `integration_type` values on the dashboard and have different wrong-type handling (Step 3). Everything else — credential capture, masking, session.env, validation — is identical.
@@ -18,13 +18,13 @@ The two modes expect different `integration_type` values on the dashboard and ha
 
 This skill is Phase 1 of the orchestrator's chain. Fire telemetry via `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/kinoa_webhook.py`:
 
-- `phase-start --phase "Phase 1 — kinoa-init"` at the top of Step 1.
-- `qa --question "<text>" --answer "<text>"` after every `AskUserQuestion` exchange (the reuse/rotate/scratch choice, the fix-integration-type prompt). **Credential-collection prompts are the exception — never post the pasted values.** For the game-secret and session-token prompts, either skip the `qa` post entirely or post with the answer replaced by a masked form (`abcd…wxyz`); the same masking applies to any free-text answer that happens to contain a credential. The webhook body must never carry a secret (canonical rule: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/references/telemetry.md`).
+- `phase-start --phase "Phase 1 — kinoa-init"` as the FIRST post of the run — at the top of **Step 0**, before the architecture question, so every `qa` (including Step 0's) lands after the phase marker on the support timeline.
+- `qa --question "<text>" --answer "<text>"` after every `AskUserQuestion` exchange (the Step 0 architecture choice, the reuse/rotate/scratch choice, the fix-integration-type prompt). **Credential-collection prompts are the exception — never post the pasted values.** For the game-secret and session-token prompts, either skip the `qa` post entirely or post with the answer replaced by a masked form (`abcd…wxyz`); the same masking applies to any free-text answer that happens to contain a credential. The webhook body must never carry a secret (canonical rule: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/references/telemetry.md`).
 - `phase-end --phase "Phase 1 — kinoa-init" --summary "<outcome>"` once Step 4 finishes (or earlier if the developer aborts).
 
-The helper exits 0 even on failure — if it errors, log the JSON and continue. Session.env is only written after a **successful** validation, so don't rely on it for attribution: the very first `phase-start` may return `error: missing_game_id` (expected), and **from the moment the game id is known (Step 1 collection or the stored value), pass `--game-id <uuid>` explicitly on every post** — otherwise a failed run (the one support most needs to replay) emits no telemetry at all.
+The helper exits 0 even on failure — if it errors, log the JSON and continue. Session.env is only written after a **successful** validation, so don't rely on it for attribution: the very first `phase-start` may return `error: missing_game_id` (expected), and **from the moment the game id is known — however it became known ($ARGUMENTS, the conversation, Step 1 collection, or the stored value) — pass `--game-id <uuid>` explicitly on every post** — otherwise a failed run (the one support most needs to replay) emits no telemetry at all.
 
-**Run state.** Alongside the final `phase-end`, read-merge-write `.kinoa-integration-state.json` in the project's working directory: set top-level `game_id`, `architecture`, `service` (MULTI_REPO only), and `phases.init.status` (`done` on ok, otherwise the failure reason). If the file exists with a *different* `game_id`, ask the developer before overwriting — it likely belongs to another project's run. Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/references/run-state.md`.
+**Run state.** Alongside the final `phase-end`, read-merge-write `.kinoa-integration-state.json` in the project's working directory: set `schema_version: 1`, top-level `game_id`, `architecture`, `service` (MULTI_REPO only), and `phases.init.status` (`done` on ok, otherwise the failure reason). If the file exists with a *different* `game_id`, ask the developer before overwriting — it likely belongs to another project's run. Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/references/run-state.md`.
 
 ## Step 0: Establish the project architecture
 
@@ -103,6 +103,8 @@ Otherwise ask via `AskUserQuestion` — only for the values the Step 1 choice re
 
 Never `Read` or `cat` session.env to reconstruct a missing flag — if a fallback value is absent the script itself errors with `missing_credentials`; collect that value from the developer instead.
 
+Transcript-hygiene note: when practical, prefer handing the secret/token to the script via environment variables for that single call (`KINOA_GAME_SECRET` / `KINOA_BEARER_TOKEN` — the script already falls back to `os.environ`) instead of argv, keeping plaintext out of the command line; the argv form above remains fully supported.
+
 In SDK mode (kinoa-sdk-dashboard-sync preflight), append `--integration-type SDK`.
 
 The script:
@@ -141,4 +143,4 @@ Read the JSON. Branch:
 2. **Central index (`MULTI_REPO` only).** Read-merge-write `~/.kinoa/<game_id>/services.json`: ensure `game_id`/`architecture` are set and this repo's service appears under `services` with its absolute `root` path (schema: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/references/architecture-modes.md` → "Central index").
 3. Tell the developer where the credentials live — do **not** print export lines with the real values (that would put the plaintext secret and session token into the transcript). Say instead:
 
-   > Credentials are stored in `~/.kinoa/session.env` (mode 0600) — every Kinoa skill reads it automatically. If you need them in a shell, run `set -a; source ~/.kinoa/session.env; set +a`.
+   > Credentials are stored in `~/.kinoa/session.env` (POSIX mode 0600; on Windows the file inherits the profile's user-scoped ACLs) — every Kinoa skill reads it automatically. If you need them in a shell, run `set -a; source ~/.kinoa/session.env; set +a`.
