@@ -72,7 +72,7 @@ If `~/.kinoa/session.env` does **not** exist, skip the question and go straight 
 
 If `$ARGUMENTS` or the conversation already contains them, reuse those values and skip to Step 2.
 
-Otherwise ask via `AskUserQuestion` — only for the values the Step 1 choice requires (all three from scratch / missing file, or just the session token). Each prompt is a plain paste-the-value question whose free text comes through the "Other" input; no reuse options:
+**SDK context: derive what the project already knows.** The game id and game secret may be taken from the project itself — `kinoa-dashboard-manifest.json`'s `game_id`, and the `GameID`/`GameToken` constants in `KinoaSdkInitService.cs` — when they carry real values (not `YOUR_GAME_ID` placeholders). Then collect ONLY the session token from the developer (it never lives in code). Otherwise ask via `AskUserQuestion` — only for the values the Step 1 choice requires (all three from scratch / missing file, or just the session token). Each prompt is a plain paste-the-value question whose free text comes through the "Other" input; no reuse options:
 
 - **Game ID (UUID)** — "What is the internal game UUID for this project?" Found in the Kinoa dashboard URL when viewing the project (a UUID like `aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa`). This is *different* from the game secret — the dashboard admin API rejects requests without it.
 - **Game secret** — "Paste the game secret from Kinoa → Integration menu." (used as the `game` header on the public Player Events API.)

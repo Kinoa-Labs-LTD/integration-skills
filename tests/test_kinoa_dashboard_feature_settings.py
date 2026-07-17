@@ -204,6 +204,40 @@ class FeatureSettingsHelperTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 2)
         self.assertEqual(json.loads(out.getvalue())["error"], "empty_expect_game")
 
+    def test_expect_game_accepted_on_readonly_list_configs(self):
+        # Regression (live 2026-07-17): list-configs --expect-game used to die in
+        # argparse with "unrecognized arguments" because the guard parent was only
+        # attached to mutating subparsers. Read-only subcommands must accept the
+        # flag and run the same guard.
+        self._mock_request([(200, json.dumps({"data": []}))])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = self.mod.main(["list-configs", "--setting-id", "set-1",
+                                  "--expect-game", GAME_ID])
+        self.assertEqual(code, 0)
+        self.assertEqual(self.requests[0]["method"], "GET")
+
+    def test_expect_game_mismatch_on_readonly_exits_before_request(self):
+        self._mock_request([])  # any request would raise IndexError — proves none fired
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as ctx:
+            self.mod.main(["list-configs", "--setting-id", "set-1",
+                           "--expect-game", "99999999-9999-9999-9999-999999999999"])
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertEqual(json.loads(out.getvalue())["error"], "session_game_mismatch")
+        self.assertEqual(self.requests, [])
+
+    def test_expect_game_mismatch_still_aborts_mutating_delete_config(self):
+        # Mutating behavior unchanged: delete-config still guards through main().
+        self._mock_request([])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as ctx:
+            self.mod.main(["delete-config", "--config-id", CONFIG_ID,
+                           "--expect-game", "99999999-9999-9999-9999-999999999999"])
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertEqual(json.loads(out.getvalue())["error"], "session_game_mismatch")
+        self.assertEqual(self.requests, [])
+
     # ---- public runtime read ----
 
     def test_get_config_uses_game_secret_not_bearer(self):

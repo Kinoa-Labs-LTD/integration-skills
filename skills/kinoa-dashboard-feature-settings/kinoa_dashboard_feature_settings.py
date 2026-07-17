@@ -213,8 +213,8 @@ def _guard_expected_game(args):
     check: when the caller passes --expect-game, it must equal the game the
     session credentials point at (KINOA_GAME_ID from session.env). A stale
     session.env left over from ANOTHER game would otherwise mutate the WRONG
-    game's dashboard. Fatal, before any state-changing call. Read-only and
-    flagless calls are unaffected."""
+    game's dashboard. Fatal, before any call — the flag is accepted on every
+    subcommand, read-only included. Flagless calls are unaffected."""
     expected = getattr(args, "expect_game", None)
     if expected is None:
         return
@@ -550,7 +550,8 @@ def main(argv):
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    # Parent carrying the cross-game backstop, attached to every mutating subcommand.
+    # Parent carrying the cross-game backstop, attached to every subcommand
+    # (read-only included, so scripted callers can pass it uniformly).
     guard = argparse.ArgumentParser(add_help=False)
     guard.add_argument(
         "--expect-game",
@@ -560,18 +561,18 @@ def main(argv):
     )
 
     # Schemas
-    p = sub.add_parser("list-schemas", help="GET all schemas.")
+    p = sub.add_parser("list-schemas", parents=[guard], help="GET all schemas.")
     p.add_argument("--rows", type=int, default=100)
     p.set_defaults(func=cmd_list_schemas)
 
-    p = sub.add_parser("active-schemas-meta", help="GET id+name of ACTIVE schemas.")
+    p = sub.add_parser("active-schemas-meta", parents=[guard], help="GET id+name of ACTIVE schemas.")
     p.set_defaults(func=cmd_active_schemas_meta)
 
-    p = sub.add_parser("get-schema", help="GET a schema by id (full record).")
+    p = sub.add_parser("get-schema", parents=[guard], help="GET a schema by id (full record).")
     p.add_argument("--schema-id", required=True)
     p.set_defaults(func=cmd_get_schema)
 
-    p = sub.add_parser("latest-version", help="Print the newest version {schema_version_id, version} of a schema.")
+    p = sub.add_parser("latest-version", parents=[guard], help="Print the newest version {schema_version_id, version} of a schema.")
     p.add_argument("--schema-id", required=True)
     p.set_defaults(func=cmd_latest_version)
 
@@ -588,11 +589,11 @@ def main(argv):
     p.set_defaults(func=cmd_publish_schema)
 
     # Settings
-    p = sub.add_parser("list-settings", help="GET all settings.")
+    p = sub.add_parser("list-settings", parents=[guard], help="GET all settings.")
     p.add_argument("--rows", type=int, default=100)
     p.set_defaults(func=cmd_list_settings)
 
-    p = sub.add_parser("get-setting", help="GET a setting by id.")
+    p = sub.add_parser("get-setting", parents=[guard], help="GET a setting by id.")
     p.add_argument("--setting-id", required=True)
     p.set_defaults(func=cmd_get_setting)
 
@@ -604,12 +605,12 @@ def main(argv):
     p.set_defaults(func=cmd_create_setting)
 
     # Configurations
-    p = sub.add_parser("list-configs", help="GET configurations of a setting.")
+    p = sub.add_parser("list-configs", parents=[guard], help="GET configurations of a setting.")
     p.add_argument("--setting-id", required=True)
     p.add_argument("--rows", type=int, default=100)
     p.set_defaults(func=cmd_list_configs)
 
-    p = sub.add_parser("get-configuration", help="GET a configuration by id.")
+    p = sub.add_parser("get-configuration", parents=[guard], help="GET a configuration by id.")
     p.add_argument("--config-id", required=True)
     p.set_defaults(func=cmd_get_configuration)
 
@@ -645,7 +646,7 @@ def main(argv):
     p.add_argument("--player-id", action="append", required=True, help="Repeatable.")
     p.set_defaults(func=cmd_add_test_players)
 
-    p = sub.add_parser("test-config", help="GET admin-side resolve of a config for a player (data + filters).")
+    p = sub.add_parser("test-config", parents=[guard], help="GET admin-side resolve of a config for a player (data + filters).")
     p.add_argument("--config-id", required=True)
     p.add_argument("--player-id", required=True)
     p.set_defaults(func=cmd_test_config)
@@ -655,7 +656,7 @@ def main(argv):
     p.set_defaults(func=cmd_delete_config)
 
     # Runtime read
-    p = sub.add_parser("get-config", help="POST gate.kinoa.io/featureset — resolve a config for a player (public auth).")
+    p = sub.add_parser("get-config", parents=[guard], help="POST gate.kinoa.io/featureset — resolve a config for a player (public auth).")
     p.add_argument("--setting-key", required=True)
     p.add_argument("--player-id", required=True)
     p.add_argument("--version", default=None, help="Schema version number, e.g. 1. Effectively required — omitting it yields VERSION_NOT_FOUND.")

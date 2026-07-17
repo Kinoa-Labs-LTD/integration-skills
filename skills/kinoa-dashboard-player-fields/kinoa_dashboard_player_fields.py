@@ -107,8 +107,8 @@ def _guard_expected_game(args):
     check: when the caller passes --expect-game, it must equal the game the
     session credentials point at (KINOA_GAME_ID from session.env). A stale
     session.env left over from ANOTHER game would otherwise mutate the WRONG
-    game's dashboard. Fatal, before any state-changing call. Read-only and
-    flagless calls are unaffected."""
+    game's dashboard. Fatal, before any call — the flag is accepted on every
+    subcommand, read-only included. Flagless calls are unaffected."""
     expected = getattr(args, "expect_game", None)
     if expected is None:
         return
@@ -239,7 +239,8 @@ def main(argv):
     parser = argparse.ArgumentParser(prog="kinoa_dashboard_player_fields", description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    # Parent carrying the cross-game backstop, attached to every mutating subcommand.
+    # Parent carrying the cross-game backstop, attached to every subcommand
+    # (read-only included, so scripted callers can pass it uniformly).
     guard = argparse.ArgumentParser(add_help=False)
     guard.add_argument(
         "--expect-game",
@@ -248,7 +249,7 @@ def main(argv):
              "Mirrors the SDK-sync planner's game-mismatch check; pass the manifest/intended game id.",
     )
 
-    p_list = sub.add_parser("list-predefined", help="GET predefined (system) player fields.")
+    p_list = sub.add_parser("list-predefined", parents=[guard], help="GET predefined (system) player fields.")
     p_list.add_argument(
         "--states",
         default="active,not_implemented",
@@ -257,7 +258,7 @@ def main(argv):
     p_list.add_argument("--rows", type=int, default=100, help="Page size. Default: 100.")
     p_list.set_defaults(func=cmd_list_predefined)
 
-    p_lc = sub.add_parser("list-custom", help="GET custom (USER) player fields.")
+    p_lc = sub.add_parser("list-custom", parents=[guard], help="GET custom (USER) player fields.")
     p_lc.add_argument(
         "--states",
         default="active",
@@ -285,7 +286,7 @@ def main(argv):
     p_create.add_argument("--calculated", action="store_true")
     p_create.set_defaults(func=cmd_create)
 
-    p_state = sub.add_parser("get-player-state", help="GET full player_state from public API.")
+    p_state = sub.add_parser("get-player-state", parents=[guard], help="GET full player_state from public API.")
     p_state.add_argument("--player-id", required=True)
     p_state.set_defaults(func=cmd_get_player_state)
 
