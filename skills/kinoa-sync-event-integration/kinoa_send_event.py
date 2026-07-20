@@ -49,6 +49,9 @@ def _load_session_env():
 _load_session_env()
 
 
+REQUEST_TIMEOUT_SECONDS = 30
+
+
 def _request(method, url, headers=None, body=None):
     data = None
     if body is not None:
@@ -57,13 +60,15 @@ def _request(method, url, headers=None, body=None):
         headers.setdefault("Content-Type", "application/json")
     req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
             return resp.status, resp.read().decode("utf-8")
     except urllib.error.HTTPError as e:
         raw = e.read().decode("utf-8", errors="replace") if e.fp else ""
         return e.code, raw
     except urllib.error.URLError as e:
-        return 0, f"URLError: {e.reason}"
+        return 0, f"URLError: {e.reason} — the request may still have been applied server-side; re-check (list/get) before retrying a mutation"
+    except TimeoutError as e:
+        return 0, f"Timeout: {e} — the request may still have been applied server-side; re-check (list/get) before retrying a mutation"
 
 
 def _parse_json(raw):

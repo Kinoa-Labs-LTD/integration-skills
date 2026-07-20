@@ -295,6 +295,27 @@ class EventHelperTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(self.requests[0]["method"], "DELETE")
 
+    def test_expect_game_accepted_on_readonly_list_predefined(self):
+        # Regression (live 2026-07-17): read-only subcommands used to reject
+        # --expect-game with an argparse "unrecognized arguments" hard error.
+        self._mock_request([(200, json.dumps({"data": []}))])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = self.mod.main(["list-predefined",
+                                  "--expect-game", os.environ["KINOA_GAME_ID"]])
+        self.assertEqual(code, 0)
+        self.assertEqual(self.requests[0]["method"], "GET")
+
+    def test_expect_game_mismatch_aborts_readonly_get(self):
+        self._mock_request([])  # any request would raise IndexError — proves none fired
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as cm:
+            self.mod.main(["get", "--event-id", EVENT_ID,
+                           "--expect-game", "99999999-9999-9999-9999-999999999999"])
+        self.assertEqual(cm.exception.code, 2)
+        self.assertEqual(json.loads(out.getvalue())["error"], "session_game_mismatch")
+        self.assertEqual(self.requests, [])
+
 
 if __name__ == "__main__":
     unittest.main()

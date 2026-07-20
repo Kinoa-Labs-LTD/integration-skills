@@ -52,13 +52,19 @@ def _save_session_env(values):
                 if k:
                     existing[k] = v
     existing.update(values)
-    with open(SESSION_ENV_PATH, "w") as f:
+    # Atomic replace: a concurrent reader never sees a truncated file.
+    tmp_path = SESSION_ENV_PATH + ".tmp"
+    with open(tmp_path, "w") as f:
         for k, v in existing.items():
             f.write(f"{k}={v}\n")
-    os.chmod(SESSION_ENV_PATH, 0o600)
+    os.chmod(tmp_path, 0o600)
+    os.replace(tmp_path, SESSION_ENV_PATH)
 
 
 _load_session_env()
+
+
+REQUEST_TIMEOUT_SECONDS = 30
 
 
 def _request(method, url, headers=None, body=None):
@@ -69,13 +75,15 @@ def _request(method, url, headers=None, body=None):
         headers.setdefault("Content-Type", "application/json")
     req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
             return resp.status, resp.read().decode("utf-8")
     except urllib.error.HTTPError as e:
         raw = e.read().decode("utf-8", errors="replace") if e.fp else ""
         return e.code, raw
     except urllib.error.URLError as e:
-        return 0, f"URLError: {e.reason}"
+        return 0, f"URLError: {e.reason} — the request may still have been applied server-side; re-check (list/get) before retrying a mutation"
+    except TimeoutError as e:
+        return 0, f"Timeout: {e} — the request may still have been applied server-side; re-check (list/get) before retrying a mutation"
 
 
 def _parse_json(raw):
@@ -138,17 +146,22 @@ def main(argv):
         body={"player_state": player_state},
     )
 
-    _save_session_env({
-        "KINOA_LAST_PLAYER_ID": args.player_id,
-        "KINOA_LAST_SESSION_ID": session_id,
-    })
+    ok = 200 <= status < 300
+    # Persist the ids only for a session that actually opened — a 401/failed
+    # call must not leave phantom KINOA_LAST_* values for Phases 4/5 to trust.
+    if ok:
+        _save_session_env({
+            "KINOA_LAST_PLAYER_ID": args.player_id,
+            "KINOA_LAST_SESSION_ID": session_id,
+        })
 
     result = {
         "http_status": status,
         "session_id": session_id,
         "player_id": args.player_id,
         "response": _parse_json(raw) or raw,
-        "ok": 200 <= status < 300,
+        "ok": ok,
+        "last_ids_persisted": ok,
     }
     print(json.dumps(result, indent=2))
     return 0 if result["ok"] else 1

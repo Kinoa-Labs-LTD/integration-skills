@@ -32,11 +32,11 @@ This skill is **Phase 6** of the orchestrator's chain and has its own four inner
 
 Helper exits 0 even on failure; never abort the workflow on a webhook error.
 
-**Run state.** On start, read `./.kinoa-integration-state.json` if present — if `phases.resource_templates` records finished inner phases, resume from the first unfinished one. Alongside every inner `phase-end`, read-merge-write the file's `phases.resource_templates` entry: `status`, `service_root` (MONOREPO), `kinoa_resources_path` (6.2), `confirmed_resources` (the final list from 6.3.3, by key), `registered` (ids + keys + status created/activated in 6.3.4), `report` (6.3.6). Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/SKILL.md` → "Run state". Conversation context is not the durable source of truth — the state file is.
+**Run state.** On start, read `./.kinoa-integration-state.json` if present — if `phases.resource_templates` records finished inner phases, resume from the first unfinished one. Alongside every inner `phase-end`, read-merge-write the file's `phases.resource_templates` entry: `status`, `service_root` (MONOREPO), `kinoa_resources_path` (6.2), `confirmed_resources` (the final list from 6.3.3, by key), `registered` (ids + keys + status created/activated in 6.3.4), `report` (6.3.6). Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/references/run-state.md`. Conversation context is not the durable source of truth — the state file is.
 
-**Integration registry.** Alongside every state-file write, update `KINOA-INTEGRATION.md` next to it (bootstrap from the orchestrator's template if missing): rewrite the "Resources" section under `## Modules` to the current state (service, `KinoaResources` path, registered keys + status) and append a dated entry to `## History` describing what this run changed. Append-only — never rewrite old History entries.
+**Integration registry.** Alongside every state-file write, update `KINOA-INTEGRATION.md` next to it (bootstrap from the template in `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/references/integration-registry.md` if missing): rewrite the "Resources" section under `## Modules` to the current state (service, `KinoaResources` path, registered keys + status) and append a dated entry to `## History` describing what this run changed. Append-only — never rewrite old History entries.
 
-**Architecture & service scope.** Read `KINOA_ARCHITECTURE` from `~/.kinoa/session.env` (default `SINGLE`; semantics: orchestrator SKILL.md → "Architecture modes") before Phase 6.1:
+**Architecture & service scope.** Read `KINOA_ARCHITECTURE` from `~/.kinoa/session.env` (default `SINGLE`; semantics: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/references/architecture-modes.md`) before Phase 6.1:
 
 - `MONOREPO` — ask which service directory owns the resource/shop catalogue (offer candidate dirs found via Glob). Scope 6.1 discovery and the generated `KinoaResources` to that `service_root`.
 - `MULTI_REPO` — the current repo is the service. Resource templates are game-wide dashboard entities, so on start read the central index `~/.kinoa/<game_id>/services.json`; if another service already registered resources, list them and avoid re-proposing duplicates. At every module-level `phase-end`, update this service's entry (`modules.resource_templates`, `last_sync`).
@@ -90,7 +90,7 @@ Record `kinoa_resources_path` in run state.
 python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-resource-template/kinoa_dashboard_resource_template.py" list --rows 200
 ```
 
-The response is `{ http_status, ok, response: { totalCount, elements: [...] } }` (verified live 2026-07-09). Each element has `id`, `name`, `key`, `status`, `fields`, `availableActions`. `status` comes back **lowercase** in the JSON (`draft`/`active`/`deprecated`) — compare it case-insensitively; the `--statuses` filter accepts either case. Build a map `key → {id, status}` of what's already on the dashboard.
+The response is `{ http_status, ok, response: { totalCount, elements: [...] } }` (verified live 2026-07-09). **Truncation guard:** if `totalCount > elements.length`, re-run with `--rows <totalCount or more>` before building the map — a truncated listing misclassifies existing keys as 🔵 CREATE and produces duplicate DRAFTs (whose only cleanup is the hard delete). Each element has `id`, `name`, `key`, `status`, `fields`, `availableActions`. `status` comes back **lowercase** in the JSON (`draft`/`active`/`deprecated`) — compare it case-insensitively; the `--statuses` filter accepts either case. Build a map `key → {id, status}` of what's already on the dashboard.
 
 ### 6.3.2 Compute the diff
 
@@ -133,44 +133,52 @@ The script writes a **self-contained** HTML page and auto-opens it in the develo
 - edit any name / key / description / parameter (with live `resourceKey` validation — regex + duplicate detection);
 - **remove** proposals that aren't real sellable/awardable resources;
 - **add** resources (and parameters) the scan missed;
-- **Download** the confirmed JSON (button → `kinoa-resources-confirmed.json`) **or Copy** it to the clipboard.
+- **Download** the confirmed JSON (button → `kinoa-resources-confirmed-<page timestamp>.json`) **or Copy** it to the clipboard.
 
 The page **cannot write to the filesystem** (browser sandbox), so ask the developer, via `AskUserQuestion`, to hand the confirmed list back one of two ways:
 
-- **Downloaded file** → they give you the path (usually `~/Downloads/kinoa-resources-confirmed.json`); `Read` it.
+- **Downloaded file** → they give you the path (in `~/Downloads`, named `kinoa-resources-confirmed-<page timestamp>.json`); `Read` it.
 - **Copied JSON** → they paste it into the chat; parse it directly.
 
-Suggest `.gitignore`-ing `kinoa-resources-confirm-*.html` and `kinoa-resources-confirmed.json` — local artifacts, not source.
+Suggest `.gitignore`-ing `kinoa-resources-confirm-*.html` and `kinoa-resources-confirmed-*.json` — local artifacts, not source.
 
 The confirmed JSON has the shape:
 
 ```json
-{"confirmed_at": "<iso>", "resources": [{"name", "resourceKey", "description", "existing", "fields": [...]}]}
+{"confirmed_at": "<iso>", "page_generated_at": "<iso — echo of the page's generated_at>",
+ "resources": [{"name", "resourceKey", "description", "existing", "fields": [...]}]}
 ```
+
+**Freshness gate — reject a stale hand-back.** Before using the confirmed list, check `page_generated_at` equals the `generated_at` this run stamped into the candidates payload it piped to `generate_confirm_page.py` (earlier in this step). A mismatch (or a missing `page_generated_at` alongside an old `confirmed_at`) means the developer handed back a file exported from an **earlier run's** page — e.g. last week's un-suffixed download still sitting in `~/Downloads`. Don't apply it: say which run it came from and ask them to re-export from the page that's open now.
 
 **This confirmed list is the canonical set** — only these resources get registered, exactly as edited. Re-validate every `resourceKey` against `^[a-zA-Z][a-zA-Z0-9_-]*$` and for duplicates before applying (the helper will also reject bad keys, but catching it here is friendlier). If any are invalid, show which and ask the developer to fix them (re-open the page or correct inline).
 
 ### 6.3.4 Apply — register the confirmed resources
 
-Re-fetch the dashboard listing (6.3.1) so ids/status are fresh, then for each confirmed resource execute in order. After each call read the JSON; if `ok == false`, surface `http_status` + `response` and ask whether to retry, skip, or stop. Always pass `--expect-game "$KINOA_GAME_ID"` on mutating calls.
+Re-fetch the dashboard listing (6.3.1) so ids/status are fresh, then for each confirmed resource execute in order. Always pass `--expect-game <game_id>` on mutating calls — the game id recorded in `.kinoa-integration-state.json` at run start (not a fresh session.env read: this catches a session.env another terminal's `/kinoa-init` swapped mid-run).
+
+After each call read the JSON and branch on the failure kind:
+
+- `ok == false` with a real HTTP status (4xx/5xx) — surface `http_status` + `response` and ask whether to retry, skip, or stop. **Exception — 401:** the session token has expired; don't offer a blind retry — collect a fresh token via `/kinoa-init`, then resume (already-registered ids are in the state file).
+- `http_status: 0` or no JSON (network error / timeout) — **ambiguous: the server may have applied the request.** Never retry a `create` blind; re-run `list` first and retry only if the key is absent (a duplicate DRAFT's only cleanup is the hard delete).
 
 - 🔵 **CREATE** (key not on dashboard):
   1. Create as DRAFT, passing the confirmed fields as one JSON array (preserves per-field `required` / `default` / `enumeration_values` / `description` that a `--field` spec can't carry):
      ```
      python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-resource-template/kinoa_dashboard_resource_template.py" create \
          --name "<name>" --key "<resourceKey>" --description "<description>" \
-         --fields-json '<fields array>' --expect-game "$KINOA_GAME_ID"
+         --fields-json '<fields array>' --expect-game <game_id>
      ```
   2. Read the new `id` from the response, then activate:
      ```
      python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-resource-template/kinoa_dashboard_resource_template.py" activate \
-         --id <id> --expect-game "$KINOA_GAME_ID"
+         --id <id> --expect-game <game_id>
      ```
   (Skip the activate only if the developer explicitly wants it left as a DRAFT for later review.)
 
-- 🟡 **ACTIVATE** (key present, DRAFT): update fields first if they changed (`update --id <id> --fields-json ...`), then `activate --id <id>`.
+- 🟡 **ACTIVATE** (key present, DRAFT): update fields first if they changed (`update --id <id> --fields-json ... --expect-game <game_id>`), then `activate --id <id> --expect-game <game_id>`.
 
-- ✅ **already ACTIVE**: if the confirmed fields differ, `update --id <id> --fields-json '<fields>'`; otherwise no call.
+- ✅ **already ACTIVE**: if the confirmed fields differ, `update --id <id> --fields-json '<fields>' --expect-game <game_id>`; otherwise no call.
 
 - 🟠 **DEPRECATED**: do nothing automatically — follow the developer's 6.3.2 decision (rename+create, `clone`, or drop).
 

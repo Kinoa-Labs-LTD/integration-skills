@@ -11,7 +11,7 @@ the single `get-config` read talks to the public gate.kinoa.io/featureset host.
 
 Three resources stack up: a SCHEMA (typed columns) has one or more VERSIONS; a
 SETTING binds a runtime `key` to a schema; a CONFIGURATION holds the actual data
-rows for one schema version under a setting and has its own lifecycle (DRAFT →
+rows for one schema version under a setting and has its own lifecycle (DRAFT ->
 publish). The runtime fetches by setting `key` + schema `version` number.
 
 Subcommands
@@ -31,7 +31,7 @@ Schemas (https://dashboard.kinoa.io/featuresettingsapi/schemas):
       --body-file/stdin (e.g. produced by kinoa-csv-schema-infer), OR build a
       single-version schema from --name + a tableFields JSON array.
   publish-schema --schema-id UUID
-      POST /schemas/{id}/publish — DRAFT → ACTIVE. Required before a setting can
+      POST /schemas/{id}/publish — DRAFT -> ACTIVE. Required before a setting can
       bind it in production.
 
 Settings (https://dashboard.kinoa.io/featuresettingsapi/settings):
@@ -57,14 +57,14 @@ Configurations (https://dashboard.kinoa.io/featuresettingsapi/configurations):
       PUT /configurations/{id}/import — multipart upload of the CSV holding the
       data rows (header row must match the schema field names).
   submit-config --config-id UUID
-      PATCH status DRAFT → IN_REVIEW (JSON-patch on /status). Required before
-      publish: the lifecycle is DRAFT → IN_REVIEW → SCHEDULED.
+      PATCH status DRAFT -> IN_REVIEW (JSON-patch on /status). Required before
+      publish: the lifecycle is DRAFT -> IN_REVIEW -> SCHEDULED.
   mark-config-default --config-id UUID
       PATCH /configurations/{id}/mark-as-default — promote an already-published
       (SCHEDULED/ACTIVE/PAUSED) config to default. For a fresh config prefer
       create-config --default, since mark-as-default rejects a DRAFT config.
   publish-config --config-id UUID
-      POST /configurations/{id}/publish — IN_REVIEW → SCHEDULED (then auto-ACTIVE
+      POST /configurations/{id}/publish — IN_REVIEW -> SCHEDULED (then auto-ACTIVE
       once the start time passes; visible at runtime, with a short propagation lag).
   add-test-players --config-id UUID --player-id ID [--player-id ID ...]
       POST /configurations/{id}/test-players — let specific players resolve a
@@ -139,6 +139,9 @@ def _load_session_env():
 _load_session_env()
 
 
+REQUEST_TIMEOUT_SECONDS = 30
+
+
 def _request(method, url, headers=None, body=None, content_type="application/json"):
     data = None
     if body is not None:
@@ -147,13 +150,15 @@ def _request(method, url, headers=None, body=None, content_type="application/jso
         headers.setdefault("Content-Type", content_type)
     req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
             return resp.status, resp.read().decode("utf-8")
     except urllib.error.HTTPError as e:
         raw = e.read().decode("utf-8", errors="replace") if e.fp else ""
         return e.code, raw
     except urllib.error.URLError as e:
-        return 0, f"URLError: {e.reason}"
+        return 0, f"URLError: {e.reason} — the request may still have been applied server-side; re-check (list/get) before retrying a mutation"
+    except TimeoutError as e:
+        return 0, f"Timeout: {e} — the request may still have been applied server-side; re-check (list/get) before retrying a mutation"
 
 
 def _multipart_put(url, headers, field_name, filename, file_bytes, part_content_type="text/csv"):
@@ -171,13 +176,15 @@ def _multipart_put(url, headers, field_name, filename, file_bytes, part_content_
     headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
     req = urllib.request.Request(url, data=body, method="PUT", headers=headers)
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
             return resp.status, resp.read().decode("utf-8")
     except urllib.error.HTTPError as e:
         raw = e.read().decode("utf-8", errors="replace") if e.fp else ""
         return e.code, raw
     except urllib.error.URLError as e:
-        return 0, f"URLError: {e.reason}"
+        return 0, f"URLError: {e.reason} — the request may still have been applied server-side; re-check (list/get) before retrying a mutation"
+    except TimeoutError as e:
+        return 0, f"Timeout: {e} — the request may still have been applied server-side; re-check (list/get) before retrying a mutation"
 
 
 def _parse_json(raw):
@@ -206,13 +213,21 @@ def _guard_expected_game(args):
     check: when the caller passes --expect-game, it must equal the game the
     session credentials point at (KINOA_GAME_ID from session.env). A stale
     session.env left over from ANOTHER game would otherwise mutate the WRONG
-    game's dashboard. Fatal, before any state-changing call. Read-only and
-    flagless calls are unaffected."""
+    game's dashboard. Fatal, before any call — the flag is accepted on every
+    subcommand, read-only included. Flagless calls are unaffected."""
     expected = getattr(args, "expect_game", None)
-    if not expected:
+    if expected is None:
         return
+    expected = expected.strip()
+    if not expected:
+        print(json.dumps({
+            "error": "empty_expect_game",
+            "hint": "--expect-game was passed but empty (unset shell variable?). "
+                    "Pass the literal game UUID recorded at run start.",
+        }, indent=2))
+        sys.exit(2)
     session_game = (os.environ.get("KINOA_GAME_ID") or "").strip()
-    if expected.strip().lower() != session_game.lower():
+    if expected.lower() != session_game.lower():
         print(json.dumps({
             "error": "session_game_mismatch",
             "expected_game": expected,
@@ -314,7 +329,7 @@ def _read_text_arg(path_value, inline_value):
             return fh.read()
     if inline_value:
         return inline_value
-    # No path, no inline → read stdin if it is piped.
+    # No path, no inline -> read stdin if it is piped.
     if not sys.stdin.isatty():
         return sys.stdin.read()
     return ""
@@ -470,7 +485,7 @@ def cmd_mark_config_default(args):
 
 
 def cmd_submit_config(args):
-    # The status state machine is DRAFT → IN_REVIEW → SCHEDULED. The /publish
+    # The status state machine is DRAFT -> IN_REVIEW -> SCHEDULED. The /publish
     # endpoint only accepts an IN_REVIEW config, so a DRAFT must first be moved to
     # IN_REVIEW via a JSON-patch on /status.
     patch = [{"op": "replace", "path": "/status", "value": "IN_REVIEW"}]
@@ -535,7 +550,8 @@ def main(argv):
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    # Parent carrying the cross-game backstop, attached to every mutating subcommand.
+    # Parent carrying the cross-game backstop, attached to every subcommand
+    # (read-only included, so scripted callers can pass it uniformly).
     guard = argparse.ArgumentParser(add_help=False)
     guard.add_argument(
         "--expect-game",
@@ -545,18 +561,18 @@ def main(argv):
     )
 
     # Schemas
-    p = sub.add_parser("list-schemas", help="GET all schemas.")
+    p = sub.add_parser("list-schemas", parents=[guard], help="GET all schemas.")
     p.add_argument("--rows", type=int, default=100)
     p.set_defaults(func=cmd_list_schemas)
 
-    p = sub.add_parser("active-schemas-meta", help="GET id+name of ACTIVE schemas.")
+    p = sub.add_parser("active-schemas-meta", parents=[guard], help="GET id+name of ACTIVE schemas.")
     p.set_defaults(func=cmd_active_schemas_meta)
 
-    p = sub.add_parser("get-schema", help="GET a schema by id (full record).")
+    p = sub.add_parser("get-schema", parents=[guard], help="GET a schema by id (full record).")
     p.add_argument("--schema-id", required=True)
     p.set_defaults(func=cmd_get_schema)
 
-    p = sub.add_parser("latest-version", help="Print the newest version {schema_version_id, version} of a schema.")
+    p = sub.add_parser("latest-version", parents=[guard], help="Print the newest version {schema_version_id, version} of a schema.")
     p.add_argument("--schema-id", required=True)
     p.set_defaults(func=cmd_latest_version)
 
@@ -568,16 +584,16 @@ def main(argv):
     p.add_argument("--fields-json", default="", help="Inline JSON array of tableFields: [{\"name\":\"x\",\"type\":\"integer\"}].")
     p.set_defaults(func=cmd_create_schema)
 
-    p = sub.add_parser("publish-schema", parents=[guard], help="POST /schemas/{id}/publish (DRAFT → ACTIVE).")
+    p = sub.add_parser("publish-schema", parents=[guard], help="POST /schemas/{id}/publish (DRAFT -> ACTIVE).")
     p.add_argument("--schema-id", required=True)
     p.set_defaults(func=cmd_publish_schema)
 
     # Settings
-    p = sub.add_parser("list-settings", help="GET all settings.")
+    p = sub.add_parser("list-settings", parents=[guard], help="GET all settings.")
     p.add_argument("--rows", type=int, default=100)
     p.set_defaults(func=cmd_list_settings)
 
-    p = sub.add_parser("get-setting", help="GET a setting by id.")
+    p = sub.add_parser("get-setting", parents=[guard], help="GET a setting by id.")
     p.add_argument("--setting-id", required=True)
     p.set_defaults(func=cmd_get_setting)
 
@@ -589,12 +605,12 @@ def main(argv):
     p.set_defaults(func=cmd_create_setting)
 
     # Configurations
-    p = sub.add_parser("list-configs", help="GET configurations of a setting.")
+    p = sub.add_parser("list-configs", parents=[guard], help="GET configurations of a setting.")
     p.add_argument("--setting-id", required=True)
     p.add_argument("--rows", type=int, default=100)
     p.set_defaults(func=cmd_list_configs)
 
-    p = sub.add_parser("get-configuration", help="GET a configuration by id.")
+    p = sub.add_parser("get-configuration", parents=[guard], help="GET a configuration by id.")
     p.add_argument("--config-id", required=True)
     p.set_defaults(func=cmd_get_configuration)
 
@@ -617,11 +633,11 @@ def main(argv):
     p.add_argument("--config-id", required=True)
     p.set_defaults(func=cmd_mark_config_default)
 
-    p = sub.add_parser("submit-config", parents=[guard], help="PATCH status DRAFT → IN_REVIEW (required before publish).")
+    p = sub.add_parser("submit-config", parents=[guard], help="PATCH status DRAFT -> IN_REVIEW (required before publish).")
     p.add_argument("--config-id", required=True)
     p.set_defaults(func=cmd_submit_config)
 
-    p = sub.add_parser("publish-config", parents=[guard], help="POST /configurations/{id}/publish (IN_REVIEW → SCHEDULED).")
+    p = sub.add_parser("publish-config", parents=[guard], help="POST /configurations/{id}/publish (IN_REVIEW -> SCHEDULED).")
     p.add_argument("--config-id", required=True)
     p.set_defaults(func=cmd_publish_config)
 
@@ -630,7 +646,7 @@ def main(argv):
     p.add_argument("--player-id", action="append", required=True, help="Repeatable.")
     p.set_defaults(func=cmd_add_test_players)
 
-    p = sub.add_parser("test-config", help="GET admin-side resolve of a config for a player (data + filters).")
+    p = sub.add_parser("test-config", parents=[guard], help="GET admin-side resolve of a config for a player (data + filters).")
     p.add_argument("--config-id", required=True)
     p.add_argument("--player-id", required=True)
     p.set_defaults(func=cmd_test_config)
@@ -640,7 +656,7 @@ def main(argv):
     p.set_defaults(func=cmd_delete_config)
 
     # Runtime read
-    p = sub.add_parser("get-config", help="POST gate.kinoa.io/featureset — resolve a config for a player (public auth).")
+    p = sub.add_parser("get-config", parents=[guard], help="POST gate.kinoa.io/featureset — resolve a config for a player (public auth).")
     p.add_argument("--setting-key", required=True)
     p.add_argument("--player-id", required=True)
     p.add_argument("--version", default=None, help="Schema version number, e.g. 1. Effectively required — omitting it yields VERSION_NOT_FOUND.")

@@ -2,14 +2,14 @@
 name: kinoa-init
 description: Internal sub-skill — do NOT trigger directly. Invoked as the kinoa-api-integration orchestrator's `init` dispatch (Phase 1 of onboarding, API mode) or as the kinoa-sdk-dashboard-sync preflight (SDK mode). Initializes Kinoa credentials: asks for game UUID, game secret, and session token; persists to ~/.kinoa/session.env; validates against dashboard.kinoa.io; offers to align integration_type with the calling flow's expected type. When the user wants to set up Kinoa, start a Kinoa session, configure Kinoa credentials, or wire Kinoa into a project, route via the owning workflow (kinoa-api-integration init, or kinoa-sdk-dashboard-sync for SDK games) rather than triggering this skill standalone — the owning workflow controls the sequence and the expected integration type.
 argument-hint: [optional: game_id=… game_secret=… bearer=… integration_type=API|SDK]
-allowed-tools: Bash(python *) Bash(cat *) Read AskUserQuestion
+allowed-tools: Bash(python *) Read Write Edit Glob AskUserQuestion
 ---
 
 This skill captures three values, persists them (along with `KINOA_INTEGRATION_TYPE`), and validates the project against Kinoa's admin API. The helper script `kinoa_init.py` lives in this skill's folder and has no external imports, so the skill is fully self-contained.
 
 **Integration type comes from the calling flow — never from a question.** Do NOT ask the developer "API or SDK" via `AskUserQuestion`:
 
-- Invoked from the **`kinoa-api-integration` orchestrator** (or standalone with no SDK context) → `API`. Run `kinoa_init.py` without `--integration-type` (API is the default).
+- Invoked from the **`kinoa-api-integration` orchestrator** (or standalone with no SDK context) → `API`. Run `kinoa_init.py` without `--integration-type` (API is the default). **Standalone WITH SDK context** (a `kinoa-dashboard-manifest.json` with `"integration_type": "SDK"`, or a visible Kinoa Unity-SDK integration in the project) → `SDK`, same as the preflight route below.
 - Invoked from the **`kinoa-sdk-dashboard-sync` preflight** (game integrated via the Kinoa Unity SDK; a `kinoa-dashboard-manifest.json` with `"integration_type": "SDK"` is present) → `SDK`. Run `kinoa_init.py` with `--integration-type SDK`.
 
 The two modes expect different `integration_type` values on the dashboard and have different wrong-type handling (Step 3). Everything else — credential capture, masking, session.env, validation — is identical.
@@ -18,17 +18,17 @@ The two modes expect different `integration_type` values on the dashboard and ha
 
 This skill is Phase 1 of the orchestrator's chain. Fire telemetry via `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/kinoa_webhook.py`:
 
-- `phase-start --phase "Phase 1 — kinoa-init"` at the top of Step 1.
-- `qa --question "<text>" --answer "<text>"` after every `AskUserQuestion` exchange (the reuse/rotate/scratch choice, the credential prompts, the fix-integration-type prompt).
+- `phase-start --phase "Phase 1 — kinoa-init"` as the FIRST post of the run — at the top of **Step 0**, before the architecture question, so every `qa` (including Step 0's) lands after the phase marker on the support timeline.
+- `qa --question "<text>" --answer "<text>"` after every `AskUserQuestion` exchange (the Step 0 architecture choice, the reuse/rotate/scratch choice, the fix-integration-type prompt). **Credential-collection prompts are the exception — never post the pasted values.** For the game-secret and session-token prompts, either skip the `qa` post entirely or post with the answer replaced by a masked form (`abcd…wxyz`); the same masking applies to any free-text answer that happens to contain a credential. The webhook body must never carry a secret (canonical rule: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/references/telemetry.md`).
 - `phase-end --phase "Phase 1 — kinoa-init" --summary "<outcome>"` once Step 4 finishes (or earlier if the developer aborts).
 
-The helper exits 0 even on failure — if it errors, log the JSON and continue. Before `KINOA_GAME_ID` is persisted (the very first `phase-start`), the helper will return `error: missing_game_id`; that's expected — once Step 2 writes the env file, the rest of the calls go through.
+The helper exits 0 even on failure — if it errors, log the JSON and continue. Session.env is only written after a **successful** validation, so don't rely on it for attribution: the very first `phase-start` may return `error: missing_game_id` (expected), and **from the moment the game id is known — however it became known ($ARGUMENTS, the conversation, Step 1 collection, or the stored value) — pass `--game-id <uuid>` explicitly on every post** — otherwise a failed run (the one support most needs to replay) emits no telemetry at all.
 
-**Run state.** Alongside the final `phase-end`, read-merge-write `.kinoa-integration-state.json` in the project's working directory: set top-level `game_id`, `architecture`, `service` (MULTI_REPO only), and `phases.init.status` (`done` on ok, otherwise the failure reason). If the file exists with a *different* `game_id`, ask the developer before overwriting — it likely belongs to another project's run. Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/SKILL.md` → "Run state".
+**Run state.** Alongside the final `phase-end`, read-merge-write `.kinoa-integration-state.json` in the project's working directory: set `schema_version: 1`, top-level `game_id`, `architecture`, `service` (MULTI_REPO only), and `phases.init.status` (`done` on ok, otherwise the failure reason). If the file exists with a *different* `game_id`, ask the developer before overwriting — it likely belongs to another project's run. Schema and rules: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/references/run-state.md`.
 
 ## Step 0: Establish the project architecture
 
-Kinoa modules don't have to live in one codebase — with microservices each module may be integrated from a different service. Every later workflow scopes its discovery and its state handling to this answer, so it must be settled first (see the orchestrator's "Architecture modes" section for the full semantics).
+Kinoa modules don't have to live in one codebase — with microservices each module may be integrated from a different service. Every later workflow scopes its discovery and its state handling to this answer, so it must be settled first (full semantics: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/references/architecture-modes.md`).
 
 Skip the question when the answer is already known — `KINOA_ARCHITECTURE` present in `~/.kinoa/session.env`, or `architecture` recorded in `.kinoa-integration-state.json` — just restate it in one line ("Architecture: MULTI_REPO, service `payments-service`"). Otherwise ask via `AskUserQuestion`:
 
@@ -41,15 +41,15 @@ For `MULTI_REPO`, additionally confirm the **service name** for the current repo
 
 ## Step 1: Check for existing credentials
 
-Before asking the developer for anything, look for `~/.kinoa/session.env`. If it exists, parse out the three values and surface them — session tokens expire ~24h, so the developer often *wants* to keep `KINOA_GAME_ID` and `KINOA_GAME_SECRET` but rotate the session token. Asking them every time is annoying; asking once with the current values shown is the right ergonomic.
+Before asking the developer for anything, check for existing credentials — session tokens expire ~24h, so the developer often *wants* to keep `KINOA_GAME_ID` and `KINOA_GAME_SECRET` but rotate the session token. Asking them every time is annoying; asking once with the current values shown is the right ergonomic.
 
 ```bash
-[ -f ~/.kinoa/session.env ] && cat ~/.kinoa/session.env
+python "${CLAUDE_SKILL_DIR}/kinoa_init.py" show
 ```
 
-If the file exists, present the current values via `AskUserQuestion`. **Mask the secret and session token** so the values don't leak into the Claude transcript in plain text — show the first 4 chars and the last 4 chars only, with `…` in the middle. The `KINOA_GAME_ID` is a UUID and not sensitive; show it in full so the developer can confirm they're pointing at the right project.
+The `show` subcommand prints the stored values with the secret and session token **already masked** (first 4 chars + `…` + last 4; values of 12 chars or fewer render as `…` alone) — never `cat` the file: `cat` puts the plaintext admin token into the transcript before any masking can apply. The `KINOA_GAME_ID` is a UUID and not sensitive; `show` prints it in full so the developer can confirm they're pointing at the right project.
 
-Example masked rendering:
+If `exists` is true, present the masked values via `AskUserQuestion`. Example rendering:
 ```
 Existing credentials in ~/.kinoa/session.env:
   KINOA_GAME_ID     = aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
@@ -72,7 +72,7 @@ If `~/.kinoa/session.env` does **not** exist, skip the question and go straight 
 
 If `$ARGUMENTS` or the conversation already contains them, reuse those values and skip to Step 2.
 
-Otherwise ask via `AskUserQuestion` — only for the values the Step 1 choice requires (all three from scratch / missing file, or just the session token). Each prompt is a plain paste-the-value question whose free text comes through the "Other" input; no reuse options:
+**SDK context: derive what the project already knows.** The game id and game secret may be taken from the project itself — `kinoa-dashboard-manifest.json`'s `game_id`, and the `GameID`/`GameToken` constants in `KinoaSdkInitService.cs` — when they carry real values (not `YOUR_GAME_ID` placeholders). Then collect ONLY the session token from the developer (it never lives in code). Otherwise ask via `AskUserQuestion` — only for the values the Step 1 choice requires (all three from scratch / missing file, or just the session token). Each prompt is a plain paste-the-value question whose free text comes through the "Other" input; no reuse options:
 
 - **Game ID (UUID)** — "What is the internal game UUID for this project?" Found in the Kinoa dashboard URL when viewing the project (a UUID like `aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa`). This is *different* from the game secret — the dashboard admin API rejects requests without it.
 - **Game secret** — "Paste the game secret from Kinoa → Integration menu." (used as the `game` header on the public Player Events API.)
@@ -82,28 +82,43 @@ Otherwise ask via `AskUserQuestion` — only for the values the Step 1 choice re
 
 ## Step 2: Run init
 
-```
-python "${CLAUDE_SKILL_DIR}/kinoa_init.py" \
-    --game-id "<game_uuid>" \
-    --game-secret "<game_secret>" \
-    --bearer-token "<bearer_token>" \
-    --architecture "<SINGLE|MONOREPO|MULTI_REPO — Step 0's answer>"
-```
+**Pass only the values you newly collected — omitted credential flags fall back to the stored session.env values.** This is what keeps the Step 1 choices leak-free: the model never needs the plaintext of a reused secret. By branch:
+
+- **Reuse everything** → no credential flags at all:
+  ```
+  python "${CLAUDE_SKILL_DIR}/kinoa_init.py" --architecture "<SINGLE|MONOREPO|MULTI_REPO — Step 0's answer>"
+  ```
+- **Replace session token only** → just the new token:
+  ```
+  python "${CLAUDE_SKILL_DIR}/kinoa_init.py" --bearer-token "<new_session_token>" --architecture "<...>"
+  ```
+- **Start from scratch / no existing file** → all three:
+  ```
+  python "${CLAUDE_SKILL_DIR}/kinoa_init.py" \
+      --game-id "<game_uuid>" \
+      --game-secret "<game_secret>" \
+      --bearer-token "<bearer_token>" \
+      --architecture "<SINGLE|MONOREPO|MULTI_REPO — Step 0's answer>"
+  ```
+
+Never `Read` or `cat` session.env to reconstruct a missing flag — if a fallback value is absent the script itself errors with `missing_credentials`; collect that value from the developer instead.
+
+Transcript-hygiene note: when practical, prefer handing the secret/token to the script via environment variables for that single call (`KINOA_GAME_SECRET` / `KINOA_BEARER_TOKEN` — the script already falls back to `os.environ`) instead of argv, keeping plaintext out of the command line; the argv form above remains fully supported.
 
 In SDK mode (kinoa-sdk-dashboard-sync preflight), append `--integration-type SDK`.
 
 The script:
-- Writes `~/.kinoa/session.env` with `KINOA_INTEGRATION_TYPE=<expected type>`, `KINOA_ARCHITECTURE` (when `--architecture` is passed), `KINOA_GAME_ID`, `KINOA_GAME_SECRET`, `KINOA_BEARER_TOKEN` (mode `0600`).
 - Calls `GET https://dashboard.kinoa.io/gamemetaapi/api/game-settings` with headers `Authorization: Bearer <bearer_token>`, `Game: <game_uuid>`, and `Game-Id: <game_uuid>` (both headers carry the same UUID — Kinoa accepts either name and we send both).
 - Compares the returned `integration_type` against the expected type (`API` default, or the `--integration-type` value).
-- Prints a JSON object with `http_status`, `integration_type` (actual), `expected_integration_type`, `ok`, and on failure a `reason`.
+- **Persists only after validation succeeds** — on `ok: true` it writes `~/.kinoa/session.env` with `KINOA_INTEGRATION_TYPE=<expected type>`, `KINOA_ARCHITECTURE` (when `--architecture` is passed), `KINOA_GAME_ID`, `KINOA_GAME_SECRET`, `KINOA_BEARER_TOKEN` (mode `0600`, atomic replace). A failed validation leaves any previously working session.env untouched (`saved: false` in the output), so a bad paste or a foreign game's token can never clobber credentials another run is using.
+- Prints a JSON object with `http_status`, `integration_type` (actual), `expected_integration_type`, `ok`, `saved`, and on failure a `reason`.
 
 ## Step 3: Interpret the result
 
 Read the JSON. Branch:
 
 - `ok: true` (status 200, integration_type matches expected) → "Init complete — project is set to `<type>` integration." Continue to Step 4.
-- `reason: "unauthorized"` (401/403) → tell the user the session token was rejected; ask them to recheck it in the Integration menu and re-run init. Stop.
+- `reason: "unauthorized"` (401/403) → the server rejected the credential PAIR — **either the session token is bad/expired, OR the token doesn't cover this Game-Id** (live-verified 2026-07-16: a valid token + wrong Game-Id also answers 401, not 404). Tell the user both possibilities: recheck the Game-Id first (it's visible and cheap to compare), then the session token in the Integration menu, and re-run init. Any previously stored session.env is untouched (`saved: false`). Stop.
 - `reason: "not_found"` (404) → tell the user Kinoa returned 404 — the session token probably belongs to a different project, or the Game-Id is wrong. Stop.
 - `reason: "wrong_integration_type"` → handling depends on the mode:
   - **API mode, actual is `SDK`** — the Kinoa SDK is Unity-only (C#). Whether to ask depends on what this codebase is, so **detect the project technology first** (Glob from the project root): Unity/C# markers are `Assets/`, `ProjectSettings/`, `Packages/manifest.json`, `*.unity`, `*.csproj`, `*.cs`, `*.sln`.
@@ -122,18 +137,10 @@ Read the JSON. Branch:
 - `reason: "network_error"` → show the `body` field, ask the user to check connectivity. Stop.
 - Any other non-2xx → surface `http_status` and `body` for diagnosis.
 
-## Step 4: Finalize local records and print export commands
+## Step 4: Finalize local records
 
-1. **Integration registry.** If `KINOA-INTEGRATION.md` doesn't exist in the working directory, create the skeleton (template: orchestrator SKILL.md → "Integration registry"): header with Game ID, Architecture, Service (MULTI_REPO only), an empty `## Modules`, and a `## History` opened with one entry — `### <ISO timestamp> — init` / "Credentials validated, integration_type <type>, architecture <mode>." If the file exists, just append that History entry. Remind the developer this file is meant to be committed (while `.kinoa-integration-state.json` should be gitignored).
-2. **Central index (`MULTI_REPO` only).** Read-merge-write `~/.kinoa/<game_id>/services.json`: ensure `game_id`/`architecture` are set and this repo's service appears under `services` with its absolute `root` path (schema: orchestrator SKILL.md → "Central index").
-3. Print export lines so the user can paste them into a separate shell if needed:
+1. **Integration registry.** If `KINOA-INTEGRATION.md` doesn't exist in the working directory, create the skeleton (template: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/references/integration-registry.md`): header with Game ID, Architecture, Service (MULTI_REPO only), an empty `## Modules`, and a `## History` opened with one entry — `### <ISO timestamp> — init` / "Credentials validated, integration_type <type>, architecture <mode>." If the file exists, just append that History entry. Remind the developer this file is meant to be committed (while `.kinoa-integration-state.json` should be gitignored).
+2. **Central index (`MULTI_REPO` only).** Read-merge-write `~/.kinoa/<game_id>/services.json`: ensure `game_id`/`architecture` are set and this repo's service appears under `services` with its absolute `root` path (schema: `${CLAUDE_SKILL_DIR}/../kinoa-api-integration/references/architecture-modes.md` → "Central index").
+3. Tell the developer where the credentials live — do **not** print export lines with the real values (that would put the plaintext secret and session token into the transcript). Say instead:
 
-```
-export KINOA_INTEGRATION_TYPE=<API|SDK — the expected type from Step 2>
-export KINOA_ARCHITECTURE=<SINGLE|MONOREPO|MULTI_REPO>
-export KINOA_GAME_ID=<game_uuid>
-export KINOA_GAME_SECRET=<game_secret>
-export KINOA_BEARER_TOKEN=<bearer_token>
-```
-
-The skill itself doesn't need them in the parent shell — every Kinoa skill reads `~/.kinoa/session.env` automatically.
+   > Credentials are stored in `~/.kinoa/session.env` (POSIX mode 0600; on Windows the file inherits the profile's user-scoped ACLs) — every Kinoa skill reads it automatically. If you need them in a shell, run `set -a; source ~/.kinoa/session.env; set +a`.

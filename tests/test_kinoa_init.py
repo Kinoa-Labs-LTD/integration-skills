@@ -176,15 +176,31 @@ class KinoaInitTests(unittest.TestCase):
         # No recheck GET after a failed POST: exactly two calls (GET, POST).
         self.assertEqual([r["method"] for r in self.requests], ["GET", "POST"])
 
-    def test_failed_sdk_alignment_still_persists_sdk_in_session_env(self):
-        # Decision pinned (not accident): session.env carries the EXPECTED type even when
-        # validation fails, so a later re-run resumes against the intended type.
+    def test_failed_validation_does_not_persist_session_env(self):
+        # Decision pinned (not accident): credentials are persisted ONLY after validation
+        # succeeds — a failed run (wrong type, bad token, foreign game) must never clobber
+        # a previously working session.env that another terminal's run may be reading.
         code, result = self._run_main(
             self.BASE_ARGS + ["--integration-type", "SDK"],
             [(200, json.dumps({"integration_type": "API"}))],
         )
         self.assertEqual(code, 1)
-        self.assertEqual(self._read_session_env()["KINOA_INTEGRATION_TYPE"], "SDK")
+        self.assertFalse(result["saved"])
+        self.assertFalse(os.path.exists(self.mod.SESSION_ENV_PATH))
+
+    def test_failed_validation_leaves_previous_session_env_untouched(self):
+        good_code, _ = self._run_main(
+            self.BASE_ARGS, [(200, json.dumps({"integration_type": "API"}))]
+        )
+        self.assertEqual(good_code, 0)
+        before = self._read_session_env()
+        bad_code, bad_result = self._run_main(
+            ["--game-id", "other-game", "--game-secret", "x", "--bearer-token", "y"],
+            [(401, "")],
+        )
+        self.assertEqual(bad_code, 1)
+        self.assertFalse(bad_result["saved"])
+        self.assertEqual(self._read_session_env(), before)
 
     def test_fix_with_explicit_type_emits_no_defaulted_warning(self):
         code, result = self._run_main(
@@ -239,6 +255,67 @@ class KinoaInitTests(unittest.TestCase):
         self.assertEqual(headers["Authorization"], "Bearer FAKE_TOKEN")
         self.assertEqual(headers["Game"], "11111111-1111-1111-1111-111111111111")
         self.assertEqual(headers["Game-Id"], "11111111-1111-1111-1111-111111111111")
+
+    def _run_show(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = self.mod.main(["show"])
+        return code, json.loads(out.getvalue())
+
+    def test_show_masks_secrets_and_keeps_nonsecrets(self):
+        good_code, _ = self._run_main(
+            self.BASE_ARGS + ["--game-secret", "SECRET-1234567890-END",
+                              "--bearer-token", "eyJhbGciOiJIUzI1NiJ9.payload.sig"],
+            [(200, json.dumps({"integration_type": "API"}))],
+        )
+        self.assertEqual(good_code, 0)
+        code, result = self._run_show()
+        self.assertEqual(code, 0)
+        values = result["values"]
+        self.assertEqual(values["KINOA_GAME_ID"], "11111111-1111-1111-1111-111111111111")
+        self.assertNotIn("SECRET-1234567890-END", json.dumps(result))
+        self.assertNotIn("payload", json.dumps(result))
+        self.assertIn("…", values["KINOA_GAME_SECRET"])
+        self.assertIn("…", values["KINOA_BEARER_TOKEN"])
+
+    def test_show_without_session_env(self):
+        code, result = self._run_show()
+        self.assertEqual(code, 0)
+        self.assertFalse(result["exists"])
+        self.assertEqual(result["values"], {})
+
+    def test_save_leaves_no_tmp_file(self):
+        self._run_main(self.BASE_ARGS, [(200, json.dumps({"integration_type": "API"}))])
+        self.assertTrue(os.path.exists(self.mod.SESSION_ENV_PATH))
+        self.assertFalse(os.path.exists(self.mod.SESSION_ENV_PATH + ".tmp"))
+
+    def test_omitted_credential_flags_fall_back_to_stored_values(self):
+        # "Replace session token only": a re-run passes ONLY the new token; game id
+        # and secret come from the stored session.env — the model never needs their
+        # plaintext. This is the day-2 token-rotation path.
+        code, _ = self._run_main(self.BASE_ARGS, [(200, json.dumps({"integration_type": "API"}))])
+        self.assertEqual(code, 0)
+        for k, v in self._read_session_env().items():
+            os.environ[k] = v  # simulate the import-time _load_session_env of a fresh process
+        code, result = self._run_main(
+            ["--bearer-token", "NEW_TOKEN"],
+            [(200, json.dumps({"integration_type": "API"}))],
+        )
+        self.assertEqual(code, 0)
+        headers = self.requests[-1]["headers"]
+        self.assertEqual(headers["Authorization"], "Bearer NEW_TOKEN")
+        self.assertEqual(headers["Game"], "11111111-1111-1111-1111-111111111111")
+        env = self._read_session_env()
+        self.assertEqual(env["KINOA_BEARER_TOKEN"], "NEW_TOKEN")
+        self.assertEqual(env["KINOA_GAME_SECRET"], "FAKE_SECRET")
+
+    def test_missing_credentials_with_no_fallback_errors(self):
+        for k in ("KINOA_GAME_ID", "KINOA_GAME_SECRET", "KINOA_BEARER_TOKEN"):
+            os.environ.pop(k, None)
+        code, result = self._run_main(["--bearer-token", "ONLY_TOKEN"], [])
+        self.assertEqual(code, 2)
+        self.assertEqual(result["error"], "missing_credentials")
+        self.assertEqual(sorted(result["missing"]), ["--game-id", "--game-secret"])
 
 
 if __name__ == "__main__":
