@@ -23,8 +23,12 @@ python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_resource_template.py" list [--rows N
     Returns { totalCount, elements:[{id,name,key,status,fields,...}] } (verified
     live 2026-07-09). `status` values come back lowercase (draft/active/
     deprecated) — compare case-insensitively. NOTE: `order` must be ASC/DESC —
-    the helper uppercases it. --statuses is the closest analogue to a state
-    probe (resource templates have no soft-delete — see delete).
+    the helper uppercases it. NOTE (live-verified 2026-07-23): the DEFAULT
+    listing (no --statuses) EXCLUDES DEPRECATED — pass
+    --statuses DRAFT,ACTIVE,DEPRECATED for a full-state probe; sync flows MUST,
+    or retired keys look absent and get planned as spurious creates. --statuses
+    is the closest analogue to a state probe (resource templates have no
+    soft-delete — see delete).
 
 python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_resource_template.py" get --id UUID
     GET .../resource-templates/<id> — full ResourceTemplateDto incl. fields.

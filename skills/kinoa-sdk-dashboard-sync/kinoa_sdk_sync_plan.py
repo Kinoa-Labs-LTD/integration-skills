@@ -4,8 +4,9 @@ Kinoa SDK Dashboard Sync — deterministic action planner.
 
 Pure parser/differ: NO API calls, NO session.env access. Consumes the
 kinoa-dashboard-manifest.json produced by the /kinoa SDK integration skill
-plus the raw JSON outputs of the kinoa-dashboard-event and
-kinoa-dashboard-player-fields list subcommands, and emits an action plan.
+plus the raw JSON outputs of the kinoa-dashboard-event,
+kinoa-dashboard-player-fields, kinoa-dashboard-feature-settings, and
+kinoa-dashboard-resource-template list subcommands, and emits an action plan.
 
 The plan NEVER contains delete actions. Soft-deleted dashboard records that
 match a manifest entry are planned as publish (events) / activate (fields) —
@@ -20,12 +21,28 @@ soft-delete and a caller feeds a real deleted listing. A hard-deleted custom
 event is simply absent from every listing -> planned as create, the correct
 and only recovery.
 
+Resource templates (manifest schema_version 3): diffed by resourceKey against
+the kinoa-dashboard-resource-template `list` output fetched with
+`--statuses DRAFT,ACTIVE,DEPRECATED` — the server's DEFAULT listing (no
+--statuses param) EXCLUDES DEPRECATED templates (live-verified 2026-07-23), and
+a listing without them makes a deprecated key look absent -> a spurious create
+(rejected 422 "key already exists", but noise). Absent ->
+create DRAFT + activate; existing DRAFT -> activate (fields updated first when
+they differ — a DRAFT is unpublished and mutable); existing ACTIVE with a
+differing field shape -> field_conflict (a developer GATE, same discipline as
+the FS version_conflict — a live template may back live bundles/prizes, so the
+sync never edits it unattended); DEPRECATED -> warning, never auto-reactivated
+(there is no un-deprecate endpoint). Resource-template delete is HARD and
+DRAFT-only on the server — the planner never emits it.
+
 Usage:
   python kinoa_sdk_sync_plan.py --manifest kinoa-dashboard-manifest.json \
       --events-predefined ep.json --events-custom ec.json \
       [--events-custom-deleted ecd.json] \
       --fields-predefined fp.json --fields-custom fc.json \
-      [--fields-custom-deleted fcd.json]
+      [--fields-custom-deleted fcd.json] \
+      [--fs-schemas fss.json --fs-settings fst.json] \
+      [--resources rt.json]
 
 Each listing file is the verbatim stdout of the corresponding helper call
 ({"http_status": ..., "ok": ..., "response": ...}). Prints the plan as a
@@ -34,10 +51,11 @@ single JSON object on stdout. Exit codes: 0 plan produced, 2 invalid input.
 
 import argparse
 import json
+import re
 import sys
 
 PLAN_SCHEMA_VERSION = 1
-SUPPORTED_MANIFEST_VERSIONS = (1, 2)  # 2 adds the feature_settings section
+SUPPORTED_MANIFEST_VERSIONS = (1, 2, 3)  # 2 adds feature_settings; 3 adds resources
 
 EVENT_PARAM_KINDS = ("number", "boolean", "string", "date", "enumeration", "string_array", "number_array")
 FIELD_KINDS = ("number", "boolean", "string", "date", "long_string", "enumeration", "version")
@@ -47,6 +65,11 @@ FIELD_KINDS = ("number", "boolean", "string", "date", "long_string", "enumeratio
 # column down to these 5, and we fold live schema types through the same map before diffing so a code
 # `string` never false-conflicts with a live `date`/`long_string` column.
 FS_COLUMN_KINDS = ("integer", "number", "string", "boolean", "bundle_key")
+# Resource-template field types and the resourceKey pattern — both mirror
+# kinoa_dashboard_resource_template.py (ALLOWED_FIELD_TYPES / RESOURCE_KEY_RE); the server
+# enforces the same key pattern, so a non-matching key can never be created.
+RESOURCE_FIELD_TYPES = ("number", "string", "boolean", "date", "enumeration")
+RESOURCE_KEY_RE = r"^[a-zA-Z][a-zA-Z0-9_-]*$"
 
 # The dashboard auto-attaches these system params to every event. Verified live
 # 2026-06-12: a CREATE carrying a same-named operator param silently DISPLACES the
@@ -60,7 +83,7 @@ SYSTEM_EVENT_PARAM_NAMES = ("device_id", "time", "time_ms")
 KNOWN_MANIFEST_KEYS = (
     "schema_version", "generated_at", "producer", "integration_type", "game_id",
     "sdk_version", "head_sha", "round", "project_root",
-    "events", "player_fields", "feature_settings", "unsupported_by_cli",
+    "events", "player_fields", "feature_settings", "resources", "unsupported_by_cli",
 )
 
 
@@ -208,8 +231,27 @@ def _fs_fields_map(record):
     return out
 
 
+def _rt_status(record):
+    """Resource-template lifecycle status, normalized lower (the live listing returns
+    lowercase draft/active/deprecated; compare case-insensitively)."""
+    return str(record.get("status") or "").strip().lower()
+
+
+def _rt_fields_map(record):
+    """{normalized field name: normalized field_type} of a live resource template.
+    Deliberately compares by field_type ONLY: on read-back the server stores enumeration
+    values as a separate entity (`enumeration_id` set, `enumeration_values: null` —
+    verified live 2026-07-09), so comparing inline values would flag a spurious drift
+    on every re-run."""
+    out = {}
+    for f in record.get("fields") or []:
+        if isinstance(f, dict) and f.get("name"):
+            out[_norm(f["name"])] = str(f.get("field_type") or f.get("fieldType") or "").strip().lower()
+    return out
+
+
 def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_custom, pf_custom_deleted,
-               fs_schemas=None, fs_settings=None):
+               fs_schemas=None, fs_settings=None, resource_templates=None):
     plan = {
         "schema_version": PLAN_SCHEMA_VERSION,
         "manifest_schema_version": manifest.get("schema_version"),
@@ -219,8 +261,11 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
         "feature_settings": {"schema_create": [], "schema_publish": [], "setting_create": [],
                              "config_create": [], "config_publish": [], "version_conflict": [],
                              "already_ok": [], "warnings": []},
+        "resources": {"create": [], "update": [], "activate": [], "field_conflict": [],
+                      "already_ok": [], "warnings": []},
         "unsupported": list(manifest.get("unsupported_by_cli") or []),
-        "dashboard_only": {"events": [], "player_fields": [], "feature_schemas": [], "feature_settings": []},
+        "dashboard_only": {"events": [], "player_fields": [], "feature_schemas": [],
+                           "feature_settings": [], "resources": []},
         "unknown_manifest_sections": sorted(set(manifest) - set(KNOWN_MANIFEST_KEYS)),
     }
 
@@ -655,6 +700,159 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                           "runtime never resolves for the code's key",
             })
 
+    # --- Resource templates (schema_version 3): diff by resourceKey ---
+    rp = plan["resources"]
+    rt_by_key = _index_by(resource_templates or [], "key")
+    manifest_resource_keys = set()
+
+    for entry in manifest.get("resources") or []:
+        key = _norm(entry.get("key"))
+        if not key:
+            continue
+        if key in manifest_resource_keys:
+            rp["warnings"].append({
+                "key": key,
+                "reason": "duplicate resource key in the manifest — only the first entry is planned; "
+                          "fix the KinoaResources catalogue (one constant per key)",
+            })
+            continue
+        manifest_resource_keys.add(key)
+        # Key-format guard: the helper AND the server reject non-matching keys, so a create
+        # planned for one is unexecutable — warn and plan nothing (the fix is producer-side).
+        if not re.match(RESOURCE_KEY_RE, key):
+            rp["warnings"].append({
+                "key": key,
+                "reason": f"invalid resource key — must match {RESOURCE_KEY_RE}; the helper and the "
+                          "server both reject it, so nothing is planned. Fix the key in the game's "
+                          "resources catalogue and regenerate the manifest",
+            })
+            continue
+        # Field validation: closed 5-type vocabulary; unsupported types are split off to the
+        # unsupported bucket (never silently dropped); enumeration needs its allowed values.
+        want_fields = []
+        for f in entry.get("fields") or []:
+            ftype = str(f.get("field_type") or "").strip().lower()
+            if ftype not in RESOURCE_FIELD_TYPES:
+                plan["unsupported"].append({
+                    "surface": "resource_field",
+                    "owner": key,
+                    "name": f.get("name"),
+                    "kind": ftype,
+                    "reason": f"field_type '{ftype}' is not supported by kinoa_dashboard_resource_template.py "
+                              f"(allowed: {', '.join(RESOURCE_FIELD_TYPES)}) — retype the field in the "
+                              "resources catalogue",
+                })
+                continue
+            item = {"name": f.get("name"), "field_type": ftype,
+                    "required": bool(f.get("required", False))}
+            # default and description are OPTIONAL per field — carried verbatim when present,
+            # never invented (a minimal field is just name + type).
+            if f.get("default") is not None:
+                item["default"] = f.get("default")
+            if f.get("description"):
+                item["description"] = f.get("description")
+            if f.get("enumeration_values"):
+                item["enumeration_values"] = f.get("enumeration_values")
+            elif ftype == "enumeration":
+                rp["warnings"].append({
+                    "key": key, "field": f.get("name"),
+                    "reason": "enumeration field without enumeration_values — the server stores the allowed "
+                              "values as its own entity and needs them at create; fill them in the resources "
+                              "catalogue or retype the field",
+                })
+            want_fields.append(item)
+        record = rt_by_key.get(key)
+        if record is None:
+            ci = next((k for k in rt_by_key if k.lower() == key.lower() and k != key), None)
+            if ci is not None:
+                rp["warnings"].append({
+                    "key": key, "dashboard_key": ci,
+                    "reason": "case-collision: manifest resource key matches a live template except for case — "
+                              "keys are byte-for-byte; the create may collide server-side or register a "
+                              "near-duplicate the game never resolves",
+                })
+            # NAME uniqueness is enforced server-side across ALL statuses, DEPRECATED included
+            # (live-verified 2026-07-23: 422 'Resource Template with [name] name already exists') —
+            # a create whose name is already taken by a DIFFERENT key fails loud at apply. Warn
+            # ahead; the create stays planned (advisory — the checklist decides).
+            want_name = str(entry.get("name") or key)
+            name_hit = next((r for k2, r in rt_by_key.items() if k2 != key
+                             and str(r.get("name") or "").strip().lower() == want_name.strip().lower()), None)
+            if name_hit is not None:
+                rp["warnings"].append({
+                    "key": key, "name": want_name,
+                    "dashboard_key": name_hit.get("key"), "dashboard_status": name_hit.get("status"),
+                    "reason": "name collision: the server enforces template-NAME uniqueness across ALL "
+                              "statuses (a DEPRECATED record still holds its name) — this create will be "
+                              "rejected (422 'name already exists'); rename the resource in the catalogue "
+                              "or reconcile with the existing template",
+                })
+            rp["create"].append({
+                "name": entry.get("name") or key,
+                "key": key,
+                "description": entry.get("description") or None,
+                "fields": want_fields,
+                "reason": "resource template not present on the dashboard — create DRAFT, then activate",
+            })
+            continue
+        status = _rt_status(record)
+        item = {"key": key, "id": record.get("id"), "name": record.get("name"),
+                "current_status": record.get("status")}
+        want_map = {_norm(f["name"]): f["field_type"] for f in want_fields}
+        live_map = _rt_fields_map(record)
+        shape_matches = want_map == live_map
+        if status == "deprecated":
+            # KING-22096: a DEPRECATED template is never auto-reactivated — there is no
+            # un-deprecate endpoint, and retiring it was a deliberate operator decision.
+            rp["warnings"].append(dict(item,
+                reason="resource template is DEPRECATED on the dashboard — the sync never reactivates it "
+                       "(no un-deprecate endpoint; retiring it was an operator decision). Options: rename "
+                       "the key AND the display name in the game's resources catalogue (registers a new "
+                       "template — the deprecated record still holds both its key and its name, and the "
+                       "server enforces uniqueness of each across all statuses), clone the deprecated "
+                       "record on the dashboard, or drop the entry"
+                       + ("" if shape_matches else "; note its live fields also differ from the manifest")))
+            continue
+        if status == "draft":
+            if shape_matches:
+                rp["activate"].append(dict(item,
+                    reason="existing DRAFT with matching fields — activate (publishes the template)"))
+            else:
+                # A DRAFT is unpublished and mutable by definition (usually a prior partial
+                # run's leftover) — update the fields, then activate; the checklist gates both.
+                rp["update"].append(dict(item, fields=want_fields,
+                    reason="existing DRAFT whose fields differ from the manifest — update the fields "
+                           "(a DRAFT is unpublished and mutable), then activate"))
+                rp["activate"].append(dict(item,
+                    reason="activate after the field update above (publishes the template)"))
+            continue
+        if status == "active":
+            if shape_matches:
+                rp["already_ok"].append(dict(item,
+                    reason="resource template already ACTIVE with matching fields"))
+            else:
+                # Same discipline as the FS version_conflict: a live template may back live
+                # bundles/prizes, so the sync never edits it unattended — developer GATE.
+                rp["field_conflict"].append(dict(item,
+                    code_only_fields=sorted(k for k in want_map if k not in live_map),
+                    dashboard_only_fields=sorted(k for k in live_map if k not in want_map),
+                    type_changed_fields=sorted(k for k in want_map
+                                               if k in live_map and want_map[k] != live_map[k]),
+                    reason="manifest fields differ from the live ACTIVE template — a live template may back "
+                           "live bundles/prizes, so the sync never edits it unattended (same discipline as "
+                           "the FS version_conflict gate). The developer decides: update the template in an "
+                           "operator session via the resource-template helper, align the game's resources "
+                           "catalogue to the live shape, or register under a new key"))
+            continue
+        rp["warnings"].append(dict(item,
+            reason=f"unrecognized resource template status {record.get('status')!r} — no action planned; "
+                   "inspect the record on the dashboard"))
+
+    for key, record in rt_by_key.items():
+        if key not in manifest_resource_keys and _rt_status(record) == "active":
+            plan["dashboard_only"]["resources"].append(
+                {"key": key, "id": record.get("id"), "name": record.get("name")})
+
     return plan
 
 
@@ -671,6 +869,10 @@ def main(argv):
                         help="Live feature schemas (list-schemas, ideally enriched with get-schema "
                              "records so versions[].tableFields are present for the column diff).")
     parser.add_argument("--fs-settings", default=None, help="Live feature settings (list-settings).")
+    parser.add_argument("--resources", default=None,
+                        help="Live resource templates (kinoa_dashboard_resource_template.py list "
+                             "--statuses DRAFT,ACTIVE,DEPRECATED — the server's default listing "
+                             "EXCLUDES DEPRECATED, hiding retired keys from the diff).")
     args = parser.parse_args(argv)
 
     manifest = _load_json(args.manifest, "manifest")
@@ -682,6 +884,14 @@ def main(argv):
               "the manifest carries feature_settings but --fs-schemas/--fs-settings listings were not "
               "supplied — fetch list-schemas and list-settings first (planning without them would plan "
               "duplicate creates against a dashboard that already has these entities)")
+    # Same fail-closed rule for resources: a v3 manifest with resources but no live listing
+    # would mistake "not fetched" for "absent" and plan duplicate DRAFT creates — whose only
+    # cleanup is the operator-facing HARD delete.
+    if (manifest.get("resources") or []) and not args.resources:
+        _fail("missing_resources_listing",
+              "the manifest carries resources but no --resources listing was supplied — fetch the "
+              "resource-template list first (--statuses DRAFT,ACTIVE,DEPRECATED; planning without it "
+              "would plan duplicate DRAFT creates against a dashboard that already has these templates)")
     if manifest.get("schema_version") not in SUPPORTED_MANIFEST_VERSIONS:
         _fail("unsupported_manifest_version",
               f"manifest schema_version {manifest.get('schema_version')!r} not in {SUPPORTED_MANIFEST_VERSIONS}")
@@ -701,6 +911,7 @@ def main(argv):
         if args.fields_custom_deleted else [],
         "fs-schemas": _extract_items(_load_json(args.fs_schemas, "fs-schemas"), "fs-schemas") if args.fs_schemas else [],
         "fs-settings": _extract_items(_load_json(args.fs_settings, "fs-settings"), "fs-settings") if args.fs_settings else [],
+        "resources": _extract_items(_load_json(args.resources, "resources"), "resources") if args.resources else [],
     }
 
     # Cross-game backstop: every listing record carries the game it belongs to
@@ -728,6 +939,7 @@ def main(argv):
         listings["fields-custom-deleted"],
         listings["fs-schemas"],
         listings["fs-settings"],
+        listings["resources"],
     )
     print(json.dumps(plan, indent=2))
     return 0

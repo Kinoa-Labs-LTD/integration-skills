@@ -26,8 +26,11 @@ Subcommands (each makes ONE logical operation and prints ONE JSON object:
       Returns SummaryListDto { totalCount, elements:[{id,name,key,status,fields,...}] }.
       `status` values come back lowercase (draft/active/deprecated) — compare
       case-insensitively. --statuses filters by lifecycle status (accepted in
-      either case); repeatable via comma. Use it as the closest analogue to a
-      state probe (resource templates have no soft-delete — see delete below).
+      either case); repeatable via comma. NOTE (live-verified 2026-07-23): the
+      DEFAULT listing (no --statuses) EXCLUDES DEPRECATED templates — pass
+      --statuses DRAFT,ACTIVE,DEPRECATED for a full-state probe (sync flows
+      MUST, or retired keys look absent). Resource templates have no
+      soft-delete — see delete below.
 
   get --id UUID
       GET .../resource-templates/<id>  — full ResourceTemplateDto incl. fields.
@@ -35,7 +38,10 @@ Subcommands (each makes ONE logical operation and prints ONE JSON object:
   create --name NAME --key KEY [--description D] [--status draft|active|deprecated]
          [--body JSON] [--field SPEC ...] [--fields-json JSON]
       POST .../resource-templates — creates a template (defaults to DRAFT so a
-      later `activate` publishes it). Provide fields either as repeatable
+      later `activate` publishes it). BOTH the key AND the name are unique
+      across ALL statuses, DEPRECATED included (live-verified 2026-07-23:
+      422 "key already exists" / "[NAME] name already exists") — a retired
+      template still occupies its key and name. Provide fields either as repeatable
       --field NAME:TYPE[:EXTRA][:req] specs (quick CLI use) or as a single
       --fields-json array (used by the sync workflow after the developer
       confirms the list on the HTML page). TYPE ∈ number, string, boolean,
@@ -244,12 +250,18 @@ def _parse_field_spec(spec):
 
 def _collect_fields(args):
     """Build the fields list from --fields-json (takes precedence) or repeatable
-    --field specs. Returns (fields_list_or_None, error_dict_or_None)."""
+    --field specs. Returns (fields_list_or_None, error_dict_or_None).
+    fields-json items get required=False defaulted in: the server rejects a field
+    with required missing/null (422 'fields[0].required: must not be null' —
+    live-verified 2026-07-23), and 'not required' is the only sane default."""
     fields_json = getattr(args, "fields_json", None)
     if fields_json:
         parsed = _parse_json(fields_json)
         if not isinstance(parsed, list):
             return None, {"error": "invalid_fields_json", "message": "--fields-json must be a JSON array of field objects"}
+        for item in parsed:
+            if isinstance(item, dict):
+                item.setdefault("required", False)
         return parsed, None
     specs = getattr(args, "field", None) or []
     if not specs:

@@ -155,6 +155,20 @@ class ResourceTemplateHelperTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(self.requests[0]["body"]["fields"], rich)
 
+    def test_create_fields_json_defaults_required_false(self):
+        # The server 422-rejects a field with required missing/null ("must not be null" —
+        # live-verified 2026-07-23); the helper must default it, never forward the omission.
+        ns = argparse.Namespace(name="Chest", key="chest", description=None, status="draft",
+                                body=None, field=[],
+                                fields_json=json.dumps([
+                                    {"name": "capacity", "field_type": "number"},
+                                    {"name": "locked", "field_type": "boolean", "required": True}]))
+        code, _ = self._call(self.mod.cmd_create, ns, [(200, json.dumps({"id": TEMPLATE_ID}))])
+        self.assertEqual(code, 0)
+        sent = self.requests[0]["body"]["fields"]
+        self.assertEqual(sent[0]["required"], False)
+        self.assertEqual(sent[1]["required"], True)
+
     def test_create_with_body_json(self):
         ns = argparse.Namespace(name="Sword", key="sword", description=None, status="draft",
                                 body='{"tier":"${rarity}"}', field=[], fields_json=None)

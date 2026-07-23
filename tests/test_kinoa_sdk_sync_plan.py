@@ -48,6 +48,22 @@ def _fs_manifest(schemas=(), settings=()):
                      feature_settings={"schemas": list(schemas), "settings": list(settings)})
 
 
+def _res_manifest(resources=()):
+    return _manifest(schema_version=3, resources=list(resources))
+
+
+def _live_template(key, fields=(), status="active", template_id=None, name=None):
+    """A resource-template listing element. `fields` = [(name, field_type), ...].
+    The live listing returns status lowercase (draft/active/deprecated)."""
+    return {
+        "id": template_id or f"rt-{key}",
+        "key": key,
+        "name": name or key,
+        "status": status,
+        "fields": [{"name": n, "field_type": t} for n, t in fields],
+    }
+
+
 def _live_schema(name, fields, status="ACTIVE", version="1", schema_id=None):
     """A get-schema-shaped live record. `fields` = [(name, type), ...]."""
     return {
@@ -683,6 +699,266 @@ class FeatureSettingsPlanTests(unittest.TestCase):
         self.assertEqual(self.mod._fs_fields_map(rec), {"new": "integer"})
 
 
+class ResourcesPlanTests(unittest.TestCase):
+    """KING-21960 diff matrix for resource templates (manifest schema_version 3)."""
+
+    def setUp(self):
+        self.mod = _load_module()
+
+    def _plan(self, resources=(), live=()):
+        plan = self.mod.build_plan(_res_manifest(resources),
+                                   [], [], [], [], [], [], [], [], list(live))
+        return plan["resources"], plan
+
+    # ---- create ----
+
+    def test_absent_key_planned_as_create_with_fields_passthrough(self):
+        rp, plan = self._plan(resources=[{
+            "name": "Legendary Sword", "key": "legendary_sword", "description": "Boss reward.",
+            "fields": [
+                {"name": "attack", "field_type": "number", "required": True, "default": 100},
+                {"name": "rarity", "field_type": "enumeration",
+                 "enumeration_values": ["common", "rare", "epic"]},
+            ]}])
+        self.assertEqual([c["key"] for c in rp["create"]], ["legendary_sword"])
+        create = rp["create"][0]
+        self.assertEqual(create["name"], "Legendary Sword")
+        self.assertEqual(create["description"], "Boss reward.")
+        self.assertEqual(create["fields"][0],
+                         {"name": "attack", "field_type": "number", "required": True, "default": 100})
+        self.assertEqual(create["fields"][1]["enumeration_values"], ["common", "rare", "epic"])
+        self.assertFalse(create["fields"][1]["required"])  # required defaults to False
+        self.assertEqual(rp["activate"], [])
+        self.assertEqual(rp["field_conflict"], [])
+        self.assertEqual(rp["warnings"], [])
+
+    def test_create_name_defaults_to_key(self):
+        rp, _ = self._plan(resources=[{"key": "gold_chest", "fields": []}])
+        self.assertEqual(rp["create"][0]["name"], "gold_chest")
+
+    def test_field_default_and_description_optional_passthrough(self):
+        # A field is minimally {name, type}; default and description are OPTIONAL —
+        # carried verbatim when present, never invented when absent.
+        rp, _ = self._plan(resources=[{
+            "key": "sword",
+            "fields": [{"name": "attack", "field_type": "number"},
+                       {"name": "element", "field_type": "string",
+                        "description": "Damage element", "default": "fire"}]}])
+        bare, rich = rp["create"][0]["fields"]
+        self.assertEqual(bare, {"name": "attack", "field_type": "number", "required": False})
+        self.assertNotIn("default", bare)
+        self.assertNotIn("description", bare)
+        self.assertEqual(rich["description"], "Damage element")
+        self.assertEqual(rich["default"], "fire")
+
+    # ---- ACTIVE ----
+
+    def test_active_matching_fields_already_ok(self):
+        rp, _ = self._plan(
+            resources=[{"key": "sword", "fields": [{"name": "attack", "field_type": "number"}]}],
+            live=[_live_template("sword", [("attack", "number")], status="active")])
+        self.assertEqual([r["key"] for r in rp["already_ok"]], ["sword"])
+        self.assertEqual(rp["create"], [])
+        self.assertEqual(rp["field_conflict"], [])
+
+    def test_active_status_compared_case_insensitively(self):
+        rp, _ = self._plan(
+            resources=[{"key": "sword", "fields": [{"name": "attack", "field_type": "number"}]}],
+            live=[_live_template("sword", [("attack", "number")], status="ACTIVE")])
+        self.assertEqual([r["key"] for r in rp["already_ok"]], ["sword"])
+
+    def test_active_shape_drift_is_field_conflict_gate_not_update(self):
+        # KING-22096: a live ACTIVE template may back live bundles/prizes — never edited
+        # unattended; same discipline as the FS version_conflict gate.
+        rp, _ = self._plan(
+            resources=[{"key": "sword", "fields": [{"name": "attack", "field_type": "number"},
+                                                   {"name": "element", "field_type": "string"}]}],
+            live=[_live_template("sword", [("attack", "string"), ("weight", "number")])])
+        self.assertEqual(rp["create"], [])
+        self.assertEqual(rp["update"], [])
+        self.assertEqual(rp["activate"], [])
+        self.assertEqual(rp["already_ok"], [])
+        vc = rp["field_conflict"]
+        self.assertEqual(len(vc), 1)
+        self.assertEqual(vc[0]["code_only_fields"], ["element"])
+        self.assertEqual(vc[0]["dashboard_only_fields"], ["weight"])
+        self.assertEqual(vc[0]["type_changed_fields"], ["attack"])
+
+    # ---- DRAFT ----
+
+    def test_draft_matching_fields_planned_as_activate(self):
+        rp, _ = self._plan(
+            resources=[{"key": "sword", "fields": [{"name": "attack", "field_type": "number"}]}],
+            live=[_live_template("sword", [("attack", "number")], status="draft")])
+        self.assertEqual([r["key"] for r in rp["activate"]], ["sword"])
+        self.assertEqual(rp["update"], [])
+        self.assertEqual(rp["create"], [])
+        self.assertEqual(rp["field_conflict"], [])
+
+    def test_draft_shape_drift_planned_as_update_then_activate(self):
+        # A DRAFT is unpublished and mutable (usually a prior partial run's leftover) —
+        # fields are updated first, then activated; never a conflict gate.
+        rp, _ = self._plan(
+            resources=[{"key": "sword", "fields": [{"name": "attack", "field_type": "number"}]}],
+            live=[_live_template("sword", [("attack", "string")], status="draft")])
+        self.assertEqual([r["key"] for r in rp["update"]], ["sword"])
+        self.assertEqual([f["name"] for f in rp["update"][0]["fields"]], ["attack"])
+        self.assertEqual([r["key"] for r in rp["activate"]], ["sword"])
+        self.assertEqual(rp["field_conflict"], [])
+
+    # ---- DEPRECATED (KING-22096) ----
+
+    def test_deprecated_never_reactivated_even_with_matching_fields(self):
+        rp, _ = self._plan(
+            resources=[{"key": "old_skin", "fields": [{"name": "tier", "field_type": "number"}]}],
+            live=[_live_template("old_skin", [("tier", "number")], status="deprecated")])
+        self.assertEqual(rp["create"], [])
+        self.assertEqual(rp["update"], [])
+        self.assertEqual(rp["activate"], [])
+        self.assertEqual(rp["field_conflict"], [])
+        warns = [w for w in rp["warnings"] if w.get("key") == "old_skin"]
+        self.assertEqual(len(warns), 1)
+        self.assertIn("DEPRECATED", warns[0]["reason"])
+        self.assertIn("never reactivates", warns[0]["reason"])
+
+    def test_deprecated_with_shape_drift_still_only_warns_and_notes_drift(self):
+        rp, _ = self._plan(
+            resources=[{"key": "old_skin", "fields": [{"name": "tier", "field_type": "number"}]}],
+            live=[_live_template("old_skin", [("tier", "string")], status="deprecated")])
+        warns = [w for w in rp["warnings"] if w.get("key") == "old_skin"]
+        self.assertEqual(len(warns), 1)
+        self.assertIn("fields also differ", warns[0]["reason"])
+        self.assertEqual(rp["field_conflict"], [])
+
+    # ---- validation (KING-22098 consumer backstop) ----
+
+    def test_invalid_key_warns_and_plans_nothing(self):
+        rp, _ = self._plan(resources=[{"key": "9bad.key", "fields": []}])
+        self.assertEqual(rp["create"], [])
+        warns = [w for w in rp["warnings"] if w.get("key") == "9bad.key"]
+        self.assertEqual(len(warns), 1)
+        self.assertIn("invalid resource key", warns[0]["reason"])
+
+    def test_duplicate_manifest_keys_warn_once_first_planned(self):
+        rp, _ = self._plan(resources=[{"key": "sword", "fields": []},
+                                      {"key": "sword", "fields": []}])
+        self.assertEqual(len(rp["create"]), 1)
+        self.assertTrue(any("duplicate resource key" in w.get("reason", "") for w in rp["warnings"]))
+
+    def test_name_collision_with_live_template_warns_still_creates(self):
+        # Live-verified 2026-07-23: template-NAME uniqueness is enforced across ALL statuses
+        # (a DEPRECATED record still holds its name) — a create under a taken name 422s.
+        # The planner warns ahead; the create stays planned (advisory).
+        rp, _ = self._plan(
+            resources=[{"name": "Legendary Sword", "key": "sword_v2", "fields": []}],
+            live=[_live_template("sword", status="deprecated", name="Legendary Sword")])
+        warns = [w for w in rp["warnings"] if "name collision" in w.get("reason", "")]
+        self.assertEqual(len(warns), 1)
+        self.assertEqual((warns[0]["dashboard_key"], warns[0]["dashboard_status"]),
+                         ("sword", "deprecated"))
+        self.assertEqual([c["key"] for c in rp["create"]], ["sword_v2"])
+
+    def test_no_name_collision_warning_for_own_record(self):
+        # The same name on the SAME key is the normal match path — never a name collision.
+        rp, _ = self._plan(
+            resources=[{"name": "Gold Chest", "key": "gold_chest", "fields": []}],
+            live=[_live_template("gold_chest", status="active", name="Gold Chest")])
+        self.assertEqual([w for w in rp["warnings"] if "name collision" in w.get("reason", "")], [])
+        self.assertEqual([r["key"] for r in rp["already_ok"]], ["gold_chest"])
+
+    def test_case_collision_with_live_key_warns_still_creates(self):
+        rp, _ = self._plan(resources=[{"key": "gold_chest", "fields": []}],
+                           live=[_live_template("Gold_chest", status="active")])
+        self.assertTrue(any("case-collision" in w.get("reason", "") and
+                            w.get("dashboard_key") == "Gold_chest" for w in rp["warnings"]))
+        self.assertEqual([c["key"] for c in rp["create"]], ["gold_chest"])
+
+    def test_unsupported_field_type_goes_to_unsupported_create_proceeds(self):
+        rp, plan = self._plan(resources=[{
+            "key": "sword",
+            "fields": [{"name": "attack", "field_type": "number"},
+                       {"name": "loot_table", "field_type": "object"}]}])
+        self.assertEqual([f["name"] for f in rp["create"][0]["fields"]], ["attack"])
+        uns = [u for u in plan["unsupported"] if u.get("surface") == "resource_field"]
+        self.assertEqual(len(uns), 1)
+        self.assertEqual((uns[0]["owner"], uns[0]["name"], uns[0]["kind"]),
+                         ("sword", "loot_table", "object"))
+
+    def test_enumeration_without_values_warns_but_field_kept(self):
+        rp, _ = self._plan(resources=[{
+            "key": "sword", "fields": [{"name": "rarity", "field_type": "enumeration"}]}])
+        self.assertEqual([f["name"] for f in rp["create"][0]["fields"]], ["rarity"])
+        self.assertTrue(any("enumeration field without enumeration_values" in w.get("reason", "")
+                            for w in rp["warnings"]))
+
+    def test_live_enumeration_readback_shape_no_false_conflict(self):
+        # Verified live 2026-07-09: on read-back an enumeration field carries enumeration_id
+        # with enumeration_values null — the diff compares field_type only, so a re-run must
+        # NOT flag a spurious conflict.
+        live = _live_template("sword", status="active")
+        live["fields"] = [{"name": "rarity", "field_type": "enumeration",
+                           "enumeration_id": "en-1", "enumeration_values": None}]
+        rp, _ = self._plan(
+            resources=[{"key": "sword",
+                        "fields": [{"name": "rarity", "field_type": "enumeration",
+                                    "enumeration_values": ["common", "rare"]}]}],
+            live=[live])
+        self.assertEqual([r["key"] for r in rp["already_ok"]], ["sword"])
+        self.assertEqual(rp["field_conflict"], [])
+
+    def test_unrecognized_live_status_warns_no_action(self):
+        rp, _ = self._plan(resources=[{"key": "sword", "fields": []}],
+                           live=[_live_template("sword", status="archived")])
+        self.assertEqual(rp["create"], [])
+        self.assertEqual(rp["activate"], [])
+        self.assertTrue(any("unrecognized resource template status" in w.get("reason", "")
+                            for w in rp["warnings"]))
+
+    # ---- dashboard_only + safety ----
+
+    def test_dashboard_only_lists_active_manifest_absent_templates_only(self):
+        _, plan = self._plan(
+            resources=[{"key": "sword", "fields": []}],
+            live=[_live_template("sword", status="active"),
+                  _live_template("operator_item", status="active"),
+                  _live_template("operator_draft", status="draft"),
+                  _live_template("operator_retired", status="deprecated")])
+        self.assertEqual([r["key"] for r in plan["dashboard_only"]["resources"]], ["operator_item"])
+
+    def test_resources_plan_never_contains_delete(self):
+        rp, plan = self._plan(
+            resources=[{"key": "sword", "fields": [{"name": "a", "field_type": "string"}]}],
+            live=[_live_template("sword", [("b", "number")], status="active"),
+                  _live_template("stale_draft", status="draft"),
+                  _live_template("retired", status="deprecated")])
+        self.assertNotIn("delete", json.dumps(plan["resources"]).lower())
+
+    def test_resources_not_flagged_unknown_section(self):
+        _, plan = self._plan(resources=[{"key": "sword", "fields": []}])
+        self.assertEqual(plan["unknown_manifest_sections"], [])
+
+    def test_key_regex_and_field_type_vocab_match_helper(self):
+        # RESOURCE_KEY_RE / RESOURCE_FIELD_TYPES must equal the helper's constants, or the
+        # planner could plan creates the helper CLI rejects. Parsed via ast — no module
+        # import, so the helper's import-time session.env read never fires.
+        import ast
+
+        def _const(name):
+            path = os.path.join(REPO_ROOT, "skills", "kinoa-dashboard-resource-template",
+                                "kinoa_dashboard_resource_template.py")
+            with open(path, encoding="utf-8") as f:
+                tree = ast.parse(f.read())
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Assign):
+                    for t in node.targets:
+                        if isinstance(t, ast.Name) and t.id == name:
+                            return ast.literal_eval(node.value)
+            raise AssertionError(f"{name} not found in {path}")
+
+        self.assertEqual(set(self.mod.RESOURCE_FIELD_TYPES), set(_const("ALLOWED_FIELD_TYPES")))
+        self.assertEqual(self.mod.RESOURCE_KEY_RE, _const("RESOURCE_KEY_RE"))
+
+
 class CliContractTests(unittest.TestCase):
     def setUp(self):
         self.mod = _load_module()
@@ -815,6 +1091,53 @@ class CliContractTests(unittest.TestCase):
         self.assertEqual([s["name"] for s in plan["feature_settings"]["schema_create"]], ["DailyBonusSettings"])
         self.assertEqual([s["key"] for s in plan["feature_settings"]["setting_create"]], ["DailyBonus"])
         self.assertEqual(plan["unknown_manifest_sections"], [])
+
+    def test_main_accepts_v3_manifest_with_resources(self):
+        manifest = _res_manifest([{"name": "Legendary Sword", "key": "legendary_sword",
+                                   "fields": [{"name": "attack", "field_type": "number"}]},
+                                  {"key": "gold_chest", "fields": []}])
+        manifest_path = self._write("m.json", manifest)
+        empty = self._write("e.json", self._listing([]))
+        rt = self._write("rt.json", self._listing(
+            [_live_template("gold_chest", status="active")]))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = self.mod.main(["--manifest", manifest_path,
+                                  "--events-predefined", empty, "--events-custom", empty,
+                                  "--fields-predefined", empty, "--fields-custom", empty,
+                                  "--resources", rt])
+        self.assertEqual(code, 0)
+        plan = json.loads(out.getvalue())
+        self.assertEqual([c["key"] for c in plan["resources"]["create"]], ["legendary_sword"])
+        self.assertEqual([r["key"] for r in plan["resources"]["already_ok"]], ["gold_chest"])
+        self.assertEqual(plan["unknown_manifest_sections"], [])
+
+    def test_main_rejects_v3_manifest_without_resources_listing(self):
+        # Resources in the manifest but no --resources listing → planning would mistake
+        # "not fetched" for "absent" and plan duplicate DRAFT creates (whose only cleanup
+        # is the operator-facing HARD delete). Fail closed.
+        manifest = _res_manifest([{"key": "sword", "fields": []}])
+        manifest_path = self._write("m.json", manifest)
+        empty = self._write("e.json", self._listing([]))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as ctx:
+                self.mod.main(["--manifest", manifest_path,
+                               "--events-predefined", empty, "--events-custom", empty,
+                               "--fields-predefined", empty, "--fields-custom", empty])
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertEqual(json.loads(out.getvalue())["error"], "missing_resources_listing")
+
+    def test_main_allows_empty_resources_section_without_listing(self):
+        manifest = _res_manifest([])
+        manifest_path = self._write("m.json", manifest)
+        empty = self._write("e.json", self._listing([]))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = self.mod.main(["--manifest", manifest_path,
+                                  "--events-predefined", empty, "--events-custom", empty,
+                                  "--fields-predefined", empty, "--fields-custom", empty])
+        self.assertEqual(code, 0)
 
     def test_main_rejects_v2_manifest_without_fs_listings(self):
         # FS content in the manifest but no --fs-schemas/--fs-settings → planning would mistake
