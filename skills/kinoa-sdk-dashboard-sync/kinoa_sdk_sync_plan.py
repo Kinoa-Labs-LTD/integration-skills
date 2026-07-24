@@ -82,7 +82,7 @@ SYSTEM_EVENT_PARAM_NAMES = ("device_id", "time", "time_ms")
 # reported back as unknown so a newer manifest is never silently half-synced.
 KNOWN_MANIFEST_KEYS = (
     "schema_version", "generated_at", "producer", "integration_type", "game_id",
-    "sdk_version", "head_sha", "round", "project_root",
+    "sdk_version", "head_sha", "round", "project_root", "scope",
     "events", "player_fields", "feature_settings", "resources", "unsupported_by_cli",
 )
 
@@ -859,11 +859,15 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
 def main(argv):
     parser = argparse.ArgumentParser(prog="kinoa_sdk_sync_plan", description=__doc__)
     parser.add_argument("--manifest", required=True)
-    parser.add_argument("--events-predefined", required=True)
-    parser.add_argument("--events-custom", required=True)
+    # Every listing is optional at the CLI level; the fail-closed rule below makes each one
+    # MANDATORY whenever the manifest carries content for its section. This enables SCOPED
+    # manifests (e.g. a resources-only sync: other sections empty -> their listings not fetched)
+    # while still refusing to plan a populated section against "not fetched".
+    parser.add_argument("--events-predefined", default=None)
+    parser.add_argument("--events-custom", default=None)
     parser.add_argument("--events-custom-deleted", default=None)
-    parser.add_argument("--fields-predefined", required=True)
-    parser.add_argument("--fields-custom", required=True)
+    parser.add_argument("--fields-predefined", default=None)
+    parser.add_argument("--fields-custom", default=None)
     parser.add_argument("--fields-custom-deleted", default=None)
     parser.add_argument("--fs-schemas", default=None,
                         help="Live feature schemas (list-schemas, ideally enriched with get-schema "
@@ -876,8 +880,23 @@ def main(argv):
     args = parser.parse_args(argv)
 
     manifest = _load_json(args.manifest, "manifest")
-    # A v2 manifest with FS content but NO live FS listings would make the planner mistake
-    # "not fetched" for "nothing on the dashboard" and plan duplicate creates. Fail closed.
+    # Fail-closed rule, one per section: a manifest that CARRIES content for a section must be
+    # planned against that section's live listing — "not fetched" mistaken for "nothing on the
+    # dashboard" plans duplicate creates. Empty sections (scoped manifests) need no listings.
+    ev_section = manifest.get("events") or {}
+    if (ev_section.get("predefined_in_use") or ev_section.get("custom")) \
+            and not (args.events_predefined and args.events_custom):
+        _fail("missing_events_listings",
+              "the manifest carries events but --events-predefined/--events-custom listings were "
+              "not supplied — fetch list-predefined and list-custom first (planning without them "
+              "would plan duplicate creates against a dashboard that already has these events)")
+    pf_section = manifest.get("player_fields") or {}
+    if (pf_section.get("predefined_in_use") or pf_section.get("custom")) \
+            and not (args.fields_predefined and args.fields_custom):
+        _fail("missing_fields_listings",
+              "the manifest carries player_fields but --fields-predefined/--fields-custom listings "
+              "were not supplied — fetch them first (planning without them would plan duplicate "
+              "creates against a dashboard that already has these fields)")
     fs_section = manifest.get("feature_settings") or {}
     if (fs_section.get("schemas") or fs_section.get("settings")) and not (args.fs_schemas and args.fs_settings):
         _fail("missing_fs_listings",
@@ -901,12 +920,16 @@ def main(argv):
               "this planner only serves SDK-integrated games")
 
     listings = {
-        "events-predefined": _extract_items(_load_json(args.events_predefined, "events-predefined"), "events-predefined"),
-        "events-custom": _extract_items(_load_json(args.events_custom, "events-custom"), "events-custom"),
+        "events-predefined": _extract_items(_load_json(args.events_predefined, "events-predefined"), "events-predefined")
+        if args.events_predefined else [],
+        "events-custom": _extract_items(_load_json(args.events_custom, "events-custom"), "events-custom")
+        if args.events_custom else [],
         "events-custom-deleted": _extract_items(_load_json(args.events_custom_deleted, "events-custom-deleted"), "events-custom-deleted")
         if args.events_custom_deleted else [],
-        "fields-predefined": _extract_items(_load_json(args.fields_predefined, "fields-predefined"), "fields-predefined"),
-        "fields-custom": _extract_items(_load_json(args.fields_custom, "fields-custom"), "fields-custom"),
+        "fields-predefined": _extract_items(_load_json(args.fields_predefined, "fields-predefined"), "fields-predefined")
+        if args.fields_predefined else [],
+        "fields-custom": _extract_items(_load_json(args.fields_custom, "fields-custom"), "fields-custom")
+        if args.fields_custom else [],
         "fields-custom-deleted": _extract_items(_load_json(args.fields_custom_deleted, "fields-custom-deleted"), "fields-custom-deleted")
         if args.fields_custom_deleted else [],
         "fs-schemas": _extract_items(_load_json(args.fs_schemas, "fs-schemas"), "fs-schemas") if args.fs_schemas else [],

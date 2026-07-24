@@ -1112,6 +1112,44 @@ class CliContractTests(unittest.TestCase):
         self.assertEqual([r["key"] for r in plan["resources"]["already_ok"]], ["gold_chest"])
         self.assertEqual(plan["unknown_manifest_sections"], [])
 
+    def test_main_accepts_scoped_resources_manifest_without_event_field_listings(self):
+        # Scoped sync (e.g. after /kinoa resources): only the resources section is populated,
+        # so only the resource-template listing is fetched — events/fields listings are not
+        # required for their EMPTY sections.
+        manifest = _res_manifest([{"key": "sword", "fields": []}])
+        manifest["scope"] = "resources"
+        manifest_path = self._write("m.json", manifest)
+        rt = self._write("rt.json", self._listing([]))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = self.mod.main(["--manifest", manifest_path, "--resources", rt])
+        self.assertEqual(code, 0)
+        plan = json.loads(out.getvalue())
+        self.assertEqual([c["key"] for c in plan["resources"]["create"]], ["sword"])
+        self.assertEqual(plan["unknown_manifest_sections"], [])  # scope is a known key
+
+    def test_main_rejects_populated_events_without_listings(self):
+        manifest = _manifest()
+        manifest["events"]["custom"] = [{"name": "gold_purchase", "params": []}]
+        manifest_path = self._write("m.json", manifest)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as ctx:
+                self.mod.main(["--manifest", manifest_path])
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertEqual(json.loads(out.getvalue())["error"], "missing_events_listings")
+
+    def test_main_rejects_populated_fields_without_listings(self):
+        manifest = _manifest()
+        manifest["player_fields"]["custom"] = [{"path": "wallet.gold", "kind": "number"}]
+        manifest_path = self._write("m.json", manifest)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as ctx:
+                self.mod.main(["--manifest", manifest_path])
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertEqual(json.loads(out.getvalue())["error"], "missing_fields_listings")
+
     def test_main_rejects_v3_manifest_without_resources_listing(self):
         # Resources in the manifest but no --resources listing → planning would mistake
         # "not fetched" for "absent" and plan duplicate DRAFT creates (whose only cleanup
