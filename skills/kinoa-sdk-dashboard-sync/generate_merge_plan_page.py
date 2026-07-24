@@ -53,13 +53,27 @@ resources renders the resources-only page the same way.
 The exported plan echoes the same shape plus stamps:
 
 {"confirmed_at": "<iso>", "page_generated_at": "<echo of generated_at>",
- "events": [...], "player_fields": [...], "feature_settings": [...]}
+ "payload_version": <echo, absent input = 1>,
+ "events": [...], "player_fields": [...], "feature_settings": [...], "resources": [...]}
 
 (existing rows are echoed verbatim; the skill implements only "existing": false
 rows, exactly as edited.)
 
 Exit: prints {"ok": true, "output": "<abs path>", "opened_in_browser": bool}.
 No network, no credentials.
+
+PAYLOAD COMPATIBILITY CONTRACT (the SDK skill builds the payload at ITS version;
+this page auto-updates via the plugin — the two ends skew, so):
+  1. The page TOLERATES absent optional keys and IGNORES unknown keys — it must
+     never crash on an older producer's payload (render sensible defaults).
+  2. The hand-back shape is APPEND-ONLY: never rename or remove an export key,
+     never flip a default's meaning. The freeze test pins the key names.
+  3. Breaking changes go through PAYLOAD_VERSION only: the producer stamps
+     "payload_version" (absent = 1); a payload NEWER than this page refuses
+     loudly (banner + export disabled — update the plugin). New authoring
+     CONTROLS render only when the payload opts in — an old producer must
+     never receive hand-back keys it can't honor (a control the producer
+     ignores is a UI promise the code breaks silently).
 """
 from __future__ import annotations
 
@@ -80,6 +94,8 @@ RESOURCE_KEY_RE = r"^[a-zA-Z][a-zA-Z0-9_-]*$"
 # The dashboard auto-attaches these to every event; an operator param with the same
 # name silently DISPLACES the system column (planner constant — parity-tested).
 SYSTEM_EVENT_PARAM_NAMES = ["device_id", "time", "time_ms"]
+# Bump ONLY on a breaking payload/hand-back change (contract clause 3).
+PAYLOAD_VERSION = 1
 
 PAGE_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="en">
@@ -164,6 +180,9 @@ const FS_COLUMN_KINDS = {fs_column_kinds};
 const RESOURCE_FIELD_TYPES = {resource_field_types};
 const RESOURCE_KEY_RE = new RegExp({resource_key_re});
 const SYSTEM_EVENT_PARAM_NAMES = {system_event_param_names};
+const PAYLOAD_VERSION = {payload_version};
+const DATA_VERSION = DATA.payload_version || 1;
+const VERSION_MISMATCH = DATA_VERSION > PAYLOAD_VERSION;
 
 const state = {{
   events: (DATA.events || []).map(x => ({{params: [], ...x}})),
@@ -180,6 +199,16 @@ function snake(s) {{ return String(s || "").replace(/([a-z0-9])([A-Z])/g, "$1_$2
 // Re-render destroys every node — remember the focused input and caret so
 // live-validated typing doesn't drop focus.
 function render() {{
+  if (VERSION_MISMATCH) {{
+    document.querySelector("header .bar").insertAdjacentHTML("beforeend",
+      '<div style="color:#cf222e;font-weight:600;margin-top:0.4rem">' +
+      "This page is OLDER than the payload (payload_version " + DATA_VERSION +
+      " > supported " + PAYLOAD_VERSION + ") — export is disabled; update the kinoa-dashboard " +
+      "plugin and re-run.</div>");
+    document.getElementById("download").disabled = true;
+    document.getElementById("copy").disabled = true;
+    return;
+  }}
   const active = document.activeElement;
   const focusId = active && active.dataset ? active.dataset.fid : null;
   const selStart = focusId && "selectionStart" in active ? active.selectionStart : null;
@@ -478,6 +507,7 @@ function exportJson() {{
   return JSON.stringify({{
     confirmed_at: new Date().toISOString(),
     page_generated_at: DATA.generated_at,
+    payload_version: DATA_VERSION,
     events: state.events,
     player_fields: state.player_fields,
     feature_settings: state.feature_settings,
@@ -523,6 +553,7 @@ def build_page(payload):
         resource_field_types=json.dumps(RESOURCE_FIELD_TYPES),
         resource_key_re=json.dumps(RESOURCE_KEY_RE),
         system_event_param_names=json.dumps(SYSTEM_EVENT_PARAM_NAMES),
+        payload_version=json.dumps(PAYLOAD_VERSION),
     )
 
 

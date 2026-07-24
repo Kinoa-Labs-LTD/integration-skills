@@ -166,6 +166,38 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertTrue(result["ok"])
 
+    def test_payload_contract_tolerance_unknown_and_minimal_keys(self):
+        # Contract clause 1: an OLDER producer's payload (missing optional keys) and a NEWER
+        # producer's payload (unknown keys) must both build without error.
+        p = {"generated_at": "2026-07-24T09:00:00Z",
+             "future_top_level_key": {"anything": True},
+             "events": [{"id": 1, "future_key": "x"}],                    # minimal + unknown
+             "player_fields": [{"id": 2}],
+             "feature_settings": [{"id": 3}],
+             "resources": [{"id": 4}]}
+        code, result, _ = self._run(p)
+        self.assertEqual(code, 0)
+        self.assertTrue(result["ok"])
+
+    def test_handback_contract_freeze(self):
+        # Contract clause 2: the hand-back keys are APPEND-ONLY. Renaming any of these
+        # breaks this test on purpose — a conscious decision, not an accident.
+        _, _, out_path = self._run(_payload())
+        html = open(out_path, encoding="utf-8").read()
+        for frozen in ("confirmed_at:", "page_generated_at:", "payload_version:",
+                       "events: state.events", "player_fields: state.player_fields",
+                       "feature_settings: state.feature_settings", "resources: state.resources"):
+            self.assertIn(frozen, html)
+
+    def test_payload_version_guard(self):
+        # Contract clause 3: version constant embedded; newer-payload path disables export.
+        _, _, out_path = self._run(_payload())
+        html = open(out_path, encoding="utf-8").read()
+        self.assertIn("const PAYLOAD_VERSION = 1", html)
+        self.assertIn("VERSION_MISMATCH", html)
+        self.assertIn("export is disabled", html)
+        self.assertEqual(self.mod.PAYLOAD_VERSION, 1)
+
     def test_resources_only_payload_ok(self):
         # /kinoa resources renders the resources-only page — other sections omitted entirely.
         p = {"generated_at": "2026-07-24T09:00:00Z", "game_id": None,
