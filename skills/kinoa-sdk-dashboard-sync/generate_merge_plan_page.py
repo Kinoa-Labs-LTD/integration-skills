@@ -156,7 +156,7 @@ input.bad, select.bad {{ border-color: #cf222e; background: #fff5f5; }}
 input.warnp {{ border-color: #bf8700; }}
 .badge {{ display: inline-block; font-size: 0.72rem; padding: 0.1rem 0.5rem; border-radius: 999px;
          border: 1px solid currentColor; white-space: nowrap; }}
-.b-existing {{ color: #57606a; }} .b-new {{ color: #1a7f37; }} .b-predef {{ color: #0969da; }} .b-debug {{ color: #bf8700; }}
+.b-existing {{ color: #57606a; }} .b-new {{ color: #1a7f37; }} .b-predef {{ color: #0969da; }} .b-debug {{ color: #bf8700; }} .b-user {{ color: #8250df; }}
 button {{ font: inherit; padding: 0.35rem 0.8rem; border-radius: 6px; cursor: pointer;
          border: 1px solid #d0d7de; background: #fff; color: #1f2328; }}
 button.ghost {{ border-style: dashed; }}
@@ -186,9 +186,9 @@ footer .grow {{ flex: 1; }}
   </div>
 </header>
 <main>
-  <div class="card" id="events-card"><h2>Game events</h2><div id="events"></div>
+  <div class="card" id="events-card"><h2>Events</h2><div id="events"></div>
     <button class="ghost" id="add-event">＋ Add event</button></div>
-  <div class="card" id="fields-card"><h2>Player fields</h2><div id="player_fields"></div>
+  <div class="card" id="fields-card"><h2>User fields</h2><div id="player_fields"></div>
     <button class="ghost" id="add-field">＋ Add field</button></div>
   <div class="card" id="fs-card"><h2>Feature settings</h2><div id="feature_settings"></div></div>
   <div class="card" id="res-card"><h2>Resources (Dashboard resource templates)</h2><div id="resources"></div>
@@ -288,13 +288,18 @@ function snake(s) {{ return String(s || "").replace(/([a-z0-9])([A-Z])/g, "$1_$2
 // live-validated typing doesn't drop focus.
 function render() {{
   if (VERSION_MISMATCH) {{
-    document.querySelector("header .bar").insertAdjacentHTML("beforeend",
-      '<div style="color:#cf222e;font-weight:600;margin-top:0.4rem">' +
-      "This page is OLDER than the payload (payload_version " + DATA_VERSION +
-      " > supported " + PAYLOAD_VERSION + ") — export is disabled; update the kinoa-dashboard " +
-      "plugin and re-run.</div>");
-    document.getElementById("download").disabled = true;
-    document.getElementById("copy").disabled = true;
+    if (!document.getElementById("vm-banner")) {{
+      document.querySelector("header .bar").insertAdjacentHTML("beforeend",
+        '<div id="vm-banner" style="color:#cf222e;font-weight:600;margin-top:0.4rem">' +
+        "This page is OLDER than the payload (payload_version " + DATA_VERSION +
+        " > supported " + PAYLOAD_VERSION + ") — export is disabled; update the kinoa-dashboard " +
+        "plugin and re-run.</div>");
+    }}
+    // The whole page is refused, not just the export — add buttons would mutate
+    // state that never renders (and each click used to stack another banner).
+    ["download", "copy", "add-event", "add-field", "add-res"].forEach(id => {{
+      const b = document.getElementById(id); if (b) b.disabled = true;
+    }});
     return;
   }}
   const active = document.activeElement;
@@ -347,12 +352,17 @@ function head(row, label, onDrop) {{
   if (ek === "predefined") {{
     const b = document.createElement("span"); b.className = "badge b-predef"; b.textContent = "predefined";
     b.title = "predefined Kinoa event — wired via the game's existing builder (e.g. PaymentEventData); " +
-              "params attach as custom_params. It will NOT be created as a custom event.";
+              "params attach as custom_params. It will NOT be created as a separate user event.";
     div.appendChild(b);
   }} else if (ek === "debug") {{
     const b = document.createElement("span"); b.className = "badge b-debug"; b.textContent = "debug";
     b.title = "debug telemetry — emitted by the SDK/backend itself, never sent from app code; " +
               "there is nothing to implement, this row will be skipped.";
+    div.appendChild(b);
+  }} else if (ek === "custom" && row.params !== undefined) {{
+    const b = document.createElement("span"); b.className = "badge b-user"; b.textContent = "user";
+    b.title = "user event — the game's own event, sent from app code; created on the dashboard " +
+              "with type USER.";
     div.appendChild(b);
   }}
   if (row.source) {{
@@ -617,10 +627,11 @@ function renderFs() {{
       // Schema is a REFERENCE, not free text — pick from the schemas defined above
       // (kills dangling schema_name and shape redefinition by construction).
       const sel = document.createElement("select");
-      const missing = r.schema_name && !schemaNames.includes(r.schema_name);
+      const missing = !r.schema_name || !schemaNames.includes(r.schema_name);
       if (!schemaNames.length || missing) {{
-        const o = document.createElement("option"); o.value = r.schema_name || "";
-        o.textContent = missing ? "(missing: " + r.schema_name + ")" : "(no schemas defined above)";
+        const o = document.createElement("option"); o.value = "";
+        o.textContent = r.schema_name ? "(missing: " + r.schema_name + ")"
+          : (schemaNames.length ? "(choose a schema)" : "(no schemas defined above)");
         o.selected = true; sel.appendChild(o); sel.className = "bad";
       }}
       schemaNames.forEach(n => {{
@@ -742,6 +753,10 @@ function renderCounter() {{
   const labels = {{events: "events", player_fields: "fields",
     feature_settings: "feature settings", resources: "resources"}};
   const parts = SECTIONS_PRESENT.map(k => {{
+    if (k === "events") {{
+      // debug-tagged rows are skipped at implementation (the row itself says so)
+      return state.events.filter(r => !r.existing && effectiveKind(r) !== "debug").length + " events";
+    }}
     if (k === "feature_settings") {{
       const fs = state.feature_settings;
       return news(fs.schemas) + " fs schemas \u00b7 " + news(fs.settings) + " fs keys";
@@ -774,12 +789,18 @@ function exportJson() {{
     confirmed_at: new Date().toISOString(),
     page_generated_at: DATA.generated_at,
     payload_version: DATA_VERSION,
-    events: state.events.map(r => ({{...r, kind: effectiveKind(r),
-      params: (r.params || []).map(cleanParam)}})),
+    events: state.events.map(r => {{
+      if (r.existing) return r;  // echoed verbatim — the row is a measurement of code
+      const ek = effectiveKind(r);
+      const collapsed = ek === "debug" ||
+        (ek === "predefined" && isSdkAutomatic(r.name) && INTEGRATION_TYPE === "SDK");
+      return {{...r, kind: ek, params: collapsed ? [] : (r.params || []).map(cleanParam)}};
+    }}),
     player_fields: state.player_fields.map(r =>
       r.kind === "enumeration" ? r : {{...r, extra: ""}}),
     feature_settings: {{schemas: state.feature_settings.schemas,
       settings: state.feature_settings.settings.map(st => {{
+        if (st.existing) return st;  // echoed verbatim — keys wired at older live versions stay so
         const sch = state.feature_settings.schemas.find(
           x => String(x.name || "") === String(st.schema_name || ""));
         const ver = sch ? (sch.existing ? (sch.version || st.version || 1) : 1)

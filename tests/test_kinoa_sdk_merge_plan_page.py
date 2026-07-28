@@ -156,6 +156,21 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("the schema's newest wired version", html)    # existing-schema version display
         self.assertIn("valid for backward compatibility", html)      # multi-version info note
         self.assertIn(".grid > button.del", html)                     # row drop pinned right
+        # Cosmetic renames (2026-07-28): section titles Events / User fields; visible event
+        # taxonomy predefined/debug/user — while the payload/export vocabulary stays "custom"
+        # and the payload key stays player_fields (STRICTLY no API/hand-back changes).
+        self.assertIn("<h2>Events</h2>", html)
+        self.assertIn("<h2>User fields</h2>", html)
+        self.assertNotIn("<h2>Game events</h2>", html)
+        self.assertIn('b.textContent = "user"', html)
+        self.assertIn('kind: "custom"', html)                         # export vocab untouched
+        # Review round 2026-07-28 (adversarial panel) — five confirmed fixes:
+        self.assertIn("if (r.existing) return r;", html)              # events: verbatim echo
+        self.assertIn("if (st.existing) return st;", html)            # fs settings: verbatim echo
+        self.assertIn("collapsed ? [] :", html)                       # hidden params never ship
+        self.assertIn("(choose a schema)", html)                      # empty binding = explicit red
+        self.assertIn('effectiveKind(r) !== "debug"', html)           # counter skips debug rows
+        self.assertIn("vm-banner", html)                              # mismatch banner deduped
         self.assertIn("minimum 1 column (server rule)", html)        # zero-column schema invalid
         self.assertIn("maxlength: 255", html)                        # schema-name length cap
         self.assertIn("maxlength: 100", html)                        # setting-key length cap
@@ -260,7 +275,8 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("DATA.sdk_automatic_wire_names || []", html)
         self.assertIn('DATA.integration_type || "SDK"', html)
         self.assertIn("effectiveKind", html)
-        self.assertIn("kind: effectiveKind(r)", html)   # export normalization
+        self.assertIn("kind: ek", html)                 # export normalization (new rows only —
+        self.assertIn("const ek = effectiveKind(r);", html)  # existing rows are echoed verbatim)
         self.assertIn("existing builder", html)          # predefined badge tooltip
         self.assertIn("debug telemetry", html)           # debug badge tooltip (NOT sdk-bound)
         self.assertNotIn(">sdk debug<", html)            # old tag name gone
