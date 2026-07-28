@@ -162,6 +162,9 @@ button {{ font: inherit; padding: 0.35rem 0.8rem; border-radius: 6px; cursor: po
 button.ghost {{ border-style: dashed; }}
 button.primary {{ background: #1f883d; border-color: #1f883d; color: #fff; }}
 button.del {{ color: #cf222e; }}
+/* Row-level "drop" pins to the right edge so the buttons line up in a column
+   instead of trailing each row's variable-width content (user request 2026-07-28). */
+.grid > button.del {{ margin-left: auto; }}
 table.sub {{ width: 100%; border-collapse: collapse; margin-top: 0.4rem; }}
 table.sub td {{ padding: 0.15rem 0.3rem; }}
 footer {{ position: fixed; bottom: 0; left: 0; right: 0; background: #1f2328; color: #fff;

@@ -708,6 +708,35 @@ class FeatureSettingsPlanTests(unittest.TestCase):
         self.assertEqual(len(warns), 1)
         self.assertEqual((warns[0]["requested_version"], warns[0]["live_active_version"]), (2, "1"))
 
+    def test_setting_on_older_live_active_version_does_not_warn(self):
+        # Multiple versions of one schema can be ACTIVE simultaneously; older published
+        # versions keep resolving at runtime for backward compatibility (live-verified
+        # 2026-07-28: v1 and v2 of one key both returned OK). A key wired at the older
+        # live version is a VALID state — no warning.
+        live = _live_schema("S", [("x", "integer")], version="1")
+        live["versions"].append({"id": "ver-S-2", "version": "2", "status": "ACTIVE",
+                                 "tableFields": [{"name": "x", "type": "integer"},
+                                                 {"name": "y", "type": "integer"}]})
+        plan = self._plan(
+            schemas=[{"name": "S", "fields": [{"name": "x", "kind": "integer"}]}],
+            settings=[{"key": "K", "schema_name": "S", "version": 1}],
+            fs_schemas=[live])
+        self.assertEqual([w for w in plan["feature_settings"]["warnings"]
+                          if w.get("key") == "K" and "VERSION_NOT_FOUND" in w.get("reason", "")], [])
+
+    def test_setting_version_absent_from_live_set_warns_with_full_set(self):
+        live = _live_schema("S", [("x", "integer")], version="1")
+        live["versions"].append({"id": "ver-S-2", "version": "2", "status": "ACTIVE",
+                                 "tableFields": [{"name": "x", "type": "integer"}]})
+        plan = self._plan(
+            schemas=[{"name": "S", "fields": [{"name": "x", "kind": "integer"}]}],
+            settings=[{"key": "K", "schema_name": "S", "version": 5}],
+            fs_schemas=[live])
+        warns = [w for w in plan["feature_settings"]["warnings"] if w.get("key") == "K"]
+        self.assertEqual(len(warns), 1)
+        self.assertEqual(warns[0]["live_active_versions"], ["1", "2"])
+        self.assertIn("backward compatibility", warns[0]["reason"])
+
     def test_setting_version_match_no_warning(self):
         plan = self._plan(
             schemas=[{"name": "S", "fields": [{"name": "x", "kind": "integer"}]}],

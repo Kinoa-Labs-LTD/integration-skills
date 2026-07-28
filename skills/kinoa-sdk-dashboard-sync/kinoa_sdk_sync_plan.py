@@ -541,6 +541,7 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
     manifest_setting_keys = set()
     creating_schema_names = set()
     live_active_version_by_schema = {}
+    live_active_versions_by_schema = {}  # ALL simultaneously-ACTIVE version numbers (backward compat)
     bundle_key_columns_by_schema = {}
 
     def _is_filter_or_placeholder(field_name):
@@ -596,6 +597,12 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
         ver = _fs_latest_version(live)
         if ver is not None and ver.get("version") is not None:
             live_active_version_by_schema[name] = ver.get("version")
+        # Multiple versions of one schema can be ACTIVE at the same time — older published
+        # versions keep resolving at runtime so old game builds stay working (live-verified
+        # 2026-07-28: v1 and v2 of one key both returned status OK with their own configs).
+        live_active_versions_by_schema[name] = sorted(
+            {str(v.get("version")) for v in (live.get("versions") or [])
+             if str(v.get("status") or "").strip().lower() == "active" and v.get("version") is not None})
         item = {"name": name, "id": live.get("id"), "current_status": live.get("status")}
         live_fields = _fs_fields_map(live)
         if live_fields is not None:
@@ -663,13 +670,17 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                 "reason": "the schema is being created this run, so its only version will be 1 — the code "
                           "requests a different version and would get VERSION_NOT_FOUND at runtime",
             })
-        live_ver = live_active_version_by_schema.get(schema_name)
-        if live_ver is not None and version is not None and str(live_ver) != str(version):
+        live_vers = live_active_versions_by_schema.get(schema_name)
+        if live_vers and version is not None and str(version) not in live_vers:
             fsp["warnings"].append({
                 "key": key, "schema_name": schema_name,
-                "requested_version": version, "live_active_version": live_ver,
-                "reason": "the code requests a schema version that is not the live ACTIVE version — runtime would get "
-                          "VERSION_NOT_FOUND; align the code's version or publish the matching schema version",
+                "requested_version": version,
+                "live_active_version": live_active_version_by_schema.get(schema_name),
+                "live_active_versions": live_vers,
+                "reason": "the code requests a schema version that is not among the live ACTIVE versions — runtime "
+                          "would get VERSION_NOT_FOUND (older published versions stay resolvable for backward "
+                          "compatibility, so only versions absent from the live set warn); align the code's "
+                          "version or publish the matching schema version",
             })
         # Bundle dependency: seeded bundle_key values must (1) match the Bundle-key FORMAT — start
         # with a letter, then only letters/digits/_/- (no dots) — and (2) exist as Bundles; the

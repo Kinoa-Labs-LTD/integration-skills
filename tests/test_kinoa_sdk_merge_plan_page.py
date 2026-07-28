@@ -155,6 +155,7 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("enumValuesTooLong", html)
         self.assertIn("the schema's newest wired version", html)    # existing-schema version display
         self.assertIn("valid for backward compatibility", html)      # multi-version info note
+        self.assertIn(".grid > button.del", html)                     # row drop pinned right
         self.assertIn("minimum 1 column (server rule)", html)        # zero-column schema invalid
         self.assertIn("maxlength: 255", html)                        # schema-name length cap
         self.assertIn("maxlength: 100", html)                        # setting-key length cap
