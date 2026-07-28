@@ -41,9 +41,11 @@ Input JSON shape (sections may be empty or omitted):
     "schemas":  [{"id": 40, "name": "BoosterEconomy", "existing": false,
                   "source": "booster_economy.csv", "version": 3,
                   "columns": [{"name": "sku", "kind": "bundle_key", "is_required": true}]}],
-                 ("version" on EXISTING schemas = the version the code wires today, known
-                  from the sibling keys' download wiring; settings bound to that schema
-                  display and export it — new schemas are always v1)
+                 ("version" on EXISTING schemas = the HIGHEST version wired in code across
+                  the sibling keys (keys wired at different versions of one schema are a
+                  VALID backward-compat state — older published versions stay resolvable);
+                  new settings bound to that schema display and export it — new schemas
+                  are always v1)
     "settings": [{"id": 41, "key": "BoosterEconomy", "schema_name": "BoosterEconomy",
                   "version": 1, "existing": false, "source": "..."}]
   },
@@ -530,6 +532,18 @@ function renderFs() {{
       // A NEW schema always wires as version 1 (module 07) — shown, never editable.
       g.insertAdjacentHTML("beforeend", "<span class=\"muted\">v1 (new schemas always start at 1)</span>");
     }}
+    // Two keys wired at DIFFERENT versions of one schema is a VALID state (older
+    // published versions stay resolvable for backward compatibility of old game builds)
+    // — surfaced as information only; new keys inherit the highest wired version.
+    const wiredVersions = [...new Set(fs.settings
+      .filter(st => st.existing && String(st.schema_name || "") === String(r.name || "") && st.version != null)
+      .map(st => String(st.version)))];
+    if (wiredVersions.length > 1) {{
+      const mv = document.createElement("span"); mv.className = "muted";
+      mv.textContent = "wired at multiple versions in code (v" + wiredVersions.join(", v") +
+        ") — valid for backward compatibility; new keys inherit the highest";
+      g.appendChild(mv);
+    }}
     if (r.note) {{ const n = document.createElement("span"); n.className = "muted"; n.textContent = r.note; g.appendChild(n); }}
     div.appendChild(g);
     const tbl = document.createElement("table"); tbl.className = "sub";
@@ -617,7 +631,7 @@ function renderFs() {{
       v.textContent = newSchemas.has(r.schema_name)
         ? "v1 (new schema)"
         : (boundSchema && boundSchema.version
-           ? "v" + boundSchema.version + " (the schema's current version)"
+           ? "v" + boundSchema.version + " (the schema's newest wired version)"
            : "v" + (r.version || 1) + " (from code wiring)");
       g.appendChild(v);
     }}
