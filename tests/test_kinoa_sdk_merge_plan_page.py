@@ -149,7 +149,10 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("v1 (new schema)", html)                      # setting bound to new schema
         self.assertIn("shared schema — also used by", html)          # live many-keys indicator
         self.assertIn("validation error(s) — fix to enable export", html)  # global export block
-        self.assertIn("drags its bound settings along", html)        # schema rename auto-follow
+        self.assertNotIn("drags its bound settings along", html)    # auto-follow REVERTED (red + explicit choice)
+        self.assertIn("maximum 30 characters", html)                 # event/param/field name caps
+        self.assertIn("50 characters or less", html)                 # enum value caps
+        self.assertIn("enumValuesTooLong", html)
         self.assertIn("the schema's current version", html)          # existing-schema version display
         self.assertIn("minimum 1 column (server rule)", html)        # zero-column schema invalid
         self.assertIn("maxlength: 255", html)                        # schema-name length cap

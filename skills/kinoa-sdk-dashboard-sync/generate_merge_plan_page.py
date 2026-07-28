@@ -375,6 +375,11 @@ function dupIn(items, key) {{ return dupNames(items || [], key); }}
 // level, bound to Player Fields at config-fill time) and "<...>" is unreplaced scaffold — the
 // planner drops both from schema plans, so authoring them here would promise a column that
 // never materializes. Mirror of the planner's _is_filter_or_placeholder.
+// Enumeration values: each value must be 50 characters or less (backend-confirmed).
+function enumValuesTooLong(csv) {{
+  return String(csv || "").split(",").some(x => x.trim().length > 50);
+}}
+
 function isReservedFsColumn(n) {{
   const t = String(n || "").trim().toLowerCase();
   return t.startsWith("filter:") || String(n || "").includes("<");
@@ -392,7 +397,9 @@ function renderEvents() {{
       g.innerHTML = "<code>" + esc(r.name) + "</code>";
     }} else {{
       g.appendChild(textInput(r.name, "e" + i + "-name", v => r.name = v,
-        {{placeholder: "event_name", size: 28, bad: !String(r.name || "").trim() || dup(r.name)}}));
+        {{placeholder: "event_name", size: 28, maxlength: 30,
+          bad: !String(r.name || "").trim() || dup(r.name) || String(r.name || "").length > 30,
+          title: "maximum 30 characters"}}));
     }}
     if (r.note) {{ const n = document.createElement("span"); n.className = "muted"; n.textContent = r.note; g.appendChild(n); }}
     div.appendChild(g);
@@ -427,8 +434,9 @@ function renderEvents() {{
       }} else {{
         const sysHit = SYSTEM_EVENT_PARAM_NAMES.includes(String(p.name || "").trim());
         tr.appendChild(td(textInput(p.name, "e" + i + "-p" + j, v => p.name = v,
-          {{placeholder: "param_name", size: 20,
-            bad: !String(p.name || "").trim() || pdup(p.name), warn: sysHit,
+          {{placeholder: "param_name", size: 20, maxlength: 30,
+            bad: !String(p.name || "").trim() || pdup(p.name) || String(p.name || "").length > 30,
+            warn: sysHit,
             title: sysHit ? "collides with a dashboard SYSTEM event param — the event will lose its standard " + p.name + " column; rename (e.g. time -> time_of_day)" : ""}})));
         // Enum-values input shows ONLY while kind === enumeration, but the VALUE is
         // preserved on kind changes (discovery-found candidates must survive a toggle);
@@ -436,7 +444,9 @@ function renderEvents() {{
         tr.appendChild(td(kindSelect(EVENT_PARAM_KINDS, p.kind, v => p.kind = v)));
         if (p.kind === "enumeration") {{
           tr.appendChild(td(textInput(p.extra, "e" + i + "-p" + j + "-x", v => p.extra = v,
-            {{placeholder: "a, b, c", size: 18, bad: !String(p.extra || "").trim()}})));
+            {{placeholder: "a, b, c", size: 18,
+              bad: !String(p.extra || "").trim() || enumValuesTooLong(p.extra),
+              title: "each value must be 50 characters or less"}})));
         }}
         const rm = document.createElement("button"); rm.className = "del"; rm.textContent = "✕";
         rm.addEventListener("click", () => {{ r.params.splice(j, 1); render(); }});
@@ -465,11 +475,16 @@ function renderFields() {{
       g.innerHTML = "<code>" + esc(r.name) + "</code> <span class=\"muted\">" + esc(r.kind) + "</span>";
     }} else {{
       g.appendChild(textInput(r.name, "f" + i, v => r.name = v,
-        {{placeholder: "Wallet.Gold", size: 26, bad: !String(r.name || "").trim() || dup(r.name)}}));
+        {{placeholder: "Wallet.Gold", size: 26, maxlength: 30,
+          bad: !String(r.name || "").trim() || dup(r.name)
+               || String(r.name || "").length > 30 || snake(r.name).length > 100,
+          title: "maximum 30 characters (the registered path is capped at 100)"}}));
       g.appendChild(kindSelect(FIELD_KINDS, r.kind, v => r.kind = v));
       if (r.kind === "enumeration") {{
         g.appendChild(textInput(r.extra, "f" + i + "-x", v => r.extra = v,
-          {{placeholder: "a, b, c", size: 16, bad: !String(r.extra || "").trim()}}));
+          {{placeholder: "a, b, c", size: 16,
+            bad: !String(r.extra || "").trim() || enumValuesTooLong(r.extra),
+            title: "each value must be 50 characters or less"}}));
       }}
       const prev = document.createElement("span"); prev.className = "muted";
       prev.textContent = "→ path: " + snake(r.name);
@@ -502,14 +517,12 @@ function renderFs() {{
       // Server rules (backend-confirmed 2026-07-28): a schema must contain minimum
       // 1 column; the name is capped at 255 characters. A zero-column schema flags the
       // name input, which also blocks the export via the global validation gate.
+      // Renaming a schema deliberately does NOT auto-rebind its settings: they turn red
+      // "(missing: old)" and the developer explicitly re-picks or restores the old name —
+      // the export stays blocked until resolved (user decision 2026-07-28).
       const noColumns = !(r.columns || []).length;
-      g.appendChild(textInput(r.name, "ss" + i, v => {{
-        // Renaming a schema drags its bound settings along — schema_name is a reference,
-        // not free text; without this a rename orphans every key bound to it.
-        const prev = String(r.name || "");
-        fs.settings.forEach(st => {{ if (String(st.schema_name || "") === prev) st.schema_name = v; }});
-        r.name = v;
-      }}, {{placeholder: "SchemaName", size: 22, maxlength: 255,
+      g.appendChild(textInput(r.name, "ss" + i, v => r.name = v,
+        {{placeholder: "SchemaName", size: 22, maxlength: 255,
           bad: !String(r.name || "").trim() || sdup(r.name)
                || String(r.name || "").length > 255 || noColumns,
           title: noColumns ? "Schema should contain minimum 1 column (server rule)"
@@ -529,8 +542,9 @@ function renderFs() {{
       }} else {{
         const reserved = isReservedFsColumn(c.name);
         tr.appendChild(td(textInput(c.name, "ss" + i + "-c" + j, v => c.name = v,
-          {{placeholder: "column", size: 20,
-            bad: !String(c.name || "").trim() || cdup(c.name) || reserved,
+          {{placeholder: "column", size: 20, maxlength: 100,
+            bad: !String(c.name || "").trim() || cdup(c.name) || reserved
+                 || String(c.name || "").length > 100,
             title: reserved ? "filters are configuration-level (IncludeFilters readers), not schema columns — the operator picks them on the configuration table; unreplaced <placeholders> are scaffold" : ""}})));
         tr.appendChild(td(kindSelect(FS_COLUMN_KINDS, c.kind, v => c.kind = v)));
         if (c.kind === "bundle_key") {{
@@ -642,16 +656,19 @@ function renderResources() {{
     }} else {{
       g.insertAdjacentHTML("beforeend", "<span class=\"muted\">key</span>");
       g.appendChild(textInput(r.key, "r" + i + "-key", v => r.key = v,
-        {{placeholder: "legendary_sword", size: 22,
-          bad: !RESOURCE_KEY_RE.test(String(r.key || "")) || dup(r.key)}}));
+        {{placeholder: "legendary_sword", size: 22, maxlength: 100,
+          bad: !RESOURCE_KEY_RE.test(String(r.key || "")) || dup(r.key)
+               || String(r.key || "").length > 100,
+          title: "letter first; letters, digits, _ and -; maximum 100 characters"}}));
       g.insertAdjacentHTML("beforeend", "<span class=\"muted\">name</span>");
       g.appendChild(textInput(r.name, "r" + i + "-name", v => r.name = v,
-        {{placeholder: "Legendary Sword", size: 22,
-          bad: !String(r.name || "").trim() || ndup(r.name),
-          title: "template NAME is unique on the server across ALL statuses (incl. DEPRECATED)"}}));
+        {{placeholder: "Legendary Sword", size: 22, maxlength: 100,
+          bad: !String(r.name || "").trim() || ndup(r.name) || String(r.name || "").length > 100,
+          title: "unique on the server across ALL statuses (incl. DEPRECATED); maximum 100 characters"}}));
       g.insertAdjacentHTML("beforeend", "<span class=\"muted\">description</span>");
       g.appendChild(textInput(r.description, "r" + i + "-desc", v => r.description = v,
-        {{placeholder: "optional", size: 26}}));
+        {{placeholder: "optional", size: 26, maxlength: 100,
+          bad: String(r.description || "").length > 100, title: "maximum 100 characters"}}));
     }}
     if (r.note) {{ const n = document.createElement("span"); n.className = "muted"; n.textContent = r.note; g.appendChild(n); }}
     div.appendChild(g);
@@ -666,7 +683,9 @@ function renderResources() {{
           esc((f.enumeration_values || []).join(", ") || f.default || "") + "</td>";
       }} else {{
         tr.appendChild(td(textInput(f.name, "r" + i + "-f" + j, v => f.name = v,
-          {{placeholder: "field_name", size: 16, bad: !String(f.name || "").trim() || fdup(f.name)}})));
+          {{placeholder: "field_name", size: 16, maxlength: 100,
+            bad: !String(f.name || "").trim() || fdup(f.name) || String(f.name || "").length > 100,
+            title: "maximum 100 characters"}})));
         tr.appendChild(td(kindSelect(RESOURCE_FIELD_TYPES, f.field_type, v => f.field_type = v)));
         const req = document.createElement("input"); req.type = "checkbox"; req.checked = !!f.required;
         req.title = "required";
