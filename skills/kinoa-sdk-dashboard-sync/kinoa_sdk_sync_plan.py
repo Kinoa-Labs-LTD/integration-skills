@@ -362,7 +362,11 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                 "name": name, "dashboard_name": predef_hit.get("name"),
                 "reason": "collision with a PREDEFINED dashboard event of the same (or case-variant) name — "
                           "this manifest entry is classified custom; creating it would duplicate the "
-                          "predefined record. Re-check the producer's predefined/custom classification.",
+                          "predefined record. Two cases, both fixed in game code: a GAME-WIRED predefined "
+                          "(payment, level_up, ...) -> reclassify to its existing builder (the custom mirror "
+                          "must go); an SDK-FIRED debug event (install, feature_settings_download, ...) -> "
+                          "REMOVE it from game code entirely — the SDK/backend logs it itself and it must "
+                          "not be sent by the game.",
             })
         plan["events"]["create"].append({
             "name": name,
