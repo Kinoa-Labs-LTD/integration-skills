@@ -215,7 +215,7 @@ Execute approved actions in this fixed order (events → fields → feature sett
 | `events.create[]` | `kinoa_dashboard_event.py create --name <name> [--no-analytics] --param NAME:KIND[:EXTRA]...` |
 | `events.add_params[]` | `kinoa_dashboard_event.py add-params --event-id <id> --param NAME:KIND[:EXTRA]...` |
 | `player_fields.activate[]` | `kinoa_dashboard_player_fields.py activate --field-id <id>` |
-| `player_fields.create[]` | `kinoa_dashboard_player_fields.py create --name <name> --path <path> --kind <kind> [--extra ...]` — **never pass `--default-value`**: the live API 422-rejects it for non-calculated fields (*"defaultValue can only be set for calculated (EXTERNAL) fields"*), and manifest fields are code-backed, never calculated |
+| `player_fields.create[]` | `kinoa_dashboard_player_fields.py create --name <name> --path <path> --kind <kind> [--extra ...] [--description "<description>"]` (pass `--description` only when the plan item carries one) — **never pass `--default-value`**: the live API 422-rejects it for non-calculated fields (*"defaultValue can only be set for calculated (EXTERNAL) fields"*), and manifest fields are code-backed, never calculated |
 
 **Always append `--expect-game <game_id from the manifest>` to every call in this table.** It is the per-call cross-game backstop in the dashboard helpers (mirrors the planner's `listing_game_mismatch`): the helper aborts with `session_game_mismatch` (exit 2) before any state change if `session.env`'s `KINOA_GAME_ID` drifted to a different game. A `session_game_mismatch` is the same condition as the planner's exit 2 — stop and route to kinoa-init for the manifest's game; do not retry without `--expect-game`.
 

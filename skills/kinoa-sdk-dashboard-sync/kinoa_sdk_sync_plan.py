@@ -478,13 +478,19 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
             })
         # default_value is deliberately NOT forwarded: the live API 422-rejects it
         # for non-calculated fields, and manifest fields are code-backed, never calculated.
-        plan["player_fields"]["create"].append({
+        item = {
             "name": entry.get("name") or entry.get("property") or path,
             "path": path,
             "kind": kind,
             "extra": entry.get("extra") or "",
             "reason": "custom field not present on the dashboard",
-        })
+        }
+        # Optional, SDK-producer-only (user decision 2026-07-28): measured from the C#
+        # XML-doc summary. Key absent when the manifest carries none — the helper's
+        # --description flag has always existed, so older manifests/flows are unaffected.
+        if entry.get("description"):
+            item["description"] = entry["description"]
+        plan["player_fields"]["create"].append(item)
 
     # --- Vocabulary-drift detector: LIVE listings carrying a param/field kind outside this
     #     planner's closed vocabulary mean the BACKEND grew a kind this plugin version doesn't

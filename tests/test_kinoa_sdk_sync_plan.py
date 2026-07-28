@@ -200,6 +200,15 @@ class BuildPlanTests(unittest.TestCase):
         # Advisory only: the create itself still goes ahead byte-for-byte.
         self.assertEqual([e["name"] for e in plan["events"]["create"]], ["booster_lifecycle"])
 
+    def test_custom_field_description_passthrough_optional(self):
+        manifest = _manifest()
+        manifest["player_fields"]["custom"] = [
+            {"path": "wallet.gold", "kind": "number", "description": "player soft currency"},
+            {"path": "wallet.gems", "kind": "number"}]
+        creates = self._plan(manifest)["player_fields"]["create"]
+        self.assertEqual(creates[0]["description"], "player soft currency")
+        self.assertNotIn("description", creates[1])  # absent stays absent (API flow untouched)
+
     def test_duplicate_manifest_field_path_warns_and_plans_once(self):
         # WalletGold and Wallet_Gold both derive wallet_gold — registration identity is
         # the path; the second entry must warn, not plan a colliding create.

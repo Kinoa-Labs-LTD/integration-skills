@@ -182,6 +182,7 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn('replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")', html)  # acronym-aware snake()
         self.assertNotIn('replace(/\\./g, ".")', html)                 # vestigial no-op dropped
         self.assertIn("r.path ||", html)                              # producer path honored in dup check
+        self.assertIn('placeholder: "description (optional)"', html)  # field description (SDK-only, 2026-07-28)
         self.assertIn("minimum 1 column (server rule)", html)        # zero-column schema invalid
         self.assertIn("maxlength: 255", html)                        # schema-name length cap
         self.assertIn("maxlength: 100", html)                        # setting-key length cap

@@ -35,8 +35,13 @@ Input JSON shape (sections may be empty or omitted):
   ],
   "player_fields": [
     {"id": 20, "name": "Wallet.Gold", "kind": "number", "extra": "", "existing": false,
-     "source": "Scripts/Model/Player/Wallet.cs:12", "note": ""}
+     "source": "Scripts/Model/Player/Wallet.cs:12", "note": "",
+     "path": "wallet.gold", "description": ""}
   ],
+                 ("path" = the registered snake path from the manifest — the dup check
+                  honors [JsonPropertyName] overrides; "description" is OPTIONAL and
+                  SDK-producer-only: measured from the C# XML-doc summary, editable on
+                  new rows, forwarded to the create call — absent key stays absent)
   "feature_settings": {
     "schemas":  [{"id": 40, "name": "BoosterEconomy", "existing": false,
                   "source": "booster_economy.csv", "version": 3,
@@ -527,6 +532,8 @@ function renderFields() {{
             bad: !String(r.extra || "").trim() || enumValuesTooLong(r.extra),
             title: "each value must be 50 characters or less"}}));
       }}
+      g.appendChild(textInput(r.description, "f" + i + "-d", v => r.description = v,
+        {{placeholder: "description (optional)", size: 24}}));
       const prev = document.createElement("span"); prev.className = "muted";
       prev.textContent = "→ path: " + snake(r.name);
       g.appendChild(prev);
@@ -798,7 +805,8 @@ document.getElementById("add-event").addEventListener("click", () => {{
   render();
 }});
 document.getElementById("add-field").addEventListener("click", () => {{
-  state.player_fields.push({{id: nextId++, name: "", kind: "string", existing: false, source: "added on page"}});
+  state.player_fields.push({{id: nextId++, name: "", kind: "string", description: "",
+                             existing: false, source: "added on page"}});
   render();
 }});
 document.getElementById("add-res").addEventListener("click", () => {{
