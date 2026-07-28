@@ -476,6 +476,35 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
             "reason": "custom field not present on the dashboard",
         })
 
+    # --- Vocabulary-drift detector: LIVE listings carrying a param/field kind outside this
+    #     planner's closed vocabulary mean the BACKEND grew a kind this plugin version doesn't
+    #     know yet. Advisory only — one aggregated warning per surface; the fix is a plugin
+    #     update (helper + planner + page ship together, parity-tested). ---
+    live_unknown_param_kinds = sorted({
+        str(p.get("kind")).strip().lower()
+        for rec in list(ev_predef or []) + list(ev_custom or [])
+        if isinstance(rec, dict)
+        for p in (rec.get("game_event_parameters") or []) if isinstance(p, dict)
+        if p.get("kind") and str(p.get("kind")).strip().lower() not in EVENT_PARAM_KINDS})
+    if live_unknown_param_kinds:
+        plan["events"]["warnings"].append({
+            "unknown_kinds": live_unknown_param_kinds,
+            "reason": "the live dashboard uses event-param kind(s) this plugin version doesn't know — "
+                      "the backend vocabulary grew; update the plugin (/plugin marketplace update kinoa) "
+                      "so the planner, helpers, and merge-plan page learn them",
+        })
+    live_unknown_field_kinds = sorted({
+        str(rec.get("kind")).strip().lower()
+        for rec in list(pf_predef or []) + list(pf_custom or [])
+        if isinstance(rec, dict) and rec.get("kind")
+        and str(rec.get("kind")).strip().lower() not in FIELD_KINDS})
+    if live_unknown_field_kinds:
+        plan["player_fields"]["warnings"].append({
+            "unknown_kinds": live_unknown_field_kinds,
+            "reason": "the live dashboard uses player-field kind(s) this plugin version doesn't know — "
+                      "the backend vocabulary grew; update the plugin (/plugin marketplace update kinoa)",
+        })
+
     # --- Publishing replaces the record under a NEW id: flag add_params entries whose
     #     target event is also being published this run, so the executor re-resolves the id. ---
     published_names = {_norm(item.get("name")) for item in plan["events"]["publish"]}

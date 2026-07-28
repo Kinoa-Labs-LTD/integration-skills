@@ -407,6 +407,40 @@ class BuildPlanTests(unittest.TestCase):
                          _const_set(("skills", "kinoa-dashboard-player-fields", "kinoa_dashboard_player_fields.py"),
                                     "ALLOWED_KINDS"))
 
+    # ---- vocabulary-drift detector ----
+
+    def test_unknown_live_param_kind_warns_update_plugin(self):
+        # The backend grew a param kind this plugin doesn't know — every sync becomes a
+        # freshness probe: one aggregated advisory warning, nothing blocked.
+        manifest = _manifest()
+        manifest["events"]["predefined_in_use"] = [{"name": "payment"}]
+        plan = self._plan(manifest, ev_predef=[
+            {"id": "e1", "name": "payment", "status": "ACTIVE",
+             "game_event_parameters": [{"name": "tx_ref", "kind": "uuid"},
+                                       {"name": "amount", "kind": "number"}]}])
+        warns = [w for w in plan["events"]["warnings"] if "unknown_kinds" in w]
+        self.assertEqual(len(warns), 1)
+        self.assertEqual(warns[0]["unknown_kinds"], ["uuid"])
+        self.assertIn("update the plugin", warns[0]["reason"])
+
+    def test_unknown_live_field_kind_warns_update_plugin(self):
+        plan = self._plan(_manifest(), pf_custom=[
+            {"id": "f1", "path": "wallet.gold", "state": "active", "kind": "geo_point"}])
+        warns = [w for w in plan["player_fields"]["warnings"] if "unknown_kinds" in w]
+        self.assertEqual(len(warns), 1)
+        self.assertEqual(warns[0]["unknown_kinds"], ["geo_point"])
+
+    def test_known_live_kinds_produce_no_drift_warning(self):
+        manifest = _manifest()
+        manifest["events"]["predefined_in_use"] = [{"name": "payment"}]
+        plan = self._plan(manifest,
+                          ev_predef=[{"id": "e1", "name": "payment", "status": "ACTIVE",
+                                      "game_event_parameters": [{"name": "a", "kind": "number"}]}],
+                          pf_custom=[{"id": "f1", "path": "wallet.gold", "state": "active",
+                                      "kind": "number"}])
+        self.assertEqual([w for w in plan["events"]["warnings"] if "unknown_kinds" in w], [])
+        self.assertEqual([w for w in plan["player_fields"]["warnings"] if "unknown_kinds" in w], [])
+
     # ---- safety invariants ----
 
     def test_plan_never_contains_delete_actions(self):
