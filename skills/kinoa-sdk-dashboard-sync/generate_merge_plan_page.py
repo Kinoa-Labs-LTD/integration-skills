@@ -39,8 +39,11 @@ Input JSON shape (sections may be empty or omitted):
   ],
   "feature_settings": {
     "schemas":  [{"id": 40, "name": "BoosterEconomy", "existing": false,
-                  "source": "booster_economy.csv",
+                  "source": "booster_economy.csv", "version": 3,
                   "columns": [{"name": "sku", "kind": "bundle_key", "is_required": true}]}],
+                 ("version" on EXISTING schemas = the version the code wires today, known
+                  from the sibling keys' download wiring; settings bound to that schema
+                  display and export it — new schemas are always v1)
     "settings": [{"id": 41, "key": "BoosterEconomy", "schema_name": "BoosterEconomy",
                   "version": 1, "existing": false, "source": "..."}]
   },
@@ -230,7 +233,7 @@ function normalizeFs(v) {{
       const sn = r.schema_name || r.key || "";
       if (sn && !seen.has(sn)) {{ seen.add(sn);
         schemas.push({{id: r.id, name: sn, existing: !!r.existing, source: r.source,
-                      columns: r.columns || []}}); }}
+                      version: r.version, columns: r.columns || []}}); }}
       settings.push({{id: (r.id || 0) + 100000, key: r.key, schema_name: sn,
                      version: r.version || 1, existing: !!r.existing, source: r.source, note: r.note}});
     }});
@@ -293,6 +296,15 @@ function render() {{
   const focusId = active && active.dataset ? active.dataset.fid : null;
   const selStart = focusId && "selectionStart" in active ? active.selectionStart : null;
   renderEvents(); renderFields(); renderFs(); renderResources(); renderCounter();
+  // ANY visible validation error blocks the export — an invalid plan must never
+  // become a hand-back (user rule 2026-07-28).
+  const errs = document.querySelectorAll("input.bad, select.bad").length;
+  document.getElementById("download").disabled = errs > 0;
+  document.getElementById("copy").disabled = errs > 0;
+  if (errs > 0) {{
+    document.getElementById("counter").textContent +=
+      "  \u00b7  " + errs + " validation error(s) — fix to enable export";
+  }}
   if (focusId) {{
     const el = document.querySelector('[data-fid="' + focusId + '"]');
     if (el) {{ el.focus(); if (selStart != null && "setSelectionRange" in el) el.setSelectionRange(selStart, selStart); }}
@@ -304,6 +316,7 @@ function textInput(value, fid, oninput, opts = {{}}) {{
   inp.type = "text"; inp.value = value || ""; inp.dataset.fid = fid;
   if (opts.placeholder) inp.placeholder = opts.placeholder;
   if (opts.size) inp.size = opts.size;
+  if (opts.maxlength) inp.maxLength = opts.maxlength;
   if (opts.bad) inp.className = "bad";
   else if (opts.warn) inp.className = "warnp";
   if (opts.title) inp.title = opts.title;
@@ -486,8 +499,21 @@ function renderFs() {{
       g.innerHTML = "schema <code>" + esc(r.name) + "</code>";
     }} else {{
       g.insertAdjacentHTML("beforeend", "<span class=\"muted\">schema</span>");
-      g.appendChild(textInput(r.name, "ss" + i, v => r.name = v,
-        {{placeholder: "SchemaName", size: 22, bad: !String(r.name || "").trim() || sdup(r.name)}}));
+      // Server rules (backend-confirmed 2026-07-28): a schema must contain minimum
+      // 1 column; the name is capped at 255 characters. A zero-column schema flags the
+      // name input, which also blocks the export via the global validation gate.
+      const noColumns = !(r.columns || []).length;
+      g.appendChild(textInput(r.name, "ss" + i, v => {{
+        // Renaming a schema drags its bound settings along — schema_name is a reference,
+        // not free text; without this a rename orphans every key bound to it.
+        const prev = String(r.name || "");
+        fs.settings.forEach(st => {{ if (String(st.schema_name || "") === prev) st.schema_name = v; }});
+        r.name = v;
+      }}, {{placeholder: "SchemaName", size: 22, maxlength: 255,
+          bad: !String(r.name || "").trim() || sdup(r.name)
+               || String(r.name || "").length > 255 || noColumns,
+          title: noColumns ? "Schema should contain minimum 1 column (server rule)"
+                           : "maximum 255 characters"}}));
       // A NEW schema always wires as version 1 (module 07) — shown, never editable.
       g.insertAdjacentHTML("beforeend", "<span class=\"muted\">v1 (new schemas always start at 1)</span>");
     }}
@@ -568,8 +594,12 @@ function renderFs() {{
       sel.addEventListener("change", e => {{ r.schema_name = e.target.value; render(); }});
       g.appendChild(sel);
       const v = document.createElement("span"); v.className = "muted";
+      const boundSchema = fs.schemas.find(x => String(x.name || "") === String(r.schema_name || ""));
       v.textContent = newSchemas.has(r.schema_name)
-        ? "v1 (new schema)" : "v" + (r.version || 1) + " (from code wiring)";
+        ? "v1 (new schema)"
+        : (boundSchema && boundSchema.version
+           ? "v" + boundSchema.version + " (the schema's current version)"
+           : "v" + (r.version || 1) + " (from code wiring)");
       g.appendChild(v);
     }}
     // Live many-keys-one-schema indicator — recomputed on every render, so it follows
@@ -707,7 +737,14 @@ function exportJson() {{
       params: (r.params || []).map(cleanParam)}})),
     player_fields: state.player_fields.map(r =>
       r.kind === "enumeration" ? r : {{...r, extra: ""}}),
-    feature_settings: state.feature_settings,
+    feature_settings: {{schemas: state.feature_settings.schemas,
+      settings: state.feature_settings.settings.map(st => {{
+        const sch = state.feature_settings.schemas.find(
+          x => String(x.name || "") === String(st.schema_name || ""));
+        const ver = sch ? (sch.existing ? (sch.version || st.version || 1) : 1)
+                        : (st.version || 1);
+        return {{...st, version: ver}};
+      }})}},
     resources: state.resources.map(r => ({{...r, fields: (r.fields || []).map(cleanField)}})),
   }}, null, 2);
 }}

@@ -148,6 +148,11 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("values must be existing Bundle keys", html)  # bundle_key hint
         self.assertIn("v1 (new schema)", html)                      # setting bound to new schema
         self.assertIn("shared schema — also used by", html)          # live many-keys indicator
+        self.assertIn("validation error(s) — fix to enable export", html)  # global export block
+        self.assertIn("drags its bound settings along", html)        # schema rename auto-follow
+        self.assertIn("the schema's current version", html)          # existing-schema version display
+        self.assertIn("minimum 1 column (server rule)", html)        # zero-column schema invalid
+        self.assertIn("maxlength: 255", html)                        # schema-name length cap
 
     def test_fs_flat_payload_tolerated(self):
         p = {"generated_at": "2026-07-28T15:00:00Z", "game_id": None,
@@ -226,7 +231,7 @@ class MergePlanPageTests(unittest.TestCase):
         html = open(out_path, encoding="utf-8").read()
         for frozen in ("confirmed_at:", "page_generated_at:", "payload_version:",
                        "events: state.events", "player_fields: state.player_fields",
-                       "feature_settings: state.feature_settings", "resources: state.resources"):
+                       "feature_settings: {schemas: state.feature_settings.schemas", "resources: state.resources"):
             self.assertIn(frozen, html)
 
     def test_payload_version_guard(self):
