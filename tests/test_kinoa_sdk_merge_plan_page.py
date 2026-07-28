@@ -153,6 +153,7 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("the schema's current version", html)          # existing-schema version display
         self.assertIn("minimum 1 column (server rule)", html)        # zero-column schema invalid
         self.assertIn("maxlength: 255", html)                        # schema-name length cap
+        self.assertIn("maxlength: 100", html)                        # setting-key length cap
 
     def test_fs_flat_payload_tolerated(self):
         p = {"generated_at": "2026-07-28T15:00:00Z", "game_id": None,

@@ -575,8 +575,13 @@ function renderFs() {{
                     "</code> · v" + esc(r.version);
     }} else {{
       g.insertAdjacentHTML("beforeend", "<span class=\"muted\">key</span>");
+      // Server rules (backend-confirmed 2026-07-28): key capped at 100 characters;
+      // a setting cannot exist without a schema (the dropdown below enforces that —
+      // its red state blocks the export via the global validation gate).
       g.appendChild(textInput(r.key, "sk" + i, v => r.key = v,
-        {{placeholder: "FeatureKey", size: 20, bad: !String(r.key || "").trim() || kdup(r.key)}}));
+        {{placeholder: "FeatureKey", size: 20, maxlength: 100,
+          bad: !String(r.key || "").trim() || kdup(r.key) || String(r.key || "").length > 100,
+          title: "maximum 100 characters"}}));
       g.insertAdjacentHTML("beforeend", "<span class=\"muted\">schema</span>");
       // Schema is a REFERENCE, not free text — pick from the schemas defined above
       // (kills dangling schema_name and shape redefinition by construction).
