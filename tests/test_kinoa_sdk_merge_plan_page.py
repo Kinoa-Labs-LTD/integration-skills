@@ -126,6 +126,8 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("never editable", html)                      # predefined wire names
         self.assertIn("unique on the server across ALL statuses", html)  # resource NAME rule
         self.assertIn("c.is_required = true", html)                # FS required: ALWAYS true, no UI control
+        self.assertIn('if (v !== "enumeration")', html)            # enum values reset on kind change
+        self.assertNotIn(".disabled = true; // enum", html)        # (no disabled enum inputs remain)
         self.assertNotIn("c.is_required !== false", html)          # the old FS checkbox is gone
         self.assertIn("req.checked = !!f.required", html)          # resource required checkbox STAYS (default FALSE)
 

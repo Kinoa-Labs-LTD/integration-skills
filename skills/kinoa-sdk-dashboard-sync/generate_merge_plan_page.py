@@ -417,11 +417,14 @@ function renderEvents() {{
           {{placeholder: "param_name", size: 20,
             bad: !String(p.name || "").trim() || pdup(p.name), warn: sysHit,
             title: sysHit ? "collides with a dashboard SYSTEM event param — the event will lose its standard " + p.name + " column; rename (e.g. time -> time_of_day)" : ""}})));
-        tr.appendChild(td(kindSelect(EVENT_PARAM_KINDS, p.kind, v => p.kind = v)));
-        const extra = textInput(p.extra, "e" + i + "-p" + j + "-x", v => p.extra = v,
-          {{placeholder: "a, b, c", size: 18, bad: p.kind === "enumeration" && !String(p.extra || "").trim()}});
-        if (p.kind !== "enumeration") extra.disabled = true;
-        tr.appendChild(td(extra));
+        // Enum-values input exists ONLY while kind === enumeration; switching away resets
+        // the value (a hidden stale list must never ship in the export).
+        tr.appendChild(td(kindSelect(EVENT_PARAM_KINDS, p.kind,
+          v => {{ p.kind = v; if (v !== "enumeration") p.extra = ""; }})));
+        if (p.kind === "enumeration") {{
+          tr.appendChild(td(textInput(p.extra, "e" + i + "-p" + j + "-x", v => p.extra = v,
+            {{placeholder: "a, b, c", size: 18, bad: !String(p.extra || "").trim()}})));
+        }}
         const rm = document.createElement("button"); rm.className = "del"; rm.textContent = "✕";
         rm.addEventListener("click", () => {{ r.params.splice(j, 1); render(); }});
         tr.appendChild(td(rm));
@@ -450,12 +453,12 @@ function renderFields() {{
     }} else {{
       g.appendChild(textInput(r.name, "f" + i, v => r.name = v,
         {{placeholder: "Wallet.Gold", size: 26, bad: !String(r.name || "").trim() || dup(r.name)}}));
-      g.appendChild(kindSelect(FIELD_KINDS, r.kind, v => r.kind = v));
-      const fex = textInput(r.extra, "f" + i + "-x", v => r.extra = v,
-        {{placeholder: "a, b, c", size: 16,
-          bad: r.kind === "enumeration" && !String(r.extra || "").trim()}});
-      if (r.kind !== "enumeration") fex.disabled = true;
-      g.appendChild(fex);
+      g.appendChild(kindSelect(FIELD_KINDS, r.kind,
+        v => {{ r.kind = v; if (v !== "enumeration") r.extra = ""; }}));
+      if (r.kind === "enumeration") {{
+        g.appendChild(textInput(r.extra, "f" + i + "-x", v => r.extra = v,
+          {{placeholder: "a, b, c", size: 16, bad: !String(r.extra || "").trim()}}));
+      }}
       const prev = document.createElement("span"); prev.className = "muted";
       prev.textContent = "→ path: " + snake(r.name);
       g.appendChild(prev);
@@ -630,19 +633,19 @@ function renderResources() {{
       }} else {{
         tr.appendChild(td(textInput(f.name, "r" + i + "-f" + j, v => f.name = v,
           {{placeholder: "field_name", size: 16, bad: !String(f.name || "").trim() || fdup(f.name)}})));
-        tr.appendChild(td(kindSelect(RESOURCE_FIELD_TYPES, f.field_type, v => f.field_type = v)));
+        tr.appendChild(td(kindSelect(RESOURCE_FIELD_TYPES, f.field_type,
+          v => {{ f.field_type = v; if (v !== "enumeration") f.enumeration_values = []; }})));
         const req = document.createElement("input"); req.type = "checkbox"; req.checked = !!f.required;
         req.title = "required";
         req.addEventListener("change", e => {{ f.required = e.target.checked; }});
         tr.appendChild(td(req));
         tr.appendChild(td(textInput(f.default, "r" + i + "-f" + j + "-d", v => f.default = v,
           {{placeholder: "default", size: 10}})));
-        const ev = textInput((f.enumeration_values || []).join(", "), "r" + i + "-f" + j + "-e",
-          v => f.enumeration_values = v.split(",").map(x => x.trim()).filter(Boolean),
-          {{placeholder: "a, b, c", size: 16,
-            bad: f.field_type === "enumeration" && !(f.enumeration_values || []).length}});
-        if (f.field_type !== "enumeration") ev.disabled = true;
-        tr.appendChild(td(ev));
+        if (f.field_type === "enumeration") {{
+          tr.appendChild(td(textInput((f.enumeration_values || []).join(", "), "r" + i + "-f" + j + "-e",
+            v => f.enumeration_values = v.split(",").map(x => x.trim()).filter(Boolean),
+            {{placeholder: "a, b, c", size: 16, bad: !(f.enumeration_values || []).length}})));
+        }}
         tr.appendChild(td(textInput(f.description, "r" + i + "-f" + j + "-fd", v => f.description = v,
           {{placeholder: "field description", size: 16}})));
         const rm = document.createElement("button"); rm.className = "del"; rm.textContent = "✕";
