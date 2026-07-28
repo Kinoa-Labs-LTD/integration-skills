@@ -200,6 +200,18 @@ class BuildPlanTests(unittest.TestCase):
         # Advisory only: the create itself still goes ahead byte-for-byte.
         self.assertEqual([e["name"] for e in plan["events"]["create"]], ["booster_lifecycle"])
 
+    def test_duplicate_manifest_field_path_warns_and_plans_once(self):
+        # WalletGold and Wallet_Gold both derive wallet_gold — registration identity is
+        # the path; the second entry must warn, not plan a colliding create.
+        manifest = _manifest()
+        manifest["player_fields"]["custom"] = [
+            {"path": "wallet_gold", "property": "WalletGold", "kind": "number"},
+            {"path": "wallet_gold", "property": "Wallet_Gold", "kind": "number"}]
+        pf = self._plan(manifest)["player_fields"]
+        self.assertEqual(len([w for w in pf["warnings"]
+                              if "duplicate registered path" in w.get("reason", "")]), 1)
+        self.assertEqual(len(pf["create"]), 1)
+
     def test_custom_field_case_collision_warns(self):
         manifest = _manifest()
         manifest["player_fields"]["custom"] = [{"name": "Wallet.Gold", "path": "Wallet.gold",

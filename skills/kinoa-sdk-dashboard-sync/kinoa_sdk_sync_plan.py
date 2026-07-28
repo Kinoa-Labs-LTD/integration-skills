@@ -410,6 +410,16 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
         path = _norm(entry.get("path"))
         if not path:
             continue
+        # Registration identity is the path: two properties deriving the same snake path
+        # (e.g. WalletGold and Wallet_Gold) can't both exist — System.Text.Json refuses the
+        # second property at serialization and the second create targets a taken path.
+        if path in manifest_field_paths:
+            plan["player_fields"]["warnings"].append({
+                "path": path, "name": entry.get("property") or path,
+                "reason": "duplicate registered path in the manifest — another entry already derives "
+                          "this snake path; only the first is planned, rename one property in code",
+            })
+            continue
         manifest_field_paths.add(path)
         kind = (entry.get("kind") or "").strip()
         if kind not in FIELD_KINDS:

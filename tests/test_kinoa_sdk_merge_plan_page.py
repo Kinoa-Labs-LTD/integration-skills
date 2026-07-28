@@ -171,6 +171,17 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("(choose a schema)", html)                      # empty binding = explicit red
         self.assertIn('effectiveKind(r) !== "debug"', html)           # counter skips debug rows
         self.assertIn("vm-banner", html)                              # mismatch banner deduped
+        # User-fields audit round (2026-07-28): four confirmed fixes
+        self.assertGreaterEqual(html.count("// echoed verbatim"), 3)  # events + fields + fs settings
+        self.assertIn("pathDup", html)                                # snake-path dup detection
+        self.assertIn("(choose kind)", html)                          # absent kind = explicit red
+        self.assertIn("(unsupported: ", html)                         # unknown kind = explicit red
+        self.assertIn('sel.dataset.fid = "fss"', html)                # selects keep focus
+        # Leftover-claims round: charset gate + .NET SnakeCaseLower parity
+        self.assertIn("FIELD_NAME_RE", html)                          # C# property-chain charset
+        self.assertIn('replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")', html)  # acronym-aware snake()
+        self.assertNotIn('replace(/\\./g, ".")', html)                 # vestigial no-op dropped
+        self.assertIn("r.path ||", html)                              # producer path honored in dup check
         self.assertIn("minimum 1 column (server rule)", html)        # zero-column schema invalid
         self.assertIn("maxlength: 255", html)                        # schema-name length cap
         self.assertIn("maxlength: 100", html)                        # setting-key length cap

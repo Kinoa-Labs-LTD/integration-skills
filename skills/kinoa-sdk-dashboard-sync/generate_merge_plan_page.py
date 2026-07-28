@@ -282,7 +282,14 @@ function effectiveKind(r) {{
   if (r.kind === "predefined" || isPredefName(r.name)) return "predefined";
   return r.kind || "custom";
 }}
-function snake(s) {{ return String(s || "").replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/\./g, ".").toLowerCase(); }}
+// Mirrors .NET JsonNamingPolicy.SnakeCaseLower (the producer's registered-path
+// derivation): acronym runs split before their last capital — XPBonus -> xp_bonus,
+// HTTPServer -> http_server, MaxHP -> max_hp. Dots (nested paths) pass through.
+function snake(s) {{ return String(s || "").replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+  .replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase(); }}
+// Field NAME must be a dot-separated C# property chain — it ships byte-for-byte
+// into code as identifiers (resource keys already get the same class of rule).
+const FIELD_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/;
 
 // Re-render destroys every node — remember the focused input and caret so
 // live-validated typing doesn't drop focus.
@@ -334,8 +341,17 @@ function textInput(value, fid, oninput, opts = {{}}) {{
   return inp;
 }}
 
-function kindSelect(kinds, value, onchange) {{
+function kindSelect(kinds, value, onchange, fid) {{
   const sel = document.createElement("select");
+  if (fid) sel.dataset.fid = fid;
+  // A value outside the closed vocabulary (absent, or producer drift tolerated by
+  // contract clause 1) must be an explicit red choice — the browser would otherwise
+  // DISPLAY the first option while the state and export keep the stale value.
+  if (!kinds.includes(value)) {{
+    const o = document.createElement("option"); o.value = "";
+    o.textContent = value ? "(unsupported: " + value + ")" : "(choose kind)";
+    o.selected = true; sel.appendChild(o); sel.className = "bad";
+  }}
   kinds.forEach(k => {{ const o = document.createElement("option"); o.value = k; o.textContent = k;
     if (k === value) o.selected = true; sel.appendChild(o); }});
   sel.addEventListener("change", e => {{ onchange(e.target.value); render(); }});
@@ -456,7 +472,7 @@ function renderEvents() {{
         // Enum-values input shows ONLY while kind === enumeration, but the VALUE is
         // preserved on kind changes (discovery-found candidates must survive a toggle);
         // the EXPORT strips it for non-enumeration kinds instead.
-        tr.appendChild(td(kindSelect(EVENT_PARAM_KINDS, p.kind, v => p.kind = v)));
+        tr.appendChild(td(kindSelect(EVENT_PARAM_KINDS, p.kind, v => p.kind = v, "e" + i + "-p" + j + "-k")));
         if (p.kind === "enumeration") {{
           tr.appendChild(td(textInput(p.extra, "e" + i + "-p" + j + "-x", v => p.extra = v,
             {{placeholder: "a, b, c", size: 18,
@@ -482,6 +498,13 @@ function renderEvents() {{
 function renderFields() {{
   const host = document.getElementById("player_fields"); host.innerHTML = "";
   const dup = dupNames(state.player_fields, "name");
+  const pathCount = new Map();
+  const pathOf = r => String(r.path || "").trim() || snake(String(r.name || "").trim());
+  state.player_fields.forEach(r => {{
+    const p = pathOf(r);
+    if (p) pathCount.set(p, (pathCount.get(p) || 0) + 1);
+  }});
+  const pathDup = r => {{ const p = pathOf(r); return !!p && pathCount.get(p) > 1; }};
   state.player_fields.forEach((r, i) => {{
     const div = document.createElement("div"); div.className = "row" + (r.existing ? " locked" : "");
     div.appendChild(head(r, "new field", () => state.player_fields.splice(i, 1)));
@@ -491,10 +514,13 @@ function renderFields() {{
     }} else {{
       g.appendChild(textInput(r.name, "f" + i, v => r.name = v,
         {{placeholder: "Wallet.Gold", size: 26, maxlength: 30,
-          bad: !String(r.name || "").trim() || dup(r.name)
+          bad: !String(r.name || "").trim() || dup(r.name) || pathDup(r)
+               || !FIELD_NAME_RE.test(String(r.name || "").trim())
                || String(r.name || "").length > 30 || snake(r.name).length > 100,
-          title: "maximum 30 characters (the registered path is capped at 100)"}}));
-      g.appendChild(kindSelect(FIELD_KINDS, r.kind, v => r.kind = v));
+          title: "a dot-separated C# property chain (letters, digits, _), maximum 30 "
+                 + "characters; the registered snake path must be unique (across "
+                 + "existing fields too) and 100 characters or less"}}));
+      g.appendChild(kindSelect(FIELD_KINDS, r.kind, v => r.kind = v, "f" + i + "-k"));
       if (r.kind === "enumeration") {{
         g.appendChild(textInput(r.extra, "f" + i + "-x", v => r.extra = v,
           {{placeholder: "a, b, c", size: 16,
@@ -573,7 +599,7 @@ function renderFs() {{
             bad: !String(c.name || "").trim() || cdup(c.name) || reserved
                  || String(c.name || "").length > 100,
             title: reserved ? "filters are configuration-level (IncludeFilters readers), not schema columns — the operator picks them on the configuration table; unreplaced <placeholders> are scaffold" : ""}})));
-        tr.appendChild(td(kindSelect(FS_COLUMN_KINDS, c.kind, v => c.kind = v)));
+        tr.appendChild(td(kindSelect(FS_COLUMN_KINDS, c.kind, v => c.kind = v, "s" + i + "-c" + j + "-k")));
         if (c.kind === "bundle_key") {{
           const h = document.createElement("span"); h.className = "muted";
           h.textContent = "values must be existing Bundle keys (letter first; letters, digits, _, -)";
@@ -627,6 +653,7 @@ function renderFs() {{
       // Schema is a REFERENCE, not free text — pick from the schemas defined above
       // (kills dangling schema_name and shape redefinition by construction).
       const sel = document.createElement("select");
+      sel.dataset.fid = "fss" + i + "-schema";
       const missing = !r.schema_name || !schemaNames.includes(r.schema_name);
       if (!schemaNames.length || missing) {{
         const o = document.createElement("option"); o.value = "";
@@ -714,7 +741,7 @@ function renderResources() {{
           {{placeholder: "field_name", size: 16, maxlength: 100,
             bad: !String(f.name || "").trim() || fdup(f.name) || String(f.name || "").length > 100,
             title: "maximum 100 characters"}})));
-        tr.appendChild(td(kindSelect(RESOURCE_FIELD_TYPES, f.field_type, v => f.field_type = v)));
+        tr.appendChild(td(kindSelect(RESOURCE_FIELD_TYPES, f.field_type, v => f.field_type = v, "r" + i + "-f" + j + "-k")));
         const req = document.createElement("input"); req.type = "checkbox"; req.checked = !!f.required;
         req.title = "required";
         req.addEventListener("change", e => {{ f.required = e.target.checked; }});
@@ -796,8 +823,10 @@ function exportJson() {{
         (ek === "predefined" && isSdkAutomatic(r.name) && INTEGRATION_TYPE === "SDK");
       return {{...r, kind: ek, params: collapsed ? [] : (r.params || []).map(cleanParam)}};
     }}),
-    player_fields: state.player_fields.map(r =>
-      r.kind === "enumeration" ? r : {{...r, extra: ""}}),
+    player_fields: state.player_fields.map(r => {{
+      if (r.existing) return r;  // echoed verbatim — the row is a measurement of code
+      return r.kind === "enumeration" ? r : {{...r, extra: ""}};
+    }}),
     feature_settings: {{schemas: state.feature_settings.schemas,
       settings: state.feature_settings.settings.map(st => {{
         if (st.existing) return st;  // echoed verbatim — keys wired at older live versions stay so
