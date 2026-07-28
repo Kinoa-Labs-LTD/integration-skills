@@ -47,8 +47,10 @@ Input JSON shape (sections may be empty or omitted):
 }
 
 A merge run fires this page PER MODULE as its walk reaches each surface — the
-payload then carries just that section (the others empty/omitted); /kinoa
-resources renders the resources-only page the same way.
+payload then carries just that section, and the page RENDERS ONLY THE SECTIONS
+PRESENT in the payload (omit a key entirely to hide its card, add button
+included); /kinoa resources thus yields a resources-only page. The page is
+light-themed by design (no dark variant — see the CSS note).
 
 The exported plan echoes the same shape plus stamps:
 
@@ -104,17 +106,12 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kinoa — Merge Plan</title>
 <style>
-:root {{ color-scheme: light dark; }}
+/* Light-only by design: with `light dark` the UA flips button/control text colors in
+   dark mode while our fixed backgrounds stay light -> invisible button labels. */
+:root {{ color-scheme: light; }}
 * {{ box-sizing: border-box; }}
 body {{ font: 15px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0;
        background: #f6f8fa; color: #1f2328; }}
-@media (prefers-color-scheme: dark) {{
-  body {{ background: #0d1117; color: #e6edf3; }}
-  .card, header .bar {{ background: #161b22 !important; border-color: #30363d !important; }}
-  .muted {{ color: #8b949e !important; }}
-  .row {{ border-color: #30363d !important; }}
-  input[type=text], select {{ background: #0d1117; color: #e6edf3; border-color: #30363d; }}
-}}
 header {{ padding: 1.2rem 1.5rem 0; max-width: 1120px; margin: 0 auto; }}
 header .bar {{ background: #fff; border: 1px solid #d0d7de; border-radius: 8px; padding: 0.9rem 1.2rem; }}
 h1 {{ font-size: 1.25rem; margin: 0 0 0.25rem; }}
@@ -125,14 +122,15 @@ main {{ max-width: 1120px; margin: 0 auto; padding: 0.75rem 1.5rem 5rem; }}
 .row {{ border: 1px solid #e6e8eb; border-radius: 6px; padding: 0.6rem 0.8rem; margin: 0.55rem 0; }}
 .row.locked {{ opacity: 0.75; }}
 .grid {{ display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }}
-input[type=text], select {{ font: inherit; padding: 0.3rem 0.45rem; border: 1px solid #d0d7de; border-radius: 6px; }}
+input[type=text], select {{ font: inherit; padding: 0.3rem 0.45rem; border: 1px solid #d0d7de; border-radius: 6px;
+       background: #fff; color: #1f2328; }}
 input.bad {{ border-color: #cf222e; background: #fff5f5; }}
 input.warnp {{ border-color: #bf8700; }}
 .badge {{ display: inline-block; font-size: 0.72rem; padding: 0.1rem 0.5rem; border-radius: 999px;
          border: 1px solid currentColor; white-space: nowrap; }}
 .b-existing {{ color: #57606a; }} .b-new {{ color: #1a7f37; }} .b-predef {{ color: #0969da; }}
 button {{ font: inherit; padding: 0.35rem 0.8rem; border-radius: 6px; cursor: pointer;
-         border: 1px solid #d0d7de; background: #fff; }}
+         border: 1px solid #d0d7de; background: #fff; color: #1f2328; }}
 button.ghost {{ border-style: dashed; }}
 button.primary {{ background: #1f883d; border-color: #1f883d; color: #fff; }}
 button.del {{ color: #cf222e; }}
@@ -192,6 +190,16 @@ const state = {{
 }};
 let nextId = 1 + Math.max(0, ...[...state.events, ...state.player_fields,
   ...state.feature_settings, ...state.resources].map(r => r.id || 0));
+
+// A section exists on this page ONLY if its key is PRESENT in the payload — a scoped/module
+// run (e.g. /kinoa resources) sends just its own section, and the page must not show (or
+// allow adding to) surfaces the run is not authoring.
+const CARD_IDS = {{events: "events-card", player_fields: "fields-card",
+  feature_settings: "fs-card", resources: "res-card"}};
+const SECTIONS_PRESENT = Object.keys(CARD_IDS).filter(k => DATA[k] != null);
+Object.keys(CARD_IDS).forEach(k => {{
+  if (DATA[k] == null) document.getElementById(CARD_IDS[k]).style.display = "none";
+}});
 
 function esc(s) {{ const d = document.createElement("span"); d.textContent = s == null ? "" : String(s); return d.innerHTML; }}
 function snake(s) {{ return String(s || "").replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/\./g, ".").toLowerCase(); }}
@@ -478,10 +486,10 @@ function renderResources() {{
 
 function renderCounter() {{
   const news = s => s.filter(r => !r.existing).length;
-  document.getElementById("counter").textContent =
-    "to implement: " + news(state.events) + " events · " + news(state.player_fields) +
-    " fields · " + news(state.feature_settings) + " feature settings · " +
-    news(state.resources) + " resources";
+  const labels = {{events: "events", player_fields: "fields",
+    feature_settings: "feature settings", resources: "resources"}};
+  const parts = SECTIONS_PRESENT.map(k => news(state[k]) + " " + labels[k]);
+  document.getElementById("counter").textContent = "to implement: " + parts.join(" \u00b7 ");
 }}
 
 document.getElementById("add-event").addEventListener("click", () => {{

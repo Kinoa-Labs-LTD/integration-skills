@@ -198,6 +198,23 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("export is disabled", html)
         self.assertEqual(self.mod.PAYLOAD_VERSION, 1)
 
+    def test_light_theme_only_and_visible_button_text(self):
+        # Manual-run finding 2026-07-28: `color-scheme: light dark` made the UA flip button
+        # text colors in dark mode over our fixed light backgrounds — invisible labels.
+        _, _, out_path = self._run(_payload())
+        html = open(out_path, encoding="utf-8").read()
+        self.assertNotIn("prefers-color-scheme", html)
+        self.assertIn("color-scheme: light;", html)
+        self.assertIn("background: #fff; color: #1f2328;", html)  # button text pinned
+
+    def test_sections_render_only_when_present(self):
+        # Manual-run finding 2026-07-28: /kinoa resources must yield a resources-ONLY page —
+        # absent payload keys hide their whole card (add button included).
+        _, _, out_path = self._run(_payload())
+        html = open(out_path, encoding="utf-8").read()
+        self.assertIn("SECTIONS_PRESENT", html)
+        self.assertIn('style.display = "none"', html)
+
     def test_resources_only_payload_ok(self):
         # /kinoa resources renders the resources-only page — other sections omitted entirely.
         p = {"generated_at": "2026-07-24T09:00:00Z", "game_id": None,
