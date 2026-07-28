@@ -126,8 +126,10 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("never editable", html)                      # predefined wire names
         self.assertIn("unique on the server across ALL statuses", html)  # resource NAME rule
         self.assertIn("c.is_required = true", html)                # FS required: ALWAYS true, no UI control
-        self.assertIn('if (v !== "enumeration")', html)            # enum values reset on kind change
-        self.assertNotIn(".disabled = true; // enum", html)        # (no disabled enum inputs remain)
+        # Enum values: state survives kind toggles; the EXPORT strips them for non-enum kinds.
+        self.assertIn("cleanParam", html)
+        self.assertIn("cleanField", html)
+        self.assertIn('r.kind === "enumeration" ? r : {...r, extra: ""}', html)
         self.assertNotIn("c.is_required !== false", html)          # the old FS checkbox is gone
         self.assertIn("req.checked = !!f.required", html)          # resource required checkbox STAYS (default FALSE)
 

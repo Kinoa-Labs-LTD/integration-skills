@@ -417,10 +417,10 @@ function renderEvents() {{
           {{placeholder: "param_name", size: 20,
             bad: !String(p.name || "").trim() || pdup(p.name), warn: sysHit,
             title: sysHit ? "collides with a dashboard SYSTEM event param — the event will lose its standard " + p.name + " column; rename (e.g. time -> time_of_day)" : ""}})));
-        // Enum-values input exists ONLY while kind === enumeration; switching away resets
-        // the value (a hidden stale list must never ship in the export).
-        tr.appendChild(td(kindSelect(EVENT_PARAM_KINDS, p.kind,
-          v => {{ p.kind = v; if (v !== "enumeration") p.extra = ""; }})));
+        // Enum-values input shows ONLY while kind === enumeration, but the VALUE is
+        // preserved on kind changes (discovery-found candidates must survive a toggle);
+        // the EXPORT strips it for non-enumeration kinds instead.
+        tr.appendChild(td(kindSelect(EVENT_PARAM_KINDS, p.kind, v => p.kind = v)));
         if (p.kind === "enumeration") {{
           tr.appendChild(td(textInput(p.extra, "e" + i + "-p" + j + "-x", v => p.extra = v,
             {{placeholder: "a, b, c", size: 18, bad: !String(p.extra || "").trim()}})));
@@ -453,8 +453,7 @@ function renderFields() {{
     }} else {{
       g.appendChild(textInput(r.name, "f" + i, v => r.name = v,
         {{placeholder: "Wallet.Gold", size: 26, bad: !String(r.name || "").trim() || dup(r.name)}}));
-      g.appendChild(kindSelect(FIELD_KINDS, r.kind,
-        v => {{ r.kind = v; if (v !== "enumeration") r.extra = ""; }}));
+      g.appendChild(kindSelect(FIELD_KINDS, r.kind, v => r.kind = v));
       if (r.kind === "enumeration") {{
         g.appendChild(textInput(r.extra, "f" + i + "-x", v => r.extra = v,
           {{placeholder: "a, b, c", size: 16, bad: !String(r.extra || "").trim()}}));
@@ -633,8 +632,7 @@ function renderResources() {{
       }} else {{
         tr.appendChild(td(textInput(f.name, "r" + i + "-f" + j, v => f.name = v,
           {{placeholder: "field_name", size: 16, bad: !String(f.name || "").trim() || fdup(f.name)}})));
-        tr.appendChild(td(kindSelect(RESOURCE_FIELD_TYPES, f.field_type,
-          v => {{ f.field_type = v; if (v !== "enumeration") f.enumeration_values = []; }})));
+        tr.appendChild(td(kindSelect(RESOURCE_FIELD_TYPES, f.field_type, v => f.field_type = v)));
         const req = document.createElement("input"); req.type = "checkbox"; req.checked = !!f.required;
         req.title = "required";
         req.addEventListener("change", e => {{ f.required = e.target.checked; }});
@@ -697,14 +695,20 @@ document.getElementById("add-res").addEventListener("click", () => {{
 }});
 
 function exportJson() {{
+  // Enum values live in state across kind toggles (so switching back restores them),
+  // but the EXPORT carries them only for enumeration kinds — a stale list never ships.
+  const cleanParam = p => p.kind === "enumeration" ? p : {{...p, extra: ""}};
+  const cleanField = f => f.field_type === "enumeration" ? f : {{...f, enumeration_values: []}};
   return JSON.stringify({{
     confirmed_at: new Date().toISOString(),
     page_generated_at: DATA.generated_at,
     payload_version: DATA_VERSION,
-    events: state.events.map(r => ({{...r, kind: effectiveKind(r)}})),
-    player_fields: state.player_fields,
+    events: state.events.map(r => ({{...r, kind: effectiveKind(r),
+      params: (r.params || []).map(cleanParam)}})),
+    player_fields: state.player_fields.map(r =>
+      r.kind === "enumeration" ? r : {{...r, extra: ""}}),
     feature_settings: state.feature_settings,
-    resources: state.resources,
+    resources: state.resources.map(r => ({{...r, fields: (r.fields || []).map(cleanField)}})),
   }}, null, 2);
 }}
 function flash(msg) {{
