@@ -39,6 +39,8 @@ Input JSON shape (sections may be empty or omitted):
     {"id": 40, "schema_name": "BoosterEconomy", "key": "BoosterEconomy", "version": 1,
      "existing": false, "source": "booster_economy.csv", "note": "",
      "columns": [{"name": "sku", "kind": "bundle_key", "is_required": true}]}
+     (FS is_required is ALWAYS true — no dashboard UI control exists; the key is kept
+      in the contract deliberately until the API drops it from the SchemaDto)
   ],
   "resources": [
     {"id": 60, "name": "Legendary Sword", "key": "legendary_sword", "existing": false,
@@ -435,17 +437,16 @@ function renderFs() {{
       const tr = document.createElement("tr");
       const td = t => {{ const x = document.createElement("td"); x.appendChild(t); return x; }};
       if (r.existing) {{
-        tr.innerHTML = "<td><code>" + esc(c.name) + "</code></td><td>" + esc(c.kind) +
-          (c.is_required === false ? "" : " · required") + "</td>";
+        tr.innerHTML = "<td><code>" + esc(c.name) + "</code></td><td>" + esc(c.kind) + "</td>";
       }} else {{
         tr.appendChild(td(textInput(c.name, "s" + i + "-c" + j, v => c.name = v,
           {{placeholder: "column", size: 20, bad: !String(c.name || "").trim() || cdup(c.name)}})));
         tr.appendChild(td(kindSelect(FS_COLUMN_KINDS, c.kind, v => c.kind = v)));
-        // FS columns default REQUIRED (helper/planner default isRequired=true).
-        const req = document.createElement("input"); req.type = "checkbox";
-        req.checked = c.is_required !== false; req.title = "required";
-        req.addEventListener("change", e => {{ c.is_required = e.target.checked; }});
-        tr.appendChild(td(req));
+        // No required checkbox for FS columns: the dashboard UI has no such control (a
+        // SchemaDto artifact, checked 2026-07-28) and no sync logic reads it — the export
+        // always carries is_required: true; the key is kept DELIBERATELY until the API
+        // side drops it from the DTO.
+        c.is_required = true;
         const rm = document.createElement("button"); rm.className = "del"; rm.textContent = "✕";
         rm.addEventListener("click", () => {{ r.columns.splice(j, 1); render(); }});
         tr.appendChild(td(rm));

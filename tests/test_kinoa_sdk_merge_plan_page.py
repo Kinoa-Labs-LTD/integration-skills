@@ -123,8 +123,9 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("v1 (new schemas always start at 1)", html)
         self.assertIn("never editable", html)                      # predefined wire names
         self.assertIn("unique on the server across ALL statuses", html)  # resource NAME rule
-        self.assertIn("c.is_required !== false", html)             # FS required default TRUE
-        self.assertIn("req.checked = !!f.required", html)          # resource required default FALSE
+        self.assertIn("c.is_required = true", html)                # FS required: ALWAYS true, no UI control
+        self.assertNotIn("c.is_required !== false", html)          # the old FS checkbox is gone
+        self.assertIn("req.checked = !!f.required", html)          # resource required checkbox STAYS (default FALSE)
 
     def test_script_close_tag_in_data_is_escaped(self):
         p = _payload(events=[{"id": 1, "kind": "custom", "name": "x</script><script>alert(1)",
