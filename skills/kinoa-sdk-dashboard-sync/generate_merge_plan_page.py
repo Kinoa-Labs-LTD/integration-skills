@@ -24,6 +24,8 @@ Input JSON shape (sections may be empty or omitted):
 {
   "generated_at": "<ISO 8601 UTC>",
   "game_id":      "<uuid or null>",
+  "predefined_wire_names": ["session_start", "payment", "..."],
+  "sdk_debug_wire_names":  ["install", "player_update", "feature_settings_download", "..."],
   "events": [
     {"id": 1, "kind": "custom"|"predefined", "name": "gold_purchase", "existing": false,
      "source": "Scripts/Shop.cs:118", "note": "purchase flow",
@@ -60,6 +62,16 @@ The exported plan echoes the same shape plus stamps:
 
 (existing rows are echoed verbatim; the skill implements only "existing": false
 rows, exactly as edited.)
+
+"predefined_wire_names" / "sdk_debug_wire_names" (optional): the producer supplies
+the two event registries from its module-13 tables. A row whose name matches the
+FIRST is live-tagged "predefined" (name stays editable unless the row arrived
+kind="predefined") and exported with kind="predefined" — the producer then extends
+the game's existing predefined builder (overload + AddCustomParameter) instead of
+creating a custom mirror. A row matching the SECOND is tagged "sdk debug" and
+exported with kind="sdk" — these are emitted by the SDK itself; the producer skips
+implementing them (with one explanatory line). Keys absent -> no tagging (older
+producers); the sync planner's live-listing collision warning remains the backstop.
 
 Exit: prints {"ok": true, "output": "<abs path>", "opened_in_browser": bool}.
 No network, no credentials.
@@ -128,7 +140,7 @@ input.bad {{ border-color: #cf222e; background: #fff5f5; }}
 input.warnp {{ border-color: #bf8700; }}
 .badge {{ display: inline-block; font-size: 0.72rem; padding: 0.1rem 0.5rem; border-radius: 999px;
          border: 1px solid currentColor; white-space: nowrap; }}
-.b-existing {{ color: #57606a; }} .b-new {{ color: #1a7f37; }} .b-predef {{ color: #0969da; }}
+.b-existing {{ color: #57606a; }} .b-new {{ color: #1a7f37; }} .b-predef {{ color: #0969da; }} .b-sdk {{ color: #bf8700; }}
 button {{ font: inherit; padding: 0.35rem 0.8rem; border-radius: 6px; cursor: pointer;
          border: 1px solid #d0d7de; background: #fff; color: #1f2328; }}
 button.ghost {{ border-style: dashed; }}
@@ -178,6 +190,15 @@ const FS_COLUMN_KINDS = {fs_column_kinds};
 const RESOURCE_FIELD_TYPES = {resource_field_types};
 const RESOURCE_KEY_RE = new RegExp({resource_key_re});
 const SYSTEM_EVENT_PARAM_NAMES = {system_event_param_names};
+// Registries travel IN THE PAYLOAD (optional keys, contract clause 1) — single maintained
+// source is the /kinoa skill's module-13 tables; the page needs no release when the backend
+// grows an event. Absent keys -> no live tagging (the sync planner's live-listing collision
+// warning stays the backend-fresh backstop). Two DISTINCT registries:
+//   predefined_wire_names — sent from GAME code via existing builders (payment, level_up, ...)
+//   sdk_debug_wire_names  — sent by the SDK ITSELF (install, feature_settings_download, ...);
+//                           nothing to implement in game code, the row is skipped.
+const PREDEFINED_EVENT_WIRE_NAMES = DATA.predefined_wire_names || [];
+const SDK_DEBUG_WIRE_NAMES = DATA.sdk_debug_wire_names || [];
 const PAYLOAD_VERSION = {payload_version};
 const DATA_VERSION = DATA.payload_version || 1;
 const VERSION_MISMATCH = DATA_VERSION > PAYLOAD_VERSION;
@@ -202,6 +223,18 @@ Object.keys(CARD_IDS).forEach(k => {{
 }});
 
 function esc(s) {{ const d = document.createElement("span"); d.textContent = s == null ? "" : String(s); return d.innerHTML; }}
+
+// A row's EFFECTIVE kind: typing a registry wire name into a custom row live-reclassifies it —
+// the predefined badge appears and the export carries kind="predefined" (the producer then
+// extends the existing predefined builder instead of creating a custom mirror). The name stays
+// editable for such rows (only payload-declared predefined rows lock their name).
+function isPredefName(n) {{ return PREDEFINED_EVENT_WIRE_NAMES.includes(String(n || "").trim().toLowerCase()); }}
+function isSdkDebugName(n) {{ return SDK_DEBUG_WIRE_NAMES.includes(String(n || "").trim().toLowerCase()); }}
+function effectiveKind(r) {{
+  if (r.kind === "sdk" || isSdkDebugName(r.name)) return "sdk";
+  if (r.kind === "predefined" || isPredefName(r.name)) return "predefined";
+  return r.kind || "custom";
+}}
 function snake(s) {{ return String(s || "").replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/\./g, ".").toLowerCase(); }}
 
 // Re-render destroys every node — remember the focused input and caret so
@@ -253,8 +286,16 @@ function head(row, label, onDrop) {{
   badge.className = "badge " + (row.existing ? "b-existing" : "b-new");
   badge.textContent = row.existing ? "already in code — edit code-first" : label;
   div.appendChild(badge);
-  if (row.kind === "predefined") {{
+  const ek = row.params !== undefined ? effectiveKind(row) : row.kind;
+  if (ek === "predefined") {{
     const b = document.createElement("span"); b.className = "badge b-predef"; b.textContent = "predefined";
+    b.title = "predefined Kinoa event — wired via the game's existing builder (e.g. PaymentEventData); " +
+              "params attach as custom_params. It will NOT be created as a custom event.";
+    div.appendChild(b);
+  }} else if (ek === "sdk") {{
+    const b = document.createElement("span"); b.className = "badge b-sdk"; b.textContent = "sdk debug";
+    b.title = "emitted by the Kinoa SDK itself (not from game code) — there is nothing to " +
+              "implement; this row will be skipped.";
     div.appendChild(b);
   }}
   if (row.source) {{
@@ -516,7 +557,7 @@ function exportJson() {{
     confirmed_at: new Date().toISOString(),
     page_generated_at: DATA.generated_at,
     payload_version: DATA_VERSION,
-    events: state.events,
+    events: state.events.map(r => ({{...r, kind: effectiveKind(r)}})),
     player_fields: state.player_fields,
     feature_settings: state.feature_settings,
     resources: state.resources,

@@ -198,6 +198,20 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("export is disabled", html)
         self.assertEqual(self.mod.PAYLOAD_VERSION, 1)
 
+    def test_event_registries_are_payload_driven_and_reclassification_wired(self):
+        # The two registries (game-wired predefined vs SDK-fired debug) travel IN THE PAYLOAD
+        # (single maintained source: module-13 tables) — no hardcoded page copy to go stale.
+        # Matching rows are live-tagged and EXPORTED with kind normalized (predefined/sdk).
+        _, _, out_path = self._run(_payload())
+        html = open(out_path, encoding="utf-8").read()
+        self.assertIn("DATA.predefined_wire_names || []", html)
+        self.assertIn("DATA.sdk_debug_wire_names || []", html)
+        self.assertIn("effectiveKind", html)
+        self.assertIn("kind: effectiveKind(r)", html)   # export normalization
+        self.assertIn("existing builder", html)          # predefined badge tooltip
+        self.assertIn("emitted by the Kinoa SDK itself", html)  # sdk-debug badge tooltip
+        self.assertIn("b-sdk", html)                     # distinct badge style
+
     def test_light_theme_only_and_visible_button_text(self):
         # Manual-run finding 2026-07-28: `color-scheme: light dark` made the UA flip button
         # text colors in dark mode over our fixed light backgrounds — invisible labels.
