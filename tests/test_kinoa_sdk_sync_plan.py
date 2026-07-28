@@ -326,6 +326,27 @@ class BuildPlanTests(unittest.TestCase):
         self.assertEqual([f["path"] for f in plan["player_fields"]["create"]], ["last_claimed_reward_id"])
         self.assertEqual(plan["unsupported"], [])
 
+    def test_custom_event_colliding_with_debug_warns_remove_from_code(self):
+        # Live-verified 2026-07-28: the backend holds a distinct DEBUG event type (38 records,
+        # ACTIVE out of the box, SDK/backend-emitted — e.g. feature_settings_download). A game
+        # declaring a same-named custom event must be told to REMOVE it from game code.
+        manifest = _manifest()
+        manifest["events"]["custom"] = [{"name": "feature_settings_download", "params": []}]
+        plan = self.mod.build_plan(manifest, [], [], [], [], [], [],
+                                   ev_debug=[{"id": "d1", "name": "feature_settings_download",
+                                              "type": "DEBUG", "status": "ACTIVE"}])
+        warns = [w for w in plan["events"]["warnings"] if "DEBUG" in w.get("reason", "")]
+        self.assertEqual(len(warns), 1)
+        self.assertIn("REMOVE this custom event from game code", warns[0]["reason"])
+        # Advisory like every collision: the create stays planned, the checklist decides.
+        self.assertEqual([e["name"] for e in plan["events"]["create"]], ["feature_settings_download"])
+
+    def test_no_debug_warning_without_debug_listing(self):
+        manifest = _manifest()
+        manifest["events"]["custom"] = [{"name": "feature_settings_download", "params": []}]
+        plan = self._plan(manifest)
+        self.assertEqual([w for w in plan["events"]["warnings"] if "DEBUG" in w.get("reason", "")], [])
+
     def test_custom_event_colliding_with_predefined_warns_still_creates(self):
         # Producer misclassified a predefined event as custom: warn (advisory), still create
         # byte-for-byte — the developer decides at the checklist.

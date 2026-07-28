@@ -12,6 +12,13 @@ Subcommands:
       GET https://dashboard.kinoa.io/gamemetaapi/api/game_events?types=PREDEFINED
   list-custom [--rows N] [--states s1,s2]
       GET https://dashboard.kinoa.io/gamemetaapi/api/game_events?types=USER
+
+  list-debug [--rows N]
+      GET https://dashboard.kinoa.io/gamemetaapi/api/game_events?types=DEBUG
+      SDK/backend-emitted telemetry events (live-verified 2026-07-28: 38 records,
+      all ACTIVE out of the box — e.g. feature_settings_download, in_app_received,
+      web_socket_closed). Never sent from game code, never created/published by
+      a sync; listed so flows can recognize and reject same-named custom events.
       --states adds selectedFilters=states&states=... NOTE (verified live
       2026-06-12): the game_events endpoint IGNORES this filter — events have
       no deleted state (the server's EventModelStatus enum has no DELETED
@@ -182,6 +189,14 @@ def _list_events(types, rows, states=None):
 
 def cmd_list_predefined(args):
     return _list_events("PREDEFINED", args.rows, args.states)
+
+
+def cmd_list_debug(args):
+    # DEBUG events are SDK/backend-emitted telemetry (feature_settings_download,
+    # in_app_*, web_socket_*, ...): ACTIVE out of the box, never sent by game code,
+    # never published/created by any sync. This listing exists so flows can RECOGNIZE
+    # them (e.g. warn when a game declares a custom event with a debug name).
+    return _list_events("DEBUG", args.rows, args.states)
 
 
 def cmd_list_custom(args):
@@ -379,6 +394,11 @@ def main(argv):
     p_lp.add_argument("--rows", type=int, default=100, help="Page size. Default: 100.")
     p_lp.add_argument("--states", default=None, help="Optional states filter. Currently IGNORED by the live game_events endpoint (events have no deleted state); forward-compat only.")
     p_lp.set_defaults(func=cmd_list_predefined)
+
+    p_ld = sub.add_parser("list-debug", parents=[guard], help="GET DEBUG (SDK/backend-emitted) game_events.")
+    p_ld.add_argument("--rows", type=int, default=100, help="Page size. Default: 100.")
+    p_ld.add_argument("--states", default=None, help="Optional states filter (forward-compat only).")
+    p_ld.set_defaults(func=cmd_list_debug)
 
     p_lc = sub.add_parser("list-custom", parents=[guard], help="GET USER (custom) game_events.")
     p_lc.add_argument("--rows", type=int, default=100, help="Page size. Default: 100.")

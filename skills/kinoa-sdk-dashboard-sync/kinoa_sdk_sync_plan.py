@@ -251,7 +251,7 @@ def _rt_fields_map(record):
 
 
 def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_custom, pf_custom_deleted,
-               fs_schemas=None, fs_settings=None, resource_templates=None):
+               fs_schemas=None, fs_settings=None, resource_templates=None, ev_debug=None):
     plan = {
         "schema_version": PLAN_SCHEMA_VERSION,
         "manifest_schema_version": manifest.get("schema_version"),
@@ -270,6 +270,7 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
     }
 
     ev_predef_by_name = _index_by(ev_predef, "name")
+    ev_debug_by_name = _index_by(ev_debug or [], "name")
     ev_custom_by_name = _index_by(ev_custom, "name")
     ev_deleted_by_name = _index_by(ev_custom_deleted, "name")
     pf_predef_by_path = _index_by(pf_predef, "path")
@@ -355,6 +356,16 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                           "names are byte-for-byte; a hand-normalized manifest would register a dead "
                           "duplicate that never receives events",
             })
+        debug_hit = ev_debug_by_name.get(name) or next(
+            (ev_debug_by_name[k] for k in ev_debug_by_name if k.lower() == name.lower()), None)
+        if debug_hit is not None:
+            plan["events"]["warnings"].append({
+                "name": name, "dashboard_name": debug_hit.get("name"),
+                "reason": "collision with a DEBUG dashboard event (SDK/backend-emitted telemetry, ACTIVE "
+                          "out of the box) — REMOVE this custom event from game code entirely: the "
+                          "SDK/backend logs it itself and it must never be sent by the game. Nothing to "
+                          "publish either (debug events need no registration).",
+            })
         predef_hit = ev_predef_by_name.get(name) or next(
             (ev_predef_by_name[k] for k in ev_predef_by_name if k.lower() == name.lower()), None)
         if predef_hit is not None:
@@ -362,11 +373,10 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                 "name": name, "dashboard_name": predef_hit.get("name"),
                 "reason": "collision with a PREDEFINED dashboard event of the same (or case-variant) name — "
                           "this manifest entry is classified custom; creating it would duplicate the "
-                          "predefined record. Two cases, both fixed in game code: a GAME-WIRED predefined "
-                          "(payment, level_up, ...) -> reclassify to its existing builder (the custom mirror "
-                          "must go); an SDK-FIRED debug event (install, feature_settings_download, ...) -> "
-                          "REMOVE it from game code entirely — the SDK/backend logs it itself and it must "
-                          "not be sent by the game.",
+                          "predefined record. Fix in game code: a GAME-WIRED predefined (payment, level_up, "
+                          "...) -> reclassify to its existing builder (the custom mirror must go); an "
+                          "SDK-AUTOMATIC predefined (install, player_update, *_milestones) -> remove it — "
+                          "the SDK emits it itself.",
             })
         plan["events"]["create"].append({
             "name": name,
@@ -870,6 +880,9 @@ def main(argv):
     parser.add_argument("--events-predefined", default=None)
     parser.add_argument("--events-custom", default=None)
     parser.add_argument("--events-custom-deleted", default=None)
+    parser.add_argument("--events-debug", default=None,
+                        help="Live DEBUG events listing (list-debug) — optional; lets the planner warn "
+                             "when a manifest custom event collides with SDK/backend-emitted telemetry.")
     parser.add_argument("--fields-predefined", default=None)
     parser.add_argument("--fields-custom", default=None)
     parser.add_argument("--fields-custom-deleted", default=None)
@@ -930,6 +943,8 @@ def main(argv):
         if args.events_custom else [],
         "events-custom-deleted": _extract_items(_load_json(args.events_custom_deleted, "events-custom-deleted"), "events-custom-deleted")
         if args.events_custom_deleted else [],
+        "events-debug": _extract_items(_load_json(args.events_debug, "events-debug"), "events-debug")
+        if args.events_debug else [],
         "fields-predefined": _extract_items(_load_json(args.fields_predefined, "fields-predefined"), "fields-predefined")
         if args.fields_predefined else [],
         "fields-custom": _extract_items(_load_json(args.fields_custom, "fields-custom"), "fields-custom")
@@ -967,6 +982,7 @@ def main(argv):
         listings["fs-schemas"],
         listings["fs-settings"],
         listings["resources"],
+        listings["events-debug"],
     )
     print(json.dumps(plan, indent=2))
     return 0
