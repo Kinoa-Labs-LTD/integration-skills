@@ -35,13 +35,18 @@ Input JSON shape (sections may be empty or omitted):
     {"id": 20, "name": "Wallet.Gold", "kind": "number", "extra": "", "existing": false,
      "source": "Scripts/Model/Player/Wallet.cs:12", "note": ""}
   ],
-  "feature_settings": [
-    {"id": 40, "schema_name": "BoosterEconomy", "key": "BoosterEconomy", "version": 1,
-     "existing": false, "source": "booster_economy.csv", "note": "",
-     "columns": [{"name": "sku", "kind": "bundle_key", "is_required": true}]}
-     (FS is_required is ALWAYS true — no dashboard UI control exists; the key is kept
+  "feature_settings": {
+    "schemas":  [{"id": 40, "name": "BoosterEconomy", "existing": false,
+                  "source": "booster_economy.csv",
+                  "columns": [{"name": "sku", "kind": "bundle_key", "is_required": true}]}],
+    "settings": [{"id": 41, "key": "BoosterEconomy", "schema_name": "BoosterEconomy",
+                  "version": 1, "existing": false, "source": "..."}]
+  },
+     (FS mirrors the manifest/domain: SCHEMAS own the columns — one schema may back
+      several setting KEYS, which only reference a schema by name via a dropdown.
+      A pre-split flat feature_settings ARRAY is tolerated and converted on load.
+      is_required is ALWAYS true — no dashboard UI control exists; the key is kept
       in the contract deliberately until the API drops it from the SchemaDto)
-  ],
   "resources": [
     {"id": 60, "name": "Legendary Sword", "key": "legendary_sword", "existing": false,
      "description": "Boss reward.", "source": "Model/Enums/RewardType.cs:10", "note": "",
@@ -138,7 +143,7 @@ main {{ max-width: 1120px; margin: 0 auto; padding: 0.75rem 1.5rem 5rem; }}
 .grid {{ display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }}
 input[type=text], select {{ font: inherit; padding: 0.3rem 0.45rem; border: 1px solid #d0d7de; border-radius: 6px;
        background: #fff; color: #1f2328; }}
-input.bad {{ border-color: #cf222e; background: #fff5f5; }}
+input.bad, select.bad {{ border-color: #cf222e; background: #fff5f5; }}
 input.warnp {{ border-color: #bf8700; }}
 .badge {{ display: inline-block; font-size: 0.72rem; padding: 0.1rem 0.5rem; border-radius: 999px;
          border: 1px solid currentColor; white-space: nowrap; }}
@@ -173,8 +178,7 @@ footer .grow {{ flex: 1; }}
     <button class="ghost" id="add-event">＋ Add event</button></div>
   <div class="card" id="fields-card"><h2>Player fields</h2><div id="player_fields"></div>
     <button class="ghost" id="add-field">＋ Add field</button></div>
-  <div class="card" id="fs-card"><h2>Feature settings</h2><div id="feature_settings"></div>
-    <button class="ghost" id="add-fs">＋ Add feature setting</button></div>
+  <div class="card" id="fs-card"><h2>Feature settings</h2><div id="feature_settings"></div></div>
   <div class="card" id="res-card"><h2>Resources (Dashboard resource templates)</h2><div id="resources"></div>
     <button class="ghost" id="add-res">＋ Add resource</button></div>
 </main>
@@ -205,14 +209,37 @@ const PAYLOAD_VERSION = {payload_version};
 const DATA_VERSION = DATA.payload_version || 1;
 const VERSION_MISMATCH = DATA_VERSION > PAYLOAD_VERSION;
 
+// FS is authored as TWO lists mirroring the manifest/domain: schemas (column shapes —
+// one schema may back several keys) and settings (runtime keys, each binding ONE schema
+// via a dropdown). This kills the same-schema-different-columns ambiguity by construction.
+// Tolerance (contract clause 1): a pre-split FLAT array payload is converted on the fly.
+function normalizeFs(v) {{
+  if (!v) return {{schemas: [], settings: []}};
+  if (Array.isArray(v)) {{
+    const schemas = [], settings = [], seen = new Set();
+    v.forEach(r => {{
+      const sn = r.schema_name || r.key || "";
+      if (sn && !seen.has(sn)) {{ seen.add(sn);
+        schemas.push({{id: r.id, name: sn, existing: !!r.existing, source: r.source,
+                      columns: r.columns || []}}); }}
+      settings.push({{id: (r.id || 0) + 100000, key: r.key, schema_name: sn,
+                     version: r.version || 1, existing: !!r.existing, source: r.source, note: r.note}});
+    }});
+    return {{schemas: schemas, settings: settings}};
+  }}
+  return {{schemas: (v.schemas || []).map(x => ({{columns: [], ...x}})),
+          settings: (v.settings || []).slice()}};
+}}
+
 const state = {{
   events: (DATA.events || []).map(x => ({{params: [], ...x}})),
   player_fields: (DATA.player_fields || []).slice(),
-  feature_settings: (DATA.feature_settings || []).map(x => ({{columns: [], ...x}})),
+  feature_settings: normalizeFs(DATA.feature_settings),
   resources: (DATA.resources || []).map(x => ({{fields: [], ...x}})),
 }};
 let nextId = 1 + Math.max(0, ...[...state.events, ...state.player_fields,
-  ...state.feature_settings, ...state.resources].map(r => r.id || 0));
+  ...state.feature_settings.schemas, ...state.feature_settings.settings,
+  ...state.resources].map(r => r.id || 0));
 
 // A section exists on this page ONLY if its key is PRESENT in the payload — a scoped/module
 // run (e.g. /kinoa resources) sends just its own section, and the page must not show (or
@@ -321,6 +348,15 @@ function dupNames(rows, key) {{
 
 function dupIn(items, key) {{ return dupNames(items || [], key); }}
 
+// FS reserved column namespace: "filter: ..." props are IncludeFilters READERS (configuration-
+// level, bound to Player Fields at config-fill time) and "<...>" is unreplaced scaffold — the
+// planner drops both from schema plans, so authoring them here would promise a column that
+// never materializes. Mirror of the planner's _is_filter_or_placeholder.
+function isReservedFsColumn(n) {{
+  const t = String(n || "").trim().toLowerCase();
+  return t.startsWith("filter:") || String(n || "").includes("<");
+}}
+
 function renderEvents() {{
   const host = document.getElementById("events"); host.innerHTML = "";
   const dup = dupNames(state.events, "name");
@@ -411,21 +447,24 @@ function renderFields() {{
 
 function renderFs() {{
   const host = document.getElementById("feature_settings"); host.innerHTML = "";
-  const dup = dupNames(state.feature_settings, "key");
-  state.feature_settings.forEach((r, i) => {{
+  const fs = state.feature_settings;
+  const sdup = dupNames(fs.schemas, "name");
+  const kdup = dupNames(fs.settings, "key");
+  const schemaNames = fs.schemas.map(x => String(x.name || "")).filter(Boolean);
+  const newSchemas = new Set(fs.schemas.filter(x => !x.existing).map(x => String(x.name || "")));
+
+  host.insertAdjacentHTML("beforeend",
+    '<div class="muted" style="margin:0.2rem 0 0.4rem"><b>Schemas</b> — column shapes; ONE schema may back several setting keys (columns are defined here once)</div>');
+  fs.schemas.forEach((r, i) => {{
     const div = document.createElement("div"); div.className = "row" + (r.existing ? " locked" : "");
-    div.appendChild(head(r, "new feature setting", () => state.feature_settings.splice(i, 1)));
+    div.appendChild(head(r, "new schema", () => fs.schemas.splice(i, 1)));
     const g = document.createElement("div"); g.className = "grid";
     if (r.existing) {{
-      g.innerHTML = "key <code>" + esc(r.key) + "</code> · schema <code>" + esc(r.schema_name) +
-                    "</code> · v" + esc(r.version);
+      g.innerHTML = "schema <code>" + esc(r.name) + "</code>";
     }} else {{
-      g.insertAdjacentHTML("beforeend", "<span class=\"muted\">key</span>");
-      g.appendChild(textInput(r.key, "s" + i + "-key", v => r.key = v,
-        {{placeholder: "FeatureKey", size: 20, bad: !String(r.key || "").trim() || dup(r.key)}}));
       g.insertAdjacentHTML("beforeend", "<span class=\"muted\">schema</span>");
-      g.appendChild(textInput(r.schema_name, "s" + i + "-schema", v => r.schema_name = v,
-        {{placeholder: "SchemaName", size: 20, bad: !String(r.schema_name || "").trim()}}));
+      g.appendChild(textInput(r.name, "ss" + i, v => r.name = v,
+        {{placeholder: "SchemaName", size: 22, bad: !String(r.name || "").trim() || sdup(r.name)}}));
       // A NEW schema always wires as version 1 (module 07) — shown, never editable.
       g.insertAdjacentHTML("beforeend", "<span class=\"muted\">v1 (new schemas always start at 1)</span>");
     }}
@@ -439,9 +478,17 @@ function renderFs() {{
       if (r.existing) {{
         tr.innerHTML = "<td><code>" + esc(c.name) + "</code></td><td>" + esc(c.kind) + "</td>";
       }} else {{
-        tr.appendChild(td(textInput(c.name, "s" + i + "-c" + j, v => c.name = v,
-          {{placeholder: "column", size: 20, bad: !String(c.name || "").trim() || cdup(c.name)}})));
+        const reserved = isReservedFsColumn(c.name);
+        tr.appendChild(td(textInput(c.name, "ss" + i + "-c" + j, v => c.name = v,
+          {{placeholder: "column", size: 20,
+            bad: !String(c.name || "").trim() || cdup(c.name) || reserved,
+            title: reserved ? "filters are configuration-level (IncludeFilters readers), not schema columns — the operator picks them on the configuration table; unreplaced <placeholders> are scaffold" : ""}})));
         tr.appendChild(td(kindSelect(FS_COLUMN_KINDS, c.kind, v => c.kind = v)));
+        if (c.kind === "bundle_key") {{
+          const h = document.createElement("span"); h.className = "muted";
+          h.textContent = "values must be existing Bundle keys (letter first; letters, digits, _, -)";
+          tr.appendChild(td(h));
+        }}
         // No required checkbox for FS columns: the dashboard UI has no such control (a
         // SchemaDto artifact, checked 2026-07-28) and no sync logic reads it — the export
         // always carries is_required: true; the key is kept DELIBERATELY until the API
@@ -461,6 +508,58 @@ function renderFs() {{
     }}
     host.appendChild(div);
   }});
+  const addS = document.createElement("button"); addS.className = "ghost"; addS.textContent = "＋ Add schema";
+  addS.addEventListener("click", () => {{
+    fs.schemas.push({{id: nextId++, name: "", existing: false, columns: [], source: "added on page"}});
+    render();
+  }});
+  host.appendChild(addS);
+
+  host.insertAdjacentHTML("beforeend",
+    '<div class="muted" style="margin:0.8rem 0 0.4rem"><b>Settings (keys)</b> — the runtime download keys; each binds ONE schema from the list above</div>');
+  fs.settings.forEach((r, i) => {{
+    const div = document.createElement("div"); div.className = "row" + (r.existing ? " locked" : "");
+    div.appendChild(head(r, "new setting", () => fs.settings.splice(i, 1)));
+    const g = document.createElement("div"); g.className = "grid";
+    if (r.existing) {{
+      g.innerHTML = "key <code>" + esc(r.key) + "</code> · schema <code>" + esc(r.schema_name) +
+                    "</code> · v" + esc(r.version);
+    }} else {{
+      g.insertAdjacentHTML("beforeend", "<span class=\"muted\">key</span>");
+      g.appendChild(textInput(r.key, "sk" + i, v => r.key = v,
+        {{placeholder: "FeatureKey", size: 20, bad: !String(r.key || "").trim() || kdup(r.key)}}));
+      g.insertAdjacentHTML("beforeend", "<span class=\"muted\">schema</span>");
+      // Schema is a REFERENCE, not free text — pick from the schemas defined above
+      // (kills dangling schema_name and shape redefinition by construction).
+      const sel = document.createElement("select");
+      const missing = r.schema_name && !schemaNames.includes(r.schema_name);
+      if (!schemaNames.length || missing) {{
+        const o = document.createElement("option"); o.value = r.schema_name || "";
+        o.textContent = missing ? "(missing: " + r.schema_name + ")" : "(no schemas defined above)";
+        o.selected = true; sel.appendChild(o); sel.className = "bad";
+      }}
+      schemaNames.forEach(n => {{
+        const o = document.createElement("option"); o.value = n; o.textContent = n;
+        if (n === r.schema_name) o.selected = true; sel.appendChild(o);
+      }});
+      sel.addEventListener("change", e => {{ r.schema_name = e.target.value; render(); }});
+      g.appendChild(sel);
+      const v = document.createElement("span"); v.className = "muted";
+      v.textContent = newSchemas.has(r.schema_name)
+        ? "v1 (new schema)" : "v" + (r.version || 1) + " (from code wiring)";
+      g.appendChild(v);
+    }}
+    if (r.note) {{ const n = document.createElement("span"); n.className = "muted"; n.textContent = r.note; g.appendChild(n); }}
+    div.appendChild(g);
+    host.appendChild(div);
+  }});
+  const addK = document.createElement("button"); addK.className = "ghost"; addK.textContent = "＋ Add setting (key)";
+  addK.addEventListener("click", () => {{
+    fs.settings.push({{id: nextId++, key: "", schema_name: schemaNames[0] || "", version: 1,
+                      existing: false, source: "added on page"}});
+    render();
+  }});
+  host.appendChild(addK);
 }}
 
 function renderResources() {{
@@ -540,7 +639,13 @@ function renderCounter() {{
   const news = s => s.filter(r => !r.existing).length;
   const labels = {{events: "events", player_fields: "fields",
     feature_settings: "feature settings", resources: "resources"}};
-  const parts = SECTIONS_PRESENT.map(k => news(state[k]) + " " + labels[k]);
+  const parts = SECTIONS_PRESENT.map(k => {{
+    if (k === "feature_settings") {{
+      const fs = state.feature_settings;
+      return news(fs.schemas) + " fs schemas \u00b7 " + news(fs.settings) + " fs keys";
+    }}
+    return news(state[k]) + " " + labels[k];
+  }});
   document.getElementById("counter").textContent = "to implement: " + parts.join(" \u00b7 ");
 }}
 
@@ -550,11 +655,6 @@ document.getElementById("add-event").addEventListener("click", () => {{
 }});
 document.getElementById("add-field").addEventListener("click", () => {{
   state.player_fields.push({{id: nextId++, name: "", kind: "string", existing: false, source: "added on page"}});
-  render();
-}});
-document.getElementById("add-fs").addEventListener("click", () => {{
-  state.feature_settings.push({{id: nextId++, key: "", schema_name: "", version: 1, existing: false,
-    columns: [], source: "added on page"}});
   render();
 }});
 document.getElementById("add-res").addEventListener("click", () => {{
@@ -635,8 +735,14 @@ def main(argv):
         print(json.dumps({"ok": False, "error": "invalid_payload",
                           "message": "expected a JSON object"}, indent=2))
         return 2
-    ids = [r.get("id") for section in ("events", "player_fields", "feature_settings", "resources")
-           for r in payload.get(section) or []]
+    ids = []
+    for section in ("events", "player_fields", "feature_settings", "resources"):
+        val = payload.get(section)
+        if isinstance(val, dict):  # feature_settings split shape: {schemas, settings}
+            for sub in ("schemas", "settings"):
+                ids += [r.get("id") for r in val.get(sub) or []]
+        else:
+            ids += [r.get("id") for r in val or []]
     if len(ids) != len(set(ids)) or any(i is None for i in ids):
         print(json.dumps({"ok": False, "error": "invalid_rows",
                           "message": "every row needs a unique non-null id across all sections"},

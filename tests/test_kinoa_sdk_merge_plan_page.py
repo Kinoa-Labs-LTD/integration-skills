@@ -43,11 +43,13 @@ def _payload(**overrides):
             {"id": 20, "name": "Wallet.Gold", "kind": "number", "existing": False,
              "source": "Scripts/Model/Player/Wallet.cs:12"},
         ],
-        "feature_settings": [
-            {"id": 40, "schema_name": "BoosterEconomy", "key": "BoosterEconomy", "version": 1,
-             "existing": False, "source": "booster_economy.csv",
-             "columns": [{"name": "sku", "kind": "bundle_key"}]},
-        ],
+        "feature_settings": {
+            "schemas": [{"id": 40, "name": "BoosterEconomy", "existing": False,
+                         "source": "booster_economy.csv",
+                         "columns": [{"name": "sku", "kind": "bundle_key"}]}],
+            "settings": [{"id": 41, "key": "BoosterEconomy", "schema_name": "BoosterEconomy",
+                          "version": 1, "existing": False, "source": "booster_economy.csv"}],
+        },
         "resources": [
             {"id": 60, "name": "Legendary Sword", "key": "legendary_sword", "existing": False,
              "description": "Boss reward.", "source": "Model/Enums/RewardType.cs:10",
@@ -127,6 +129,38 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertNotIn("c.is_required !== false", html)          # the old FS checkbox is gone
         self.assertIn("req.checked = !!f.required", html)          # resource required checkbox STAYS (default FALSE)
 
+    def test_fs_split_schemas_and_settings(self):
+        # FS mirrors the manifest/domain: schemas own columns; settings bind a schema via a
+        # DROPDOWN (kills dangling schema_name + same-schema-different-columns by construction).
+        _, _, out_path = self._run(_payload())
+        html = open(out_path, encoding="utf-8").read()
+        self.assertIn("Add schema", html)
+        self.assertIn("Add setting (key)", html)
+        self.assertIn("ONE schema may back several setting keys", html)
+        self.assertIn("no schemas defined above", html)             # missing-schema guard in select
+        self.assertIn("normalizeFs", html)                          # flat-array tolerance
+        self.assertIn("isReservedFsColumn", html)                   # filter:/<> namespace guard
+        self.assertIn("filters are configuration-level", html)      # its tooltip
+        self.assertIn("values must be existing Bundle keys", html)  # bundle_key hint
+        self.assertIn("v1 (new schema)", html)                      # setting bound to new schema
+
+    def test_fs_flat_payload_tolerated(self):
+        p = {"generated_at": "2026-07-28T15:00:00Z", "game_id": None,
+             "feature_settings": [
+                 {"id": 1, "key": "WheelOfFortune", "schema_name": "WheelOfFortune",
+                  "version": 1, "existing": False,
+                  "columns": [{"name": "prize", "kind": "string"}]}]}
+        code, result, out_path = self._run(p)
+        self.assertEqual(code, 0)
+        self.assertIn("WheelOfFortune", open(out_path, encoding="utf-8").read())
+
+    def test_fs_split_duplicate_ids_rejected(self):
+        p = _payload()
+        p["feature_settings"]["settings"][0]["id"] = 40  # collides with its schema
+        code, result, _ = self._run(p)
+        self.assertEqual(code, 2)
+        self.assertEqual(result["error"], "invalid_rows")
+
     def test_script_close_tag_in_data_is_escaped(self):
         p = _payload(events=[{"id": 1, "kind": "custom", "name": "x</script><script>alert(1)",
                               "existing": False, "params": []}])
@@ -174,7 +208,7 @@ class MergePlanPageTests(unittest.TestCase):
              "future_top_level_key": {"anything": True},
              "events": [{"id": 1, "future_key": "x"}],                    # minimal + unknown
              "player_fields": [{"id": 2}],
-             "feature_settings": [{"id": 3}],
+             "feature_settings": [{"id": 3}],  # flat pre-split shape -> converted on load
              "resources": [{"id": 4}]}
         code, result, _ = self._run(p)
         self.assertEqual(code, 0)
