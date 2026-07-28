@@ -211,6 +211,9 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("existing builder", html)          # predefined badge tooltip
         self.assertIn("emitted by the Kinoa SDK itself", html)  # sdk-debug badge tooltip
         self.assertIn("b-sdk", html)                     # distinct badge style
+        # SDK-tagged rows collapse their param editor (nothing gets implemented for them —
+        # authoring params there would be a dead-end promise); state preserved on rename.
+        self.assertIn("params are not applicable", html)
 
     def test_light_theme_only_and_visible_button_text(self):
         # Manual-run finding 2026-07-28: `color-scheme: light dark` made the UA flip button

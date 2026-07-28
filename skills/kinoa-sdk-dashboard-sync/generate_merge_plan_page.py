@@ -335,6 +335,16 @@ function renderEvents() {{
     }}
     if (r.note) {{ const n = document.createElement("span"); n.className = "muted"; n.textContent = r.note; g.appendChild(n); }}
     div.appendChild(g);
+    // SDK/debug-tagged rows get NO param editor: nothing will be implemented for them
+    // (the row is skipped), so authoring params would be a dead-end promise. State is
+    // preserved — rename away from the sdk name and the params (and editor) return.
+    if (effectiveKind(r) === "sdk") {{
+      const note = document.createElement("div"); note.className = "muted";
+      note.textContent = "emitted by the Kinoa SDK/backend itself — params are not applicable; this row will be skipped at implementation.";
+      div.appendChild(note);
+      host.appendChild(div);
+      return;
+    }}
     const tbl = document.createElement("table"); tbl.className = "sub";
     const pdup = dupIn(r.params, "name");
     (r.params || []).forEach((p, j) => {{
