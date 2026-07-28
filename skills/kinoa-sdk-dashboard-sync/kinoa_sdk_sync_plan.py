@@ -884,12 +884,27 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                        + ("" if shape_matches else "; note its live fields also differ from the manifest")))
             continue
         if status == "draft":
-            if shape_matches:
+            # Extras (default / description / enumeration_values) are NOT comparable against
+            # the listing readback (enum values read back null — live-verified), so a
+            # name→type shape match alone can't prove the DRAFT carries them: update anyway
+            # when the manifest fields bring extras — a DRAFT is mutable and the checklist
+            # gates the call (review finding 2026-07-28: activate-without-update silently
+            # discarded manifest default/description edits).
+            has_extras = any(f.get("default") is not None or f.get("description")
+                             or f.get("enumeration_values") for f in want_fields)
+            if shape_matches and not has_extras:
                 rp["activate"].append(dict(item,
                     reason="existing DRAFT with matching fields — activate (publishes the template)"))
+            elif shape_matches:
+                rp["update"].append(dict(item, fields=want_fields,
+                    reason="existing DRAFT with matching name→type shape, but the manifest fields carry "
+                           "defaults/descriptions/enum values the listing readback cannot confirm — "
+                           "update (a DRAFT is unpublished and mutable), then activate"))
+                rp["activate"].append(dict(item,
+                    reason="activate after the field update above (publishes the template)"))
             else:
-                # A DRAFT is unpublished and mutable by definition (usually a prior partial
-                # run's leftover) — update the fields, then activate; the checklist gates both.
+                # Name→type shape differs — a DRAFT is unpublished and mutable by definition
+                # (usually a prior partial run's leftover): update the fields, then activate.
                 rp["update"].append(dict(item, fields=want_fields,
                     reason="existing DRAFT whose fields differ from the manifest — update the fields "
                            "(a DRAFT is unpublished and mutable), then activate"))

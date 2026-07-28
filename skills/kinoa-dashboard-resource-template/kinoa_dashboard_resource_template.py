@@ -260,8 +260,10 @@ def _collect_fields(args):
         if not isinstance(parsed, list):
             return None, {"error": "invalid_fields_json", "message": "--fields-json must be a JSON array of field objects"}
         for item in parsed:
-            if isinstance(item, dict):
-                item.setdefault("required", False)
+            # get() is None covers BOTH a missing key and an explicit null — the server
+            # 422s on either ('fields[0].required: must not be null', live-verified).
+            if isinstance(item, dict) and item.get("required") is None:
+                item["required"] = False
         return parsed, None
     specs = getattr(args, "field", None) or []
     if not specs:

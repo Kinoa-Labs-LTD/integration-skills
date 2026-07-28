@@ -131,7 +131,9 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("cleanField", html)
         self.assertIn('r.kind === "enumeration" ? r : {...r, extra: ""}', html)
         self.assertNotIn("c.is_required !== false", html)          # the old FS checkbox is gone
-        self.assertIn("req.checked = !!f.required", html)          # resource required checkbox STAYS (default FALSE)
+        # `required` is GONE from the skill text and the page (unreleased — user decision
+        # 2026-07-28); the helper/planner default it false for the server (rejects NULL).
+        self.assertNotIn("required: false", html)
 
     def test_fs_split_schemas_and_settings(self):
         # FS mirrors the manifest/domain: schemas own columns; settings bind a schema via a
@@ -183,6 +185,19 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertNotIn('replace(/\\./g, ".")', html)                 # vestigial no-op dropped
         self.assertIn("r.path ||", html)                              # producer path honored in dup check
         self.assertIn('placeholder: "description (optional)"', html)  # field description (SDK-only, 2026-07-28)
+        # Resources round (2026-07-28): required checkbox is a server rudiment — no UI
+        # control (the key stays in state/hand-back/API); existing rows echo verbatim.
+        self.assertNotIn('req.title = "required"', html)
+        self.assertNotIn("\u00b7 required", html)
+        self.assertNotIn("· required", html)
+        self.assertGreaterEqual(html.count("// echoed verbatim"), 4)   # all four surfaces
+        # Resources audit round 2 (2026-07-28): carrier guards + raw enum editing
+        self.assertIn("RES_FIELD_NAME_RE", html)                       # field-name charset
+        self.assertIn("resEnumBad", html)                              # enum ':'/'=' guard
+        self.assertIn("resDefaultBad", html)                           # default type conformance
+        self.assertIn("f._enumRaw = v", html)                          # raw CSV editing (commas type OK)
+        self.assertIn("const {_enumRaw, ...rest} = f;", html)          # page-local state never ships
+        self.assertIn("hoverTitle", html)                              # full value on hover
         self.assertIn("minimum 1 column (server rule)", html)        # zero-column schema invalid
         self.assertIn("maxlength: 255", html)                        # schema-name length cap
         self.assertIn("maxlength: 100", html)                        # setting-key length cap

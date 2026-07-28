@@ -858,6 +858,19 @@ class ResourcesPlanTests(unittest.TestCase):
 
     # ---- ACTIVE ----
 
+    def test_draft_matching_shape_with_extras_plans_update_then_activate(self):
+        # Extras (default/description/enum values) aren't comparable against the listing
+        # readback (enum values read back null), so a name->type shape match alone can't
+        # prove the DRAFT carries them — update, then activate.
+        rp, _ = self._plan(
+            resources=[{"key": "sword", "fields": [{"name": "attack", "field_type": "number",
+                                                    "default": "100"}]}],
+            live=[_live_template("sword", [("attack", "number")], status="draft")])
+        self.assertEqual(len(rp["update"]), 1)
+        self.assertEqual(rp["update"][0]["fields"][0]["default"], "100")
+        self.assertEqual(len(rp["activate"]), 1)
+        self.assertEqual(rp["already_ok"], [])
+
     def test_active_matching_fields_already_ok(self):
         rp, _ = self._plan(
             resources=[{"key": "sword", "fields": [{"name": "attack", "field_type": "number"}]}],

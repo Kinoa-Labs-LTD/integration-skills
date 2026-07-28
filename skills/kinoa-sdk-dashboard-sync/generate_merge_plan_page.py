@@ -62,7 +62,7 @@ Input JSON shape (sections may be empty or omitted):
   "resources": [
     {"id": 60, "name": "Legendary Sword", "key": "legendary_sword", "existing": false,
      "description": "Boss reward.", "source": "Model/Enums/RewardType.cs:10", "note": "",
-     "fields": [{"name": "attack", "field_type": "number", "required": true,
+     "fields": [{"name": "attack", "field_type": "number",
                  "default": "100", "enumeration_values": [], "description": ""}]}
   ]
 }
@@ -341,7 +341,8 @@ function textInput(value, fid, oninput, opts = {{}}) {{
   if (opts.maxlength) inp.maxLength = opts.maxlength;
   if (opts.bad) inp.className = "bad";
   else if (opts.warn) inp.className = "warnp";
-  if (opts.title) inp.title = opts.title;
+  const hoverTitle = [opts.title, value ? String(value) : ""].filter(Boolean).join("\n");
+  if (hoverTitle) inp.title = hoverTitle;
   inp.addEventListener("input", e => {{ oninput(e.target.value); render(); }});
   return inp;
 }}
@@ -406,6 +407,26 @@ function dupNames(rows, key) {{
 }}
 
 function dupIn(items, key) {{ return dupNames(items || [], key); }}
+
+// Resource-field carrier rules (module 14 doc-block grammar): tokens split on ':',
+// so ':' in a name/default/description is unrepresentable in KinoaResources.cs;
+// enum values also reject '=' (the values token is "the comma-bearing token without
+// a '='"). Names double as JSON body keys — resource-key charset applies.
+const RES_FIELD_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
+function resEnumBad(f) {{
+  const vals = f.enumeration_values || [];
+  return !vals.length || vals.some(v => v.includes(":") || v.includes("="));
+}}
+function resDefaultBad(f) {{
+  const d = String(f.default || "");
+  if (!d) return false;
+  if (d.includes(":")) return true;
+  const t = f.field_type;
+  if (t === "number") return !/^-?\d+(\.\d+)?$/.test(d.trim());
+  if (t === "boolean") return !/^(true|false)$/i.test(d.trim());
+  if (t === "enumeration") return !(f.enumeration_values || []).includes(d.trim());
+  return false;
+}}
 
 // FS reserved column namespace: "filter: ..." props are IncludeFilters READERS (configuration-
 // level, bound to Player Fields at config-fill time) and "<...>" is unreplaced scaffold — the
@@ -741,27 +762,32 @@ function renderResources() {{
       const td = t => {{ const x = document.createElement("td"); x.appendChild(t); return x; }};
       if (r.existing) {{
         tr.innerHTML = "<td><code>" + esc(f.name) + "</code></td><td>" + esc(f.field_type) +
-          (f.required ? " · required" : "") + "</td><td>" +
-          esc((f.enumeration_values || []).join(", ") || f.default || "") + "</td>";
+          "</td><td>" + esc((f.enumeration_values || []).join(", ") || f.default || "") + "</td>";
       }} else {{
         tr.appendChild(td(textInput(f.name, "r" + i + "-f" + j, v => f.name = v,
           {{placeholder: "field_name", size: 16, maxlength: 100,
-            bad: !String(f.name || "").trim() || fdup(f.name) || String(f.name || "").length > 100,
-            title: "maximum 100 characters"}})));
+            bad: !RES_FIELD_NAME_RE.test(String(f.name || "")) || fdup(f.name)
+                 || String(f.name || "").length > 100,
+            title: "letter first; letters, digits, _ and - (the name is a JSON body key "
+                   + "and a code doc-block token); maximum 100 characters"}})));
         tr.appendChild(td(kindSelect(RESOURCE_FIELD_TYPES, f.field_type, v => f.field_type = v, "r" + i + "-f" + j + "-k")));
-        const req = document.createElement("input"); req.type = "checkbox"; req.checked = !!f.required;
-        req.title = "required";
-        req.addEventListener("change", e => {{ f.required = e.target.checked; }});
-        tr.appendChild(td(req));
         tr.appendChild(td(textInput(f.default, "r" + i + "-f" + j + "-d", v => f.default = v,
-          {{placeholder: "default", size: 10}})));
+          {{placeholder: "default", size: 10, bad: resDefaultBad(f),
+            title: "must match the field type (enumeration: one of the values); "
+                   + "':' is not representable in the code doc-block carrier"}})));
         if (f.field_type === "enumeration") {{
-          tr.appendChild(td(textInput((f.enumeration_values || []).join(", "), "r" + i + "-f" + j + "-e",
-            v => f.enumeration_values = v.split(",").map(x => x.trim()).filter(Boolean),
-            {{placeholder: "a, b, c", size: 16, bad: !(f.enumeration_values || []).length}})));
+          const enumRaw = f._enumRaw !== undefined ? f._enumRaw : (f.enumeration_values || []).join(", ");
+          tr.appendChild(td(textInput(enumRaw, "r" + i + "-f" + j + "-e",
+            v => {{ f._enumRaw = v;
+                   f.enumeration_values = v.split(",").map(x => x.trim()).filter(Boolean); }},
+            {{placeholder: "a, b, c", size: 16, bad: resEnumBad(f),
+              title: "comma-separated; ':' and '=' are not representable in the code "
+                     + "doc-block carrier"}})));
         }}
         tr.appendChild(td(textInput(f.description, "r" + i + "-f" + j + "-fd", v => f.description = v,
-          {{placeholder: "field description", size: 16}})));
+          {{placeholder: "field description", size: 16,
+            bad: String(f.description || "").includes(":"),
+            title: "':' is not representable in the code doc-block carrier"}})));
         const rm = document.createElement("button"); rm.className = "del"; rm.textContent = "✕";
         rm.addEventListener("click", () => {{ r.fields.splice(j, 1); render(); }});
         tr.appendChild(td(rm));
@@ -772,7 +798,7 @@ function renderResources() {{
     if (!r.existing) {{
       const add = document.createElement("button"); add.className = "ghost"; add.textContent = "＋ field";
       add.addEventListener("click", () => {{
-        r.fields.push({{name: "", field_type: "string", required: false, default: "",
+        r.fields.push({{name: "", field_type: "string", default: "",
                        enumeration_values: [], description: ""}});
         render();
       }});
@@ -819,7 +845,10 @@ function exportJson() {{
   // Enum values live in state across kind toggles (so switching back restores them),
   // but the EXPORT carries them only for enumeration kinds — a stale list never ships.
   const cleanParam = p => p.kind === "enumeration" ? p : {{...p, extra: ""}};
-  const cleanField = f => f.field_type === "enumeration" ? f : {{...f, enumeration_values: []}};
+  const cleanField = f => {{
+    const {{_enumRaw, ...rest}} = f;
+    return rest.field_type === "enumeration" ? rest : {{...rest, enumeration_values: []}};
+  }};
   return JSON.stringify({{
     confirmed_at: new Date().toISOString(),
     page_generated_at: DATA.generated_at,
@@ -844,7 +873,10 @@ function exportJson() {{
                         : (st.version || 1);
         return {{...st, version: ver}};
       }})}},
-    resources: state.resources.map(r => ({{...r, fields: (r.fields || []).map(cleanField)}})),
+    resources: state.resources.map(r => {{
+      if (r.existing) return r;  // echoed verbatim — the row is a measurement of code
+      return {{...r, fields: (r.fields || []).map(cleanField)}};
+    }}),
   }}, null, 2);
 }}
 function flash(msg) {{
