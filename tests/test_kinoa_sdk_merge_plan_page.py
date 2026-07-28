@@ -143,6 +143,7 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("filters are configuration-level", html)      # its tooltip
         self.assertIn("values must be existing Bundle keys", html)  # bundle_key hint
         self.assertIn("v1 (new schema)", html)                      # setting bound to new schema
+        self.assertIn("shared schema — also used by", html)          # live many-keys indicator
 
     def test_fs_flat_payload_tolerated(self):
         p = {"generated_at": "2026-07-28T15:00:00Z", "game_id": None,
@@ -240,15 +241,19 @@ class MergePlanPageTests(unittest.TestCase):
         _, _, out_path = self._run(_payload())
         html = open(out_path, encoding="utf-8").read()
         self.assertIn("DATA.predefined_wire_names || []", html)
-        self.assertIn("DATA.sdk_debug_wire_names || []", html)
+        self.assertIn("DATA.debug_wire_names || DATA.sdk_debug_wire_names || []", html)
+        self.assertIn("DATA.sdk_automatic_wire_names || []", html)
+        self.assertIn('DATA.integration_type || "SDK"', html)
         self.assertIn("effectiveKind", html)
         self.assertIn("kind: effectiveKind(r)", html)   # export normalization
         self.assertIn("existing builder", html)          # predefined badge tooltip
-        self.assertIn("emitted by the Kinoa SDK itself", html)  # sdk-debug badge tooltip
-        self.assertIn("b-sdk", html)                     # distinct badge style
-        # SDK-tagged rows collapse their param editor (nothing gets implemented for them —
-        # authoring params there would be a dead-end promise); state preserved on rename.
+        self.assertIn("debug telemetry", html)           # debug badge tooltip (NOT sdk-bound)
+        self.assertNotIn(">sdk debug<", html)            # old tag name gone
+        self.assertIn("b-debug", html)                   # distinct badge style
+        # Debug-tagged rows collapse their param editor (nothing gets implemented for them);
+        # SDK-automatic predefined rows collapse it too under an SDK integration.
         self.assertIn("params are not applicable", html)
+        self.assertIn("not redefinable in an SDK integration", html)
 
     def test_light_theme_only_and_visible_button_text(self):
         # Manual-run finding 2026-07-28: `color-scheme: light dark` made the UA flip button

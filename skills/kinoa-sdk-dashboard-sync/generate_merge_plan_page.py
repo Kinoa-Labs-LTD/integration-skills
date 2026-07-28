@@ -24,8 +24,10 @@ Input JSON shape (sections may be empty or omitted):
 {
   "generated_at": "<ISO 8601 UTC>",
   "game_id":      "<uuid or null>",
-  "predefined_wire_names": ["session_start", "payment", "..."],
-  "sdk_debug_wire_names":  ["install", "player_update", "feature_settings_download", "..."],
+  "integration_type": "SDK" | "API"  (default "SDK"),
+  "predefined_wire_names":    ["session_start", "payment", "install", "..."],
+  "debug_wire_names":         ["feature_settings_download", "tick", "..."],
+  "sdk_automatic_wire_names": ["install", "player_update", "reach_milestone", "..."],
   "events": [
     {"id": 1, "kind": "custom"|"predefined", "name": "gold_purchase", "existing": false,
      "source": "Scripts/Shop.cs:118", "note": "purchase flow",
@@ -70,14 +72,16 @@ The exported plan echoes the same shape plus stamps:
 (existing rows are echoed verbatim; the skill implements only "existing": false
 rows, exactly as edited.)
 
-"predefined_wire_names" / "sdk_debug_wire_names" (optional): the producer supplies
-the two event registries from its module-13 tables. A row whose name matches the
-FIRST is live-tagged "predefined" (name stays editable unless the row arrived
-kind="predefined") and exported with kind="predefined" — the producer then extends
-the game's existing predefined builder (overload + AddCustomParameter) instead of
-creating a custom mirror. A row matching the SECOND is tagged "sdk debug" and
-exported with kind="sdk" — these are emitted by the SDK itself; the producer skips
-implementing them (with one explanatory line). Keys absent -> no tagging (older
+Event registries (optional keys; live-sourced from the server taxonomy, module-13
+tables as fallback): a row named like a PREDEFINED event is live-tagged
+"predefined" (name stays editable unless the row arrived kind="predefined") and
+exported kind="predefined" — the producer extends the existing predefined builder
+(overload + AddCustomParameter) instead of creating a custom mirror. A row named
+like a DEBUG event is tagged "debug", exported kind="debug", and skipped at
+implementation (emitted by the SDK/backend itself). SDK-AUTOMATIC predefined names
+(install, player_update, *_milestones) keep the predefined tag, but under
+integration_type "SDK" their param editor is disabled (the SDK composes them; an
+API integration may extend their params). Keys absent -> no tagging (older
 producers); the sync planner's live-listing collision warning remains the backstop.
 
 Exit: prints {"ok": true, "output": "<abs path>", "opened_in_browser": bool}.
@@ -147,7 +151,7 @@ input.bad, select.bad {{ border-color: #cf222e; background: #fff5f5; }}
 input.warnp {{ border-color: #bf8700; }}
 .badge {{ display: inline-block; font-size: 0.72rem; padding: 0.1rem 0.5rem; border-radius: 999px;
          border: 1px solid currentColor; white-space: nowrap; }}
-.b-existing {{ color: #57606a; }} .b-new {{ color: #1a7f37; }} .b-predef {{ color: #0969da; }} .b-sdk {{ color: #bf8700; }}
+.b-existing {{ color: #57606a; }} .b-new {{ color: #1a7f37; }} .b-predef {{ color: #0969da; }} .b-debug {{ color: #bf8700; }}
 button {{ font: inherit; padding: 0.35rem 0.8rem; border-radius: 6px; cursor: pointer;
          border: 1px solid #d0d7de; background: #fff; color: #1f2328; }}
 button.ghost {{ border-style: dashed; }}
@@ -196,15 +200,20 @@ const FS_COLUMN_KINDS = {fs_column_kinds};
 const RESOURCE_FIELD_TYPES = {resource_field_types};
 const RESOURCE_KEY_RE = new RegExp({resource_key_re});
 const SYSTEM_EVENT_PARAM_NAMES = {system_event_param_names};
-// Registries travel IN THE PAYLOAD (optional keys, contract clause 1) — single maintained
-// source is the /kinoa skill's module-13 tables; the page needs no release when the backend
-// grows an event. Absent keys -> no live tagging (the sync planner's live-listing collision
-// warning stays the backend-fresh backstop). Two DISTINCT registries:
-//   predefined_wire_names — sent from GAME code via existing builders (payment, level_up, ...)
-//   sdk_debug_wire_names  — sent by the SDK ITSELF (install, feature_settings_download, ...);
-//                           nothing to implement in game code, the row is skipped.
+// Registries travel IN THE PAYLOAD (optional keys, contract clause 1) — sourced live from
+// the server taxonomy (type=PREDEFINED / type=DEBUG listings) with the /kinoa module-13
+// tables as offline fallback. Absent keys -> no live tagging (the sync planner's
+// live-listing collision warning stays the backend-fresh backstop).
+//   predefined_wire_names — ALL type=PREDEFINED names (incl. SDK-automatic ones like install)
+//   debug_wire_names      — type=DEBUG telemetry (feature_settings_download, ...);
+//                           never sent from app code, the row is skipped.
+//   sdk_automatic_wire_names — the PREDEFINED subset emitted by the SDK itself (install,
+//                           player_update, *_milestones): tagged predefined, but under an
+//                           SDK integration their params are NOT redefinable (API may extend).
 const PREDEFINED_EVENT_WIRE_NAMES = DATA.predefined_wire_names || [];
-const SDK_DEBUG_WIRE_NAMES = DATA.sdk_debug_wire_names || [];
+const DEBUG_WIRE_NAMES = DATA.debug_wire_names || DATA.sdk_debug_wire_names || [];
+const SDK_AUTOMATIC_WIRE_NAMES = DATA.sdk_automatic_wire_names || [];
+const INTEGRATION_TYPE = DATA.integration_type || "SDK";
 const PAYLOAD_VERSION = {payload_version};
 const DATA_VERSION = DATA.payload_version || 1;
 const VERSION_MISMATCH = DATA_VERSION > PAYLOAD_VERSION;
@@ -258,9 +267,10 @@ function esc(s) {{ const d = document.createElement("span"); d.textContent = s =
 // extends the existing predefined builder instead of creating a custom mirror). The name stays
 // editable for such rows (only payload-declared predefined rows lock their name).
 function isPredefName(n) {{ return PREDEFINED_EVENT_WIRE_NAMES.includes(String(n || "").trim().toLowerCase()); }}
-function isSdkDebugName(n) {{ return SDK_DEBUG_WIRE_NAMES.includes(String(n || "").trim().toLowerCase()); }}
+function isDebugName(n) {{ return DEBUG_WIRE_NAMES.includes(String(n || "").trim().toLowerCase()); }}
+function isSdkAutomatic(n) {{ return SDK_AUTOMATIC_WIRE_NAMES.includes(String(n || "").trim().toLowerCase()); }}
 function effectiveKind(r) {{
-  if (r.kind === "sdk" || isSdkDebugName(r.name)) return "sdk";
+  if (r.kind === "debug" || r.kind === "sdk" || isDebugName(r.name)) return "debug";
   if (r.kind === "predefined" || isPredefName(r.name)) return "predefined";
   return r.kind || "custom";
 }}
@@ -321,10 +331,10 @@ function head(row, label, onDrop) {{
     b.title = "predefined Kinoa event — wired via the game's existing builder (e.g. PaymentEventData); " +
               "params attach as custom_params. It will NOT be created as a custom event.";
     div.appendChild(b);
-  }} else if (ek === "sdk") {{
-    const b = document.createElement("span"); b.className = "badge b-sdk"; b.textContent = "sdk debug";
-    b.title = "emitted by the Kinoa SDK itself (not from game code) — there is nothing to " +
-              "implement; this row will be skipped.";
+  }} else if (ek === "debug") {{
+    const b = document.createElement("span"); b.className = "badge b-debug"; b.textContent = "debug";
+    b.title = "debug telemetry — emitted by the SDK/backend itself, never sent from app code; " +
+              "there is nothing to implement, this row will be skipped.";
     div.appendChild(b);
   }}
   if (row.source) {{
@@ -373,12 +383,23 @@ function renderEvents() {{
     }}
     if (r.note) {{ const n = document.createElement("span"); n.className = "muted"; n.textContent = r.note; g.appendChild(n); }}
     div.appendChild(g);
-    // SDK/debug-tagged rows get NO param editor: nothing will be implemented for them
+    // Debug-tagged rows get NO param editor: nothing will be implemented for them
     // (the row is skipped), so authoring params would be a dead-end promise. State is
-    // preserved — rename away from the sdk name and the params (and editor) return.
-    if (effectiveKind(r) === "sdk") {{
+    // preserved — rename away from the debug name and the params (and editor) return.
+    if (effectiveKind(r) === "debug") {{
       const note = document.createElement("div"); note.className = "muted";
-      note.textContent = "emitted by the Kinoa SDK/backend itself — params are not applicable; this row will be skipped at implementation.";
+      note.textContent = "debug telemetry (emitted by the SDK/backend) — params are not applicable; this row will be skipped at implementation.";
+      div.appendChild(note);
+      host.appendChild(div);
+      return;
+    }}
+    // SDK-automatic PREDEFINED (install, player_update, *_milestones): the tag stays
+    // predefined, but under an SDK integration the SDK itself composes these events —
+    // their params are NOT redefinable from game code (an API integration may extend them,
+    // so the editor stays for INTEGRATION_TYPE === "API").
+    if (effectiveKind(r) === "predefined" && isSdkAutomatic(r.name) && INTEGRATION_TYPE === "SDK") {{
+      const note = document.createElement("div"); note.className = "muted";
+      note.textContent = "sent automatically by the SDK — its params are not redefinable in an SDK integration (API integrations may extend them).";
       div.appendChild(note);
       host.appendChild(div);
       return;
@@ -548,6 +569,15 @@ function renderFs() {{
       v.textContent = newSchemas.has(r.schema_name)
         ? "v1 (new schema)" : "v" + (r.version || 1) + " (from code wiring)";
       g.appendChild(v);
+    }}
+    // Live many-keys-one-schema indicator — recomputed on every render, so it follows
+    // the dropdown (a static payload note here would go stale the moment the user edits).
+    const sharers = fs.settings.filter(x => x !== r && x.schema_name
+      && String(x.schema_name) === String(r.schema_name || ""));
+    if (sharers.length) {{
+      const sh = document.createElement("span"); sh.className = "muted";
+      sh.textContent = "shared schema — also used by: " + sharers.map(x => x.key || "(unnamed)").join(", ");
+      g.appendChild(sh);
     }}
     if (r.note) {{ const n = document.createElement("span"); n.className = "muted"; n.textContent = r.note; g.appendChild(n); }}
     div.appendChild(g);
