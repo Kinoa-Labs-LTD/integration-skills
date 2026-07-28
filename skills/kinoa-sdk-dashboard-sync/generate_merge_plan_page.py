@@ -341,7 +341,10 @@ function textInput(value, fid, oninput, opts = {{}}) {{
   if (opts.maxlength) inp.maxLength = opts.maxlength;
   if (opts.bad) inp.className = "bad";
   else if (opts.warn) inp.className = "warnp";
-  const hoverTitle = [opts.title, value ? String(value) : ""].filter(Boolean).join("\n");
+  // The validation hint shows only while the input is actually red/amber — a healthy
+  // field's hover reveals just its full value (user feedback 2026-07-28).
+  const hoverTitle = [(opts.bad || opts.warn) ? opts.title : "", value ? String(value) : ""]
+    .filter(Boolean).join("\n");
   if (hoverTitle) inp.title = hoverTitle;
   inp.addEventListener("input", e => {{ oninput(e.target.value); render(); }});
   return inp;

@@ -814,7 +814,7 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                 })
                 continue
             item = {"name": f.get("name"), "field_type": ftype,
-                    "required": bool(f.get("required", False))}
+                    "required": bool(f.get("required", True))}
             # default and description are OPTIONAL per field — carried verbatim when present,
             # never invented (a minimal field is just name + type).
             if f.get("default") is not None:

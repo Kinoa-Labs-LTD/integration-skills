@@ -218,9 +218,9 @@ def _parse_field_spec(spec):
     """
     Parse "name:type[:extra][:req]" -> a ResourceTemplateDto field object.
     Examples:
-      'gold:number'                          -> {name, field_type: number, required: False}
+      'gold:number'                          -> {name, field_type: number, required: True}
       'title:string:req'                     -> {name, field_type: string, required: True}
-      'rarity:enumeration:common,rare,epic'  -> {name, field_type: enumeration, required: False,
+      'rarity:enumeration:common,rare,epic'  -> {name, field_type: enumeration, required: True,
                                                   enumeration_values: [common, rare, epic]}
       'rarity:enumeration:common,rare:req'   -> ... required: True
     Trailing 'req'/'required' token marks the field required. For enumeration
@@ -233,7 +233,8 @@ def _parse_field_spec(spec):
     if ftype not in ALLOWED_FIELD_TYPES:
         raise ValueError(f"field type must be one of {ALLOWED_FIELD_TYPES}, got {ftype!r}")
     flags = parts[2:]
-    required = any(f.lower() in ("req", "required") for f in flags)
+    # Default TRUE (mirroring FS is_required; 'req' token stays accepted, now redundant).
+    required = True
     enum_values = None
     for f in flags:
         if f.lower() in ("req", "required"):
@@ -251,7 +252,8 @@ def _parse_field_spec(spec):
 def _collect_fields(args):
     """Build the fields list from --fields-json (takes precedence) or repeatable
     --field specs. Returns (fields_list_or_None, error_dict_or_None).
-    fields-json items get required=False defaulted in: the server rejects a field
+    fields-json items get required=True defaulted in (mirroring FS is_required —
+    user decision 2026-07-28): the server rejects a field
     with required missing/null (422 'fields[0].required: must not be null' —
     live-verified 2026-07-23), and 'not required' is the only sane default."""
     fields_json = getattr(args, "fields_json", None)
@@ -263,7 +265,7 @@ def _collect_fields(args):
             # get() is None covers BOTH a missing key and an explicit null — the server
             # 422s on either ('fields[0].required: must not be null', live-verified).
             if isinstance(item, dict) and item.get("required") is None:
-                item["required"] = False
+                item["required"] = True
         return parsed, None
     specs = getattr(args, "field", None) or []
     if not specs:

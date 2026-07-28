@@ -832,7 +832,7 @@ class ResourcesPlanTests(unittest.TestCase):
         self.assertEqual(create["fields"][0],
                          {"name": "attack", "field_type": "number", "required": True, "default": 100})
         self.assertEqual(create["fields"][1]["enumeration_values"], ["common", "rare", "epic"])
-        self.assertFalse(create["fields"][1]["required"])  # required defaults to False
+        self.assertTrue(create["fields"][1]["required"])  # required defaults to True (mirrors FS)
         self.assertEqual(rp["activate"], [])
         self.assertEqual(rp["field_conflict"], [])
         self.assertEqual(rp["warnings"], [])
@@ -850,7 +850,7 @@ class ResourcesPlanTests(unittest.TestCase):
                        {"name": "element", "field_type": "string",
                         "description": "Damage element", "default": "fire"}]}])
         bare, rich = rp["create"][0]["fields"]
-        self.assertEqual(bare, {"name": "attack", "field_type": "number", "required": False})
+        self.assertEqual(bare, {"name": "attack", "field_type": "number", "required": True})
         self.assertNotIn("default", bare)
         self.assertNotIn("description", bare)
         self.assertEqual(rich["description"], "Damage element")
