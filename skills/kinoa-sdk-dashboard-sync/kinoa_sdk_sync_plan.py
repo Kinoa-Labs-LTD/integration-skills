@@ -71,11 +71,13 @@ FS_COLUMN_KINDS = ("integer", "number", "string", "boolean", "bundle_key")
 RESOURCE_FIELD_TYPES = ("number", "string", "boolean", "date", "enumeration")
 RESOURCE_KEY_RE = r"^[a-zA-Z][a-zA-Z0-9_-]*$"
 
-# The dashboard auto-attaches these system params to every event. Verified live
+# Reserved system-param names (backend-confirmed 2026-07-29): registering a param with
+# any of these names is REFUSED — 'Parameter name(s) [X] are reserved by system
+# parameters'. The dashboard auto-attaches these system params to every event. Verified live
 # 2026-06-12: a CREATE carrying a same-named operator param silently DISPLACES the
 # system param (the event loses its standard system column); editing a system param
 # via PUT fails with an unhandled 500 (system params are shared template rows).
-SYSTEM_EVENT_PARAM_NAMES = ("device_id", "time", "time_ms")
+SYSTEM_EVENT_PARAM_NAMES = ("device_id", "level", "place", "success", "time", "time_ms", "wifi")
 
 # Entity surfaces this planner knows how to sync. The manifest is designed to grow
 # (feature settings, bundles, translations, ...) — any other top-level section is
@@ -534,10 +536,10 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
             if _norm(p.get("name")) in SYSTEM_EVENT_PARAM_NAMES:
                 plan["events"]["warnings"].append({
                     "name": item.get("name"), "param": p.get("name"),
-                    "reason": f"system-param collision: '{p.get('name')}' matches a dashboard system "
-                              "event param — on create the server silently drops its system column in "
-                              "favour of this operator param; on add-params the helper skips it as "
-                              "already existing. Rename the param in game code.",
+                    "reason": f"system-param collision: '{p.get('name')}' is RESERVED by system "
+                              "parameters — the server refuses the registration ('Parameter name(s) "
+                              "[...] are reserved by system parameters', backend-confirmed 2026-07-29). "
+                              "Rename the param in game code.",
                 })
 
     # --- Informational: dashboard ACTIVE entities the manifest doesn't mention. Never deleted. ---

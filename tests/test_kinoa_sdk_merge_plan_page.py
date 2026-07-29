@@ -196,7 +196,7 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("resEnumBad", html)                              # enum ':'/'=' guard
         self.assertIn("resDefaultBad", html)                           # default type conformance
         self.assertIn("f._enumRaw = v", html)                          # raw CSV editing (commas type OK)
-        self.assertIn("const {_enumRaw, ...rest} = f;", html)          # page-local state never ships
+        self.assertIn("const {_enumRaw, included, ...rest} = f;", html)  # page-local state never ships
         self.assertIn("hoverTitle", html)                              # full value on hover
         # Select-first round (2026-07-29): checkbox is the decision, pencil opts into editing,
         # invalid rows can never hide collapsed, unticked rows leave the hand-back.
@@ -208,11 +208,16 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("fsSettingRowInvalid", html)
         self.assertIn("resRowInvalid", html)                          # resources collapse too (2026-07-29)
         self.assertIn("REGISTRIES_SOURCE", html)                      # offline-fallback note wired
-        # Param soft-delete trial on events (user decision 2026-07-29): the X leaves a
-        # dim restore line; removed params never ship and never block the gate.
-        self.assertIn("p.removed = true", html)
-        self.assertIn('rs.textContent = "restore"', html)
-        self.assertIn("filter(p => !p.removed).map(cleanParam)", html)
+        # Checkbox unification (user verdict 2026-07-29): include-checkboxes on event
+        # params AND resource fields (FS columns already had them); X+restore removed.
+        self.assertIn('pcb.title = "include this param"', html)
+        self.assertIn('fcb.title = "include this field"', html)
+        self.assertIn("filter(p => p.included !== false).map(cleanParam)", html)
+        self.assertIn("filter(f => f.included !== false).map(cleanField)", html)
+        self.assertNotIn("p.removed = true", html)
+        # Reserved system params (backend-confirmed 2026-07-29): red blocker, 7 names
+        self.assertIn("level", self.mod.SYSTEM_EVENT_PARAM_NAMES)
+        self.assertIn("reserved by system parameters", html)
         # FS column checkbox trial (2026-07-29): unticked columns dim + leave the plan
         self.assertIn('ccb.title = "include this column"', html)
         self.assertIn("columns: (r.columns || []).filter(c => c.included !== false)", html)

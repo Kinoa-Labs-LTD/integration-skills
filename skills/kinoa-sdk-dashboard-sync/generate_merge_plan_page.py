@@ -128,7 +128,7 @@ RESOURCE_FIELD_TYPES = ["number", "string", "boolean", "date", "enumeration"]
 RESOURCE_KEY_RE = r"^[a-zA-Z][a-zA-Z0-9_-]*$"
 # The dashboard auto-attaches these to every event; an operator param with the same
 # name silently DISPLACES the system column (planner constant — parity-tested).
-SYSTEM_EVENT_PARAM_NAMES = ["device_id", "time", "time_ms"]
+SYSTEM_EVENT_PARAM_NAMES = ["device_id", "level", "place", "success", "time", "time_ms", "wifi"]
 # Bump ONLY on a breaking payload/hand-back change (contract clause 3).
 PAYLOAD_VERSION = 1
 
@@ -436,10 +436,11 @@ function eventRowInvalid(r, dup) {{
       && (!String(r.name || "").trim() || dup(r.name) || String(r.name || "").length > 30)) return true;
   const ek = effectiveKind(r);
   if (ek === "debug" || (ek === "predefined" && isSdkAutomatic(r.name) && INTEGRATION_TYPE === "SDK")) return false;
-  const live = (r.params || []).filter(p => !p.removed);
+  const live = (r.params || []).filter(p => p.included !== false);
   const pdup = dupIn(live, "name");
   return live.some(p =>
     !String(p.name || "").trim() || pdup(p.name) || String(p.name || "").length > 30
+    || SYSTEM_EVENT_PARAM_NAMES.includes(String(p.name || "").trim())
     || !EVENT_PARAM_KINDS.includes(p.kind)
     || (p.kind === "enumeration" && (!String(p.extra || "").trim() || enumValuesTooLong(p.extra))));
 }}
@@ -464,8 +465,9 @@ function resRowInvalid(r, dup, ndup) {{
       || String(r.key || "").length > 100) return true;
   if (!String(r.name || "").trim() || ndup(r.name) || String(r.name || "").length > 100) return true;
   if (String(r.description || "").length > 100) return true;
-  const fdup = dupIn(r.fields, "name");
-  return (r.fields || []).some(f =>
+  const liveF = (r.fields || []).filter(f => f.included !== false);
+  const fdup = dupIn(liveF, "name");
+  return liveF.some(f =>
     !RES_FIELD_NAME_RE.test(String(f.name || "")) || fdup(f.name)
     || String(f.name || "").length > 100
     || !RESOURCE_FIELD_TYPES.includes(f.field_type)
@@ -558,15 +560,12 @@ function renderEvents() {{
       div.appendChild(cg);
       // Same read-only table an existing row shows — collapsed and existing are the
       // same kind of view (user feedback 2026-07-29), so they read the same.
-      if (!skipNote && (r.params || []).filter(p => !p.removed).length) {{
+      if (!skipNote && (r.params || []).filter(p => p.included !== false).length) {{
         const ct = document.createElement("table"); ct.className = "sub";
-        (r.params || []).filter(p => !p.removed).forEach(p => {{
-          const warn = SYSTEM_EVENT_PARAM_NAMES.includes(String(p.name || "").trim());
+        (r.params || []).filter(p => p.included !== false).forEach(p => {{
           const tr = document.createElement("tr");
-          tr.innerHTML = "<td><code>" + esc(p.name) + (warn ? " \u26a0" : "") + "</code></td><td>" +
+          tr.innerHTML = "<td><code>" + esc(p.name) + "</code></td><td>" +
             esc(p.kind) + "</td><td>" + esc(p.kind === "enumeration" ? (p.extra || "") : "") + "</td>";
-          if (warn) tr.title = "\u26a0 collides with a dashboard SYSTEM event param — the event " +
-            "would lose its standard column; open the row (\u270e) to rename it";
           ct.appendChild(tr);
         }});
         div.appendChild(ct);
@@ -610,29 +609,36 @@ function renderEvents() {{
       return;
     }}
     const tbl = document.createElement("table"); tbl.className = "sub";
-    const pdup = dupIn((r.params || []).filter(p => !p.removed), "name");
+    const pdup = dupIn((r.params || []).filter(p => p.included !== false), "name");
     (r.params || []).forEach((p, j) => {{
       const tr = document.createElement("tr");
       const td = t => {{ const c = document.createElement("td"); c.appendChild(t); return c; }};
-      if (!r.existing && p.removed) {{
-        tr.className = "removedp";
-        tr.innerHTML = "<td><code>" + esc(p.name || "(unnamed)") + "</code></td><td>" + esc(p.kind) +
-          "</td><td class=\"muted\">left out of the plan</td>";
-        const rs = document.createElement("button"); rs.className = "ghost"; rs.textContent = "restore";
-        rs.addEventListener("click", () => {{ delete p.removed; render(); }});
-        tr.appendChild(td(rs));
-        tbl.appendChild(tr);
-        return;
+      if (!r.existing) {{
+        const pcb = document.createElement("input"); pcb.type = "checkbox"; pcb.className = "inc";
+        pcb.checked = p.included !== false; pcb.title = "include this param";
+        pcb.addEventListener("change", e => {{ p.included = e.target.checked; render(); }});
+        tr.appendChild(td(pcb));
+        if (p.included === false) {{
+          tr.className = "removedp";
+          tr.insertAdjacentHTML("beforeend", "<td><code>" + esc(p.name || "(unnamed)") +
+            "</code></td><td>" + esc(p.kind) + "</td><td class=\"muted\">left out of the plan</td>");
+          tbl.appendChild(tr);
+          return;
+        }}
       }}
       if (r.existing) {{
         tr.innerHTML = "<td><code>" + esc(p.name) + "</code></td><td>" + esc(p.kind) + "</td><td>" + esc(p.extra || "") + "</td>";
       }} else {{
+        // Reserved names are a hard server refusal ("Parameter name(s) [X] are reserved
+        // by system parameters", backend-confirmed 2026-07-29) — red, blocks the export.
         const sysHit = SYSTEM_EVENT_PARAM_NAMES.includes(String(p.name || "").trim());
         tr.appendChild(td(textInput(p.name, "e" + i + "-p" + j, v => p.name = v,
           {{placeholder: "param_name", size: 20, maxlength: 30,
-            bad: !String(p.name || "").trim() || pdup(p.name) || String(p.name || "").length > 30,
-            warn: sysHit,
-            title: sysHit ? "collides with a dashboard SYSTEM event param — the event will lose its standard " + p.name + " column; rename (e.g. time -> time_of_day)" : ""}})));
+            bad: !String(p.name || "").trim() || pdup(p.name) || String(p.name || "").length > 30
+                 || sysHit,
+            title: sysHit ? "reserved by system parameters (" + SYSTEM_EVENT_PARAM_NAMES.join(", ") +
+                            ") — the dashboard refuses to register it; rename (e.g. time -> time_of_day)"
+                          : "maximum 30 characters"}})));
         // Enum-values input shows ONLY while kind === enumeration, but the VALUE is
         // preserved on kind changes (discovery-found candidates must survive a toggle);
         // the EXPORT strips it for non-enumeration kinds instead.
@@ -643,10 +649,6 @@ function renderEvents() {{
               bad: !String(p.extra || "").trim() || enumValuesTooLong(p.extra),
               title: "each value must be 50 characters or less"}})));
         }}
-        const rm = document.createElement("button"); rm.className = "del"; rm.textContent = "✕";
-        rm.title = "leave this param out (soft — a restore line stays until export)";
-        rm.addEventListener("click", () => {{ p.removed = true; render(); }});
-        tr.appendChild(td(rm));
       }}
       tbl.appendChild(tr);
     }});
@@ -937,9 +939,9 @@ function renderResources() {{
         esc(r.name || "") + ((r.fields || []).length ? "" : " · key-only") + "</span>";
       if (r.note) cg.insertAdjacentHTML("beforeend", " <span class=\"muted\">" + esc(r.note) + "</span>");
       div.appendChild(cg);
-      if ((r.fields || []).length) {{
+      if ((r.fields || []).filter(f => f.included !== false).length) {{
         const ct = document.createElement("table"); ct.className = "sub";
-        (r.fields || []).forEach(f => {{
+        (r.fields || []).filter(f => f.included !== false).forEach(f => {{
           const tr = document.createElement("tr");
           tr.innerHTML = "<td><code>" + esc(f.name) + "</code></td><td>" + esc(f.field_type) +
             "</td><td>" + esc((f.enumeration_values || []).join(", ") || f.default || "") + "</td>";
@@ -972,10 +974,23 @@ function renderResources() {{
     if (r.note) {{ const n = document.createElement("span"); n.className = "muted"; n.textContent = r.note; g.appendChild(n); }}
     div.appendChild(g);
     const tbl = document.createElement("table"); tbl.className = "sub";
-    const fdup = dupIn(r.fields, "name");
+    const fdup = dupIn((r.fields || []).filter(f => f.included !== false), "name");
     (r.fields || []).forEach((f, j) => {{
       const tr = document.createElement("tr");
       const td = t => {{ const x = document.createElement("td"); x.appendChild(t); return x; }};
+      if (!r.existing) {{
+        const fcb = document.createElement("input"); fcb.type = "checkbox"; fcb.className = "inc";
+        fcb.checked = f.included !== false; fcb.title = "include this field";
+        fcb.addEventListener("change", e => {{ f.included = e.target.checked; render(); }});
+        tr.appendChild(td(fcb));
+        if (f.included === false) {{
+          tr.className = "removedp";
+          tr.insertAdjacentHTML("beforeend", "<td><code>" + esc(f.name || "(unnamed)") +
+            "</code></td><td>" + esc(f.field_type) + "</td><td class=\"muted\">left out of the plan</td>");
+          tbl.appendChild(tr);
+          return;
+        }}
+      }}
       if (r.existing) {{
         tr.innerHTML = "<td><code>" + esc(f.name) + "</code></td><td>" + esc(f.field_type) +
           "</td><td>" + esc((f.enumeration_values || []).join(", ") || f.default || "") + "</td>";
@@ -1004,9 +1019,6 @@ function renderResources() {{
           {{placeholder: "field description", size: 16,
             bad: String(f.description || "").includes(":"),
             title: "':' is not representable in the code doc-block carrier"}})));
-        const rm = document.createElement("button"); rm.className = "del"; rm.textContent = "✕";
-        rm.addEventListener("click", () => {{ r.fields.splice(j, 1); render(); }});
-        tr.appendChild(td(rm));
       }}
       tbl.appendChild(tr);
     }});
@@ -1063,11 +1075,11 @@ function exportJson() {{
   // Enum values live in state across kind toggles (so switching back restores them),
   // but the EXPORT carries them only for enumeration kinds — a stale list never ships.
   const cleanParam = p => {{
-    const {{removed, ...rest}} = p;
+    const {{included, ...rest}} = p;
     return rest.kind === "enumeration" ? rest : {{...rest, extra: ""}};
   }};
   const cleanField = f => {{
-    const {{_enumRaw, ...rest}} = f;
+    const {{_enumRaw, included, ...rest}} = f;
     return rest.field_type === "enumeration" ? rest : {{...rest, enumeration_values: []}};
   }};
   // Select-first: unticked rows are simply absent from the hand-back (same semantics
@@ -1084,7 +1096,7 @@ function exportJson() {{
       const collapsed = ek === "debug" ||
         (ek === "predefined" && isSdkAutomatic(r.name) && INTEGRATION_TYPE === "SDK");
       return stripLocal({{...r, kind: ek,
-        params: collapsed ? [] : (r.params || []).filter(p => !p.removed).map(cleanParam)}});
+        params: collapsed ? [] : (r.params || []).filter(p => p.included !== false).map(cleanParam)}});
     }}),
     player_fields: state.player_fields.filter(keep).map(r => {{
       if (r.existing) return r;  // echoed verbatim — the row is a measurement of code
@@ -1106,7 +1118,7 @@ function exportJson() {{
       }})}},
     resources: state.resources.filter(keep).map(r => {{
       if (r.existing) return r;  // echoed verbatim — the row is a measurement of code
-      return stripLocal({{...r, fields: (r.fields || []).map(cleanField)}});
+      return stripLocal({{...r, fields: (r.fields || []).filter(f => f.included !== false).map(cleanField)}});
     }}),
   }}, null, 2);
 }}
