@@ -451,10 +451,11 @@ function fieldRowInvalid(r, dup, pathDup, pathOf) {{
     || (r.kind === "enumeration" && (!String(r.extra || "").trim() || enumValuesTooLong(r.extra)));
 }}
 function fsSchemaRowInvalid(r, sdup) {{
+  const cols = (r.columns || []).filter(c => c.included !== false);
   if (!String(r.name || "").trim() || sdup(r.name) || String(r.name || "").length > 255
-      || !(r.columns || []).length) return true;
-  const cdup = dupIn(r.columns, "name");
-  return (r.columns || []).some(c =>
+      || !cols.length) return true;
+  const cdup = dupIn(cols, "name");
+  return cols.some(c =>
     !String(c.name || "").trim() || cdup(c.name) || isReservedFsColumn(c.name)
     || String(c.name || "").length > 100 || !FS_COLUMN_KINDS.includes(c.kind));
 }}
@@ -743,7 +744,7 @@ function renderFs() {{
       if (r.note) cg.insertAdjacentHTML("beforeend", " <span class=\"muted\">" + esc(r.note) + "</span>");
       div.appendChild(cg);
       const ct = document.createElement("table"); ct.className = "sub";
-      (r.columns || []).forEach(c => {{
+      (r.columns || []).filter(c => c.included !== false).forEach(c => {{
         const tr = document.createElement("tr");
         tr.innerHTML = "<td><code>" + esc(c.name) + "</code></td><td>" + esc(c.kind) + "</td>";
         ct.appendChild(tr);
@@ -786,10 +787,24 @@ function renderFs() {{
     if (r.note) {{ const n = document.createElement("span"); n.className = "muted"; n.textContent = r.note; g.appendChild(n); }}
     div.appendChild(g);
     const tbl = document.createElement("table"); tbl.className = "sub";
-    const cdup = dupIn(r.columns, "name");
+    const cdup = dupIn((r.columns || []).filter(c => c.included !== false), "name");
     (r.columns || []).forEach((c, j) => {{
       const tr = document.createElement("tr");
       const td = t => {{ const x = document.createElement("td"); x.appendChild(t); return x; }};
+      if (!r.existing) {{
+        // Checkbox trial (FS): unticked column stays as a dim line — nothing is deleted.
+        const ccb = document.createElement("input"); ccb.type = "checkbox"; ccb.className = "inc";
+        ccb.checked = c.included !== false; ccb.title = "include this column";
+        ccb.addEventListener("change", e => {{ c.included = e.target.checked; render(); }});
+        tr.appendChild(td(ccb));
+        if (c.included === false) {{
+          tr.className = "removedp";
+          tr.insertAdjacentHTML("beforeend", "<td><code>" + esc(c.name || "(unnamed)") +
+            "</code></td><td>" + esc(c.kind) + "</td><td class=\"muted\">left out of the plan</td>");
+          tbl.appendChild(tr);
+          return;
+        }}
+      }}
       if (r.existing) {{
         tr.innerHTML = "<td><code>" + esc(c.name) + "</code></td><td>" + esc(c.kind) + "</td>";
       }} else {{
@@ -810,9 +825,6 @@ function renderFs() {{
         // always carries is_required: true; the key is kept DELIBERATELY until the API
         // side drops it from the DTO.
         c.is_required = true;
-        const rm = document.createElement("button"); rm.className = "del"; rm.textContent = "✕";
-        rm.addEventListener("click", () => {{ r.columns.splice(j, 1); render(); }});
-        tr.appendChild(td(rm));
       }}
       tbl.appendChild(tr);
     }});
@@ -1079,7 +1091,9 @@ function exportJson() {{
       return stripLocal(r.kind === "enumeration" ? {{...r}} : {{...r, extra: ""}});
     }}),
     feature_settings: {{schemas: state.feature_settings.schemas.filter(keep)
-        .map(r => r.existing ? r : stripLocal({{...r}})),
+        .map(r => r.existing ? r : stripLocal({{...r,
+          columns: (r.columns || []).filter(c => c.included !== false)
+            .map(c => {{ const {{included, ...cc}} = c; return cc; }})}})),
       settings: state.feature_settings.settings.filter(keep).map(st => {{
         if (st.existing) return st;  // echoed verbatim — keys wired at older live versions stay so
         // keep-filtered: an unticked new schema must not shadow a same-named existing

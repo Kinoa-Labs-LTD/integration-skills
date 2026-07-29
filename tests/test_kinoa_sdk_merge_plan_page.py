@@ -213,6 +213,9 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("p.removed = true", html)
         self.assertIn('rs.textContent = "restore"', html)
         self.assertIn("filter(p => !p.removed).map(cleanParam)", html)
+        # FS column checkbox trial (2026-07-29): unticked columns dim + leave the plan
+        self.assertIn('ccb.title = "include this column"', html)
+        self.assertIn("columns: (r.columns || []).filter(c => c.included !== false)", html)
         self.assertIn("offline tables (live listings unavailable", html)
         self.assertIn("const keep = r => r.existing || inc(r);", html)
         self.assertIn("const stripLocal", html)
