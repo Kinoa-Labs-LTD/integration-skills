@@ -129,7 +129,7 @@ class MergePlanPageTests(unittest.TestCase):
         # Enum values: state survives kind toggles; the EXPORT strips them for non-enum kinds.
         self.assertIn("cleanParam", html)
         self.assertIn("cleanField", html)
-        self.assertIn('r.kind === "enumeration" ? r : {...r, extra: ""}', html)
+        self.assertIn('stripLocal(r.kind === "enumeration" ? {...r} : {...r, extra: ""})', html)
         self.assertNotIn("c.is_required !== false", html)          # the old FS checkbox is gone
         # `required` is GONE from the skill text and the page (unreleased — user decision
         # 2026-07-28); the helper/planner default it false for the server (rejects NULL).
@@ -157,7 +157,7 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("enumValuesTooLong", html)
         self.assertIn("the schema's newest wired version", html)    # existing-schema version display
         self.assertIn("valid for backward compatibility", html)      # multi-version info note
-        self.assertIn(".grid > button.del", html)                     # row drop pinned right
+        self.assertIn(".grid > button.pencil", html)                  # pencil pinned right (drop removed)
         # Cosmetic renames (2026-07-28): section titles Events / User fields; visible event
         # taxonomy predefined/debug/user — while the payload/export vocabulary stays "custom"
         # and the payload key stays player_fields (STRICTLY no API/hand-back changes).
@@ -198,6 +198,18 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("f._enumRaw = v", html)                          # raw CSV editing (commas type OK)
         self.assertIn("const {_enumRaw, ...rest} = f;", html)          # page-local state never ships
         self.assertIn("hoverTitle", html)                              # full value on hover
+        # Select-first round (2026-07-29): checkbox is the decision, pencil opts into editing,
+        # invalid rows can never hide collapsed, unticked rows leave the hand-back.
+        self.assertIn('cb.type = "checkbox"; cb.className = "inc"', html)
+        self.assertIn("function expandedRow", html)
+        self.assertIn("eventRowInvalid", html)
+        self.assertIn("fieldRowInvalid", html)
+        self.assertIn("fsSchemaRowInvalid", html)
+        self.assertIn("fsSettingRowInvalid", html)
+        self.assertIn("const keep = r => r.existing || inc(r);", html)
+        self.assertIn("const stripLocal", html)
+        self.assertIn("This page is <b>optional</b>", html)
+        self.assertNotIn("drop wrong proposals", html)                # old header intro gone
         self.assertIn("minimum 1 column (server rule)", html)        # zero-column schema invalid
         self.assertIn("maxlength: 255", html)                        # schema-name length cap
         self.assertIn("maxlength: 100", html)                        # setting-key length cap

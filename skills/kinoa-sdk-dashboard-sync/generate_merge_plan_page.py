@@ -167,9 +167,11 @@ button {{ font: inherit; padding: 0.35rem 0.8rem; border-radius: 6px; cursor: po
 button.ghost {{ border-style: dashed; }}
 button.primary {{ background: #1f883d; border-color: #1f883d; color: #fff; }}
 button.del {{ color: #cf222e; }}
-/* Row-level "drop" pins to the right edge so the buttons line up in a column
-   instead of trailing each row's variable-width content (user request 2026-07-28). */
-.grid > button.del {{ margin-left: auto; }}
+/* Select-first (user decision 2026-07-29): unticked rows stay alive but dimmed —
+   no destructive drop exists; the pencil pins right like the old drop did. */
+.row.excluded {{ opacity: 0.45; }}
+input.inc {{ width: 1.05rem; height: 1.05rem; accent-color: #1f883d; }}
+.grid > button.pencil {{ margin-left: auto; padding: 0.15rem 0.6rem; font-size: 0.85rem; }}
 table.sub {{ width: 100%; border-collapse: collapse; margin-top: 0.4rem; }}
 table.sub td {{ padding: 0.15rem 0.3rem; }}
 footer {{ position: fixed; bottom: 0; left: 0; right: 0; background: #1f2328; color: #fff;
@@ -184,9 +186,15 @@ footer .grow {{ flex: 1; }}
     <h1>Merge plan — approve what gets implemented</h1>
     <div class="muted">
       Game <code>{game_id}</code> · generated {generated_at} ·
-      edit names, kinds and params of NEW rows, drop wrong proposals, add missed ones.
+      tick the candidates to implement (unticked rows are left out — nothing is deleted),
+      ✎ opens a row for editing, add missed entries with ＋.
       Rows already in code are read-only — those edit code-first (the code is the source of truth).
       Names ship byte-for-byte into your code and, later, onto the Dashboard.
+    </div>
+    <div class="muted" style="margin-top:0.45rem">
+      This page is <b>optional</b> — you can close the tab and finish the review in chat:
+      tell the assistant your changes (it applies the naming conventions itself) and it will
+      re-render the page.{optionality_note}
     </div>
   </div>
 </header>
@@ -367,8 +375,14 @@ function kindSelect(kinds, value, onchange, fid) {{
   return sel;
 }}
 
-function head(row, label, onDrop) {{
+function head(row, label, opts = {{}}) {{
   const div = document.createElement("div"); div.className = "grid";
+  if (!row.existing) {{
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.className = "inc";
+    cb.checked = inc(row); cb.title = "include in the plan (unticked = left out, nothing is deleted)";
+    cb.addEventListener("change", e => {{ row.included = e.target.checked; render(); }});
+    div.appendChild(cb);
+  }}
   const badge = document.createElement("span");
   badge.className = "badge " + (row.existing ? "b-existing" : "b-new");
   badge.textContent = row.existing ? "already in code — edit code-first" : label;
@@ -394,12 +408,56 @@ function head(row, label, onDrop) {{
     const s = document.createElement("span"); s.className = "muted"; s.textContent = row.source;
     div.appendChild(s);
   }}
-  if (!row.existing) {{
-    const del = document.createElement("button"); del.className = "del"; del.textContent = "✕ drop";
-    del.addEventListener("click", () => {{ onDrop(); render(); }});
-    div.appendChild(del);
+  if (!row.existing && opts.collapsible && inc(row)) {{
+    const ed = document.createElement("button"); ed.className = "ghost pencil";
+    ed.textContent = opts.expanded ? "✓ done" : "✎ edit";
+    ed.title = opts.expanded ? "collapse (stays open while the row has errors)" : "open the row for editing";
+    ed.addEventListener("click", () => {{ row.editing = !opts.expanded; render(); }});
+    div.appendChild(ed);
   }}
   return div;
+}}
+
+// Select-first: the checkbox is the primary decision. `included` / `editing` are
+// page-local flags — they never ship in the hand-back (stripLocal at export).
+const inc = r => r.included !== false;
+
+// A row may render COLLAPSED only while it is valid — a hidden red input would blind
+// the export gate (the exact bug class fixed for debug-collapsed params). These
+// predicates mirror the expanded inputs' bad-conditions.
+function eventRowInvalid(r, dup) {{
+  if (!(r.existing || r.kind === "predefined")
+      && (!String(r.name || "").trim() || dup(r.name) || String(r.name || "").length > 30)) return true;
+  const ek = effectiveKind(r);
+  if (ek === "debug" || (ek === "predefined" && isSdkAutomatic(r.name) && INTEGRATION_TYPE === "SDK")) return false;
+  const pdup = dupIn(r.params, "name");
+  return (r.params || []).some(p =>
+    !String(p.name || "").trim() || pdup(p.name) || String(p.name || "").length > 30
+    || !EVENT_PARAM_KINDS.includes(p.kind)
+    || (p.kind === "enumeration" && (!String(p.extra || "").trim() || enumValuesTooLong(p.extra))));
+}}
+function fieldRowInvalid(r, dup, pathDup) {{
+  return !String(r.name || "").trim() || dup(r.name) || pathDup(r)
+    || !FIELD_NAME_RE.test(String(r.name || "").trim())
+    || String(r.name || "").length > 30 || snake(r.name).length > 100
+    || !FIELD_KINDS.includes(r.kind)
+    || (r.kind === "enumeration" && (!String(r.extra || "").trim() || enumValuesTooLong(r.extra)));
+}}
+function fsSchemaRowInvalid(r, sdup) {{
+  if (!String(r.name || "").trim() || sdup(r.name) || String(r.name || "").length > 255
+      || !(r.columns || []).length) return true;
+  const cdup = dupIn(r.columns, "name");
+  return (r.columns || []).some(c =>
+    !String(c.name || "").trim() || cdup(c.name) || isReservedFsColumn(c.name)
+    || String(c.name || "").length > 100 || !FS_COLUMN_KINDS.includes(c.kind));
+}}
+function fsSettingRowInvalid(r, kdup, schemaNames) {{
+  return !String(r.key || "").trim() || kdup(r.key) || String(r.key || "").length > 100
+    || !r.schema_name || !schemaNames.includes(r.schema_name);
+}}
+// Expanded iff: new + included + (explicitly editing OR invalid — red must stay visible).
+function expandedRow(r, invalidFn) {{
+  return !r.existing && inc(r) && (r.editing === true || invalidFn());
 }}
 
 function dupNames(rows, key) {{
@@ -447,10 +505,21 @@ function isReservedFsColumn(n) {{
 
 function renderEvents() {{
   const host = document.getElementById("events"); host.innerHTML = "";
-  const dup = dupNames(state.events, "name");
+  const dup = dupNames(state.events.filter(r => r.existing || inc(r)), "name");
   state.events.forEach((r, i) => {{
-    const div = document.createElement("div"); div.className = "row" + (r.existing ? " locked" : "");
-    div.appendChild(head(r, "new event", () => state.events.splice(i, 1)));
+    const expanded = expandedRow(r, () => eventRowInvalid(r, dup));
+    const div = document.createElement("div");
+    div.className = "row" + (r.existing ? " locked" : "") + (!r.existing && !inc(r) ? " excluded" : "");
+    div.appendChild(head(r, "new event", {{collapsible: true, expanded: expanded}}));
+    if (!r.existing && !expanded) {{
+      const cg = document.createElement("div"); cg.className = "grid";
+      cg.innerHTML = "<code>" + esc(r.name || "(unnamed)") + "</code>" +
+        ((r.params || []).length ? " <span class=\"muted\">" +
+          esc((r.params || []).map(p => p.name + ":" + p.kind +
+            (p.kind === "enumeration" && p.extra ? " (" + p.extra + ")" : "")).join(" · ")) + "</span>" : "");
+      if (r.note) cg.insertAdjacentHTML("beforeend", " <span class=\"muted\">" + esc(r.note) + "</span>");
+      div.appendChild(cg); host.appendChild(div); return;
+    }}
     const g = document.createElement("div"); g.className = "grid";
     if (r.existing || r.kind === "predefined") {{
       // Predefined wire names are a fixed registry — never editable, even on new rows.
@@ -526,17 +595,29 @@ function renderEvents() {{
 
 function renderFields() {{
   const host = document.getElementById("player_fields"); host.innerHTML = "";
-  const dup = dupNames(state.player_fields, "name");
+  const shipped = state.player_fields.filter(r => r.existing || inc(r));
+  const dup = dupNames(shipped, "name");
   const pathCount = new Map();
   const pathOf = r => String(r.path || "").trim() || snake(String(r.name || "").trim());
-  state.player_fields.forEach(r => {{
+  shipped.forEach(r => {{
     const p = pathOf(r);
     if (p) pathCount.set(p, (pathCount.get(p) || 0) + 1);
   }});
   const pathDup = r => {{ const p = pathOf(r); return !!p && pathCount.get(p) > 1; }};
   state.player_fields.forEach((r, i) => {{
-    const div = document.createElement("div"); div.className = "row" + (r.existing ? " locked" : "");
-    div.appendChild(head(r, "new field", () => state.player_fields.splice(i, 1)));
+    const expanded = expandedRow(r, () => fieldRowInvalid(r, dup, pathDup));
+    const div = document.createElement("div");
+    div.className = "row" + (r.existing ? " locked" : "") + (!r.existing && !inc(r) ? " excluded" : "");
+    div.appendChild(head(r, "new field", {{collapsible: true, expanded: expanded}}));
+    if (!r.existing && !expanded) {{
+      const cg = document.createElement("div"); cg.className = "grid";
+      cg.innerHTML = "<code>" + esc(r.name || "(unnamed)") + "</code> <span class=\"muted\">" +
+        esc(r.kind) + (r.kind === "enumeration" && r.extra ? " (" + esc(r.extra) + ")" : "") +
+        " · → path: " + esc(snake(r.name)) +
+        (r.description ? " · " + esc(r.description) : "") + "</span>";
+      if (r.note) cg.insertAdjacentHTML("beforeend", " <span class=\"muted\">" + esc(r.note) + "</span>");
+      div.appendChild(cg); host.appendChild(div); return;
+    }}
     const g = document.createElement("div"); g.className = "grid";
     if (r.existing) {{
       g.innerHTML = "<code>" + esc(r.name) + "</code> <span class=\"muted\">" + esc(r.kind) + "</span>";
@@ -571,16 +652,28 @@ function renderFields() {{
 function renderFs() {{
   const host = document.getElementById("feature_settings"); host.innerHTML = "";
   const fs = state.feature_settings;
-  const sdup = dupNames(fs.schemas, "name");
-  const kdup = dupNames(fs.settings, "key");
-  const schemaNames = fs.schemas.map(x => String(x.name || "")).filter(Boolean);
+  const sdup = dupNames(fs.schemas.filter(r => r.existing || inc(r)), "name");
+  const kdup = dupNames(fs.settings.filter(r => r.existing || inc(r)), "key");
+  // Unticked schemas leave the plan — settings bound to them go red "(missing)" so the
+  // by-construction binding guarantee survives select-first.
+  const schemaNames = fs.schemas.filter(x => x.existing || inc(x))
+    .map(x => String(x.name || "")).filter(Boolean);
   const newSchemas = new Set(fs.schemas.filter(x => !x.existing).map(x => String(x.name || "")));
 
   host.insertAdjacentHTML("beforeend",
     '<div class="muted" style="margin:0.2rem 0 0.4rem"><b>Schemas</b> — column shapes; ONE schema may back several setting keys (columns are defined here once)</div>');
   fs.schemas.forEach((r, i) => {{
-    const div = document.createElement("div"); div.className = "row" + (r.existing ? " locked" : "");
-    div.appendChild(head(r, "new schema", () => fs.schemas.splice(i, 1)));
+    const expanded = expandedRow(r, () => fsSchemaRowInvalid(r, sdup));
+    const div = document.createElement("div");
+    div.className = "row" + (r.existing ? " locked" : "") + (!r.existing && !inc(r) ? " excluded" : "");
+    div.appendChild(head(r, "new schema", {{collapsible: true, expanded: expanded}}));
+    if (!r.existing && !expanded) {{
+      const cg = document.createElement("div"); cg.className = "grid";
+      cg.innerHTML = "schema <code>" + esc(r.name || "(unnamed)") + "</code> <span class=\"muted\">" +
+        esc((r.columns || []).map(c => c.name + ":" + c.kind).join(" · ")) + "</span>";
+      if (r.note) cg.insertAdjacentHTML("beforeend", " <span class=\"muted\">" + esc(r.note) + "</span>");
+      div.appendChild(cg); host.appendChild(div); return;
+    }}
     const g = document.createElement("div"); g.className = "grid";
     if (r.existing) {{
       g.innerHTML = "schema <code>" + esc(r.name) + "</code>";
@@ -657,7 +750,8 @@ function renderFs() {{
   }});
   const addS = document.createElement("button"); addS.className = "ghost"; addS.textContent = "＋ Add schema";
   addS.addEventListener("click", () => {{
-    fs.schemas.push({{id: nextId++, name: "", existing: false, columns: [], source: "added on page"}});
+    fs.schemas.push({{id: nextId++, name: "", existing: false, columns: [], editing: true,
+                     source: "added on page"}});
     render();
   }});
   host.appendChild(addS);
@@ -665,8 +759,19 @@ function renderFs() {{
   host.insertAdjacentHTML("beforeend",
     '<div class="muted" style="margin:0.8rem 0 0.4rem"><b>Settings (keys)</b> — the runtime download keys; each binds ONE schema from the list above</div>');
   fs.settings.forEach((r, i) => {{
-    const div = document.createElement("div"); div.className = "row" + (r.existing ? " locked" : "");
-    div.appendChild(head(r, "new setting", () => fs.settings.splice(i, 1)));
+    const expanded = expandedRow(r, () => fsSettingRowInvalid(r, kdup, schemaNames));
+    const div = document.createElement("div");
+    div.className = "row" + (r.existing ? " locked" : "") + (!r.existing && !inc(r) ? " excluded" : "");
+    div.appendChild(head(r, "new setting", {{collapsible: true, expanded: expanded}}));
+    if (!r.existing && !expanded) {{
+      const cg = document.createElement("div"); cg.className = "grid";
+      const bound = fs.schemas.find(x => String(x.name || "") === String(r.schema_name || ""));
+      cg.innerHTML = "key <code>" + esc(r.key || "(unnamed)") + "</code> <span class=\"muted\">schema " +
+        esc(r.schema_name || "—") + " · v" +
+        esc(newSchemas.has(r.schema_name) ? 1 : ((bound && bound.version) || r.version || 1)) + "</span>";
+      if (r.note) cg.insertAdjacentHTML("beforeend", " <span class=\"muted\">" + esc(r.note) + "</span>");
+      div.appendChild(cg); host.appendChild(div); return;
+    }}
     const g = document.createElement("div"); g.className = "grid";
     if (r.existing) {{
       g.innerHTML = "key <code>" + esc(r.key) + "</code> · schema <code>" + esc(r.schema_name) +
@@ -723,7 +828,7 @@ function renderFs() {{
   const addK = document.createElement("button"); addK.className = "ghost"; addK.textContent = "＋ Add setting (key)";
   addK.addEventListener("click", () => {{
     fs.settings.push({{id: nextId++, key: "", schema_name: schemaNames[0] || "", version: 1,
-                      existing: false, source: "added on page"}});
+                      editing: true, existing: false, source: "added on page"}});
     render();
   }});
   host.appendChild(addK);
@@ -731,11 +836,18 @@ function renderFs() {{
 
 function renderResources() {{
   const host = document.getElementById("resources"); host.innerHTML = "";
-  const dup = dupNames(state.resources, "key");
-  const ndup = dupNames(state.resources, "name");
+  const dup = dupNames(state.resources.filter(r => r.existing || inc(r)), "key");
+  const ndup = dupNames(state.resources.filter(r => r.existing || inc(r)), "name");
   state.resources.forEach((r, i) => {{
-    const div = document.createElement("div"); div.className = "row" + (r.existing ? " locked" : "");
-    div.appendChild(head(r, "new resource", () => state.resources.splice(i, 1)));
+    const div = document.createElement("div");
+    div.className = "row" + (r.existing ? " locked" : "") + (!r.existing && !inc(r) ? " excluded" : "");
+    div.appendChild(head(r, "new resource", {{}}));
+    if (!r.existing && !inc(r)) {{
+      const cg = document.createElement("div"); cg.className = "grid";
+      cg.innerHTML = "<code>" + esc(r.key || "(unnamed)") + "</code> <span class=\"muted\">" +
+        esc(r.name || "") + " · " + (r.fields || []).length + " field(s)</span>";
+      div.appendChild(cg); host.appendChild(div); return;
+    }}
     const g = document.createElement("div"); g.className = "grid";
     if (r.existing) {{
       g.innerHTML = "<code>" + esc(r.key) + "</code> <span class=\"muted\">" + esc(r.name) + "</span>";
@@ -812,13 +924,14 @@ function renderResources() {{
 }}
 
 function renderCounter() {{
-  const news = s => s.filter(r => !r.existing).length;
+  // Unticked rows are out of the plan — they never count as work to implement.
+  const news = s => s.filter(r => !r.existing && inc(r)).length;
   const labels = {{events: "events", player_fields: "fields",
     feature_settings: "feature settings", resources: "resources"}};
   const parts = SECTIONS_PRESENT.map(k => {{
     if (k === "events") {{
       // debug-tagged rows are skipped at implementation (the row itself says so)
-      return state.events.filter(r => !r.existing && effectiveKind(r) !== "debug").length + " events";
+      return state.events.filter(r => !r.existing && inc(r) && effectiveKind(r) !== "debug").length + " events";
     }}
     if (k === "feature_settings") {{
       const fs = state.feature_settings;
@@ -830,12 +943,13 @@ function renderCounter() {{
 }}
 
 document.getElementById("add-event").addEventListener("click", () => {{
-  state.events.push({{id: nextId++, kind: "custom", name: "", existing: false, params: [], source: "added on page"}});
+  state.events.push({{id: nextId++, kind: "custom", name: "", existing: false, params: [],
+                    editing: true, source: "added on page"}});
   render();
 }});
 document.getElementById("add-field").addEventListener("click", () => {{
   state.player_fields.push({{id: nextId++, name: "", kind: "string", description: "",
-                             existing: false, source: "added on page"}});
+                             editing: true, existing: false, source: "added on page"}});
   render();
 }});
 document.getElementById("add-res").addEventListener("click", () => {{
@@ -852,33 +966,38 @@ function exportJson() {{
     const {{_enumRaw, ...rest}} = f;
     return rest.field_type === "enumeration" ? rest : {{...rest, enumeration_values: []}};
   }};
+  // Select-first: unticked rows are simply absent from the hand-back (same semantics
+  // as the old drop); the page-local flags never ship.
+  const keep = r => r.existing || inc(r);
+  const stripLocal = r => {{ const {{included, editing, _enumRaw, ...rest}} = r; return rest; }};
   return JSON.stringify({{
     confirmed_at: new Date().toISOString(),
     page_generated_at: DATA.generated_at,
     payload_version: DATA_VERSION,
-    events: state.events.map(r => {{
+    events: state.events.filter(keep).map(r => {{
       if (r.existing) return r;  // echoed verbatim — the row is a measurement of code
       const ek = effectiveKind(r);
       const collapsed = ek === "debug" ||
         (ek === "predefined" && isSdkAutomatic(r.name) && INTEGRATION_TYPE === "SDK");
-      return {{...r, kind: ek, params: collapsed ? [] : (r.params || []).map(cleanParam)}};
+      return stripLocal({{...r, kind: ek, params: collapsed ? [] : (r.params || []).map(cleanParam)}});
     }}),
-    player_fields: state.player_fields.map(r => {{
+    player_fields: state.player_fields.filter(keep).map(r => {{
       if (r.existing) return r;  // echoed verbatim — the row is a measurement of code
-      return r.kind === "enumeration" ? r : {{...r, extra: ""}};
+      return stripLocal(r.kind === "enumeration" ? {{...r}} : {{...r, extra: ""}});
     }}),
-    feature_settings: {{schemas: state.feature_settings.schemas,
-      settings: state.feature_settings.settings.map(st => {{
+    feature_settings: {{schemas: state.feature_settings.schemas.filter(keep)
+        .map(r => r.existing ? r : stripLocal({{...r}})),
+      settings: state.feature_settings.settings.filter(keep).map(st => {{
         if (st.existing) return st;  // echoed verbatim — keys wired at older live versions stay so
         const sch = state.feature_settings.schemas.find(
           x => String(x.name || "") === String(st.schema_name || ""));
         const ver = sch ? (sch.existing ? (sch.version || st.version || 1) : 1)
                         : (st.version || 1);
-        return {{...st, version: ver}};
+        return stripLocal({{...st, version: ver}});
       }})}},
-    resources: state.resources.map(r => {{
+    resources: state.resources.filter(keep).map(r => {{
       if (r.existing) return r;  // echoed verbatim — the row is a measurement of code
-      return {{...r, fields: (r.fields || []).map(cleanField)}};
+      return stripLocal({{...r, fields: (r.fields || []).map(cleanField)}});
     }}),
   }}, null, 2);
 }}
@@ -911,7 +1030,12 @@ render();
 
 def build_page(payload):
     data_json = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
+    select_first = any(payload.get(k) is not None
+                       for k in ("events", "player_fields", "feature_settings"))
     return PAGE_TEMPLATE.format(
+        optionality_note=(" Measured candidates are <b>select-first</b>: tick to include, "
+                          "✎ to edit — renames and retypes are often easier asked in chat."
+                          if select_first else ""),
         game_id=payload.get("game_id") or "—",
         generated_at=payload.get("generated_at") or "—",
         data_json=data_json,
