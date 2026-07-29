@@ -379,6 +379,7 @@ function head(row, label, opts = {{}}) {{
   const div = document.createElement("div"); div.className = "grid";
   if (!row.existing) {{
     const cb = document.createElement("input"); cb.type = "checkbox"; cb.className = "inc";
+    cb.dataset.fid = "inc-" + (row.id || Math.abs(JSON.stringify(row).length));
     cb.checked = inc(row); cb.title = "include in the plan (unticked = left out, nothing is deleted)";
     cb.addEventListener("change", e => {{ row.included = e.target.checked; render(); }});
     div.appendChild(cb);
@@ -410,6 +411,7 @@ function head(row, label, opts = {{}}) {{
   }}
   if (!row.existing && opts.collapsible && inc(row)) {{
     const ed = document.createElement("button"); ed.className = "ghost pencil";
+    ed.dataset.fid = "ed-" + (row.id || "");
     ed.textContent = opts.expanded ? "✓ done" : "✎ edit";
     ed.title = opts.expanded ? "collapse (stays open while the row has errors)" : "open the row for editing";
     ed.addEventListener("click", () => {{ row.editing = !opts.expanded; render(); }});
@@ -426,7 +428,7 @@ const inc = r => r.included !== false;
 // the export gate (the exact bug class fixed for debug-collapsed params). These
 // predicates mirror the expanded inputs' bad-conditions.
 function eventRowInvalid(r, dup) {{
-  if (!(r.existing || r.kind === "predefined")
+  if (!r.existing
       && (!String(r.name || "").trim() || dup(r.name) || String(r.name || "").length > 30)) return true;
   const ek = effectiveKind(r);
   if (ek === "debug" || (ek === "predefined" && isSdkAutomatic(r.name) && INTEGRATION_TYPE === "SDK")) return false;
@@ -436,10 +438,10 @@ function eventRowInvalid(r, dup) {{
     || !EVENT_PARAM_KINDS.includes(p.kind)
     || (p.kind === "enumeration" && (!String(p.extra || "").trim() || enumValuesTooLong(p.extra))));
 }}
-function fieldRowInvalid(r, dup, pathDup) {{
+function fieldRowInvalid(r, dup, pathDup, pathOf) {{
   return !String(r.name || "").trim() || dup(r.name) || pathDup(r)
     || !FIELD_NAME_RE.test(String(r.name || "").trim())
-    || String(r.name || "").length > 30 || snake(r.name).length > 100
+    || String(r.name || "").length > 30 || pathOf(r).length > 100
     || !FIELD_KINDS.includes(r.kind)
     || (r.kind === "enumeration" && (!String(r.extra || "").trim() || enumValuesTooLong(r.extra)));
 }}
@@ -451,13 +453,32 @@ function fsSchemaRowInvalid(r, sdup) {{
     !String(c.name || "").trim() || cdup(c.name) || isReservedFsColumn(c.name)
     || String(c.name || "").length > 100 || !FS_COLUMN_KINDS.includes(c.kind));
 }}
+function resRowInvalid(r, dup, ndup) {{
+  if (!RESOURCE_KEY_RE.test(String(r.key || "")) || dup(r.key)
+      || String(r.key || "").length > 100) return true;
+  if (!String(r.name || "").trim() || ndup(r.name) || String(r.name || "").length > 100) return true;
+  if (String(r.description || "").length > 100) return true;
+  const fdup = dupIn(r.fields, "name");
+  return (r.fields || []).some(f =>
+    !RES_FIELD_NAME_RE.test(String(f.name || "")) || fdup(f.name)
+    || String(f.name || "").length > 100
+    || !RESOURCE_FIELD_TYPES.includes(f.field_type)
+    || (f.field_type === "enumeration" && resEnumBad(f))
+    || resDefaultBad(f)
+    || String(f.description || "").includes(":"));
+}}
 function fsSettingRowInvalid(r, kdup, schemaNames) {{
   return !String(r.key || "").trim() || kdup(r.key) || String(r.key || "").length > 100
     || !r.schema_name || !schemaNames.includes(r.schema_name);
 }}
 // Expanded iff: new + included + (explicitly editing OR invalid — red must stay visible).
+// STICKY: an auto-expanded (invalid) row is stamped editing=true, so fixing the last
+// error never collapses it mid-typing (focus theft / truncated input); only the
+// explicit "done" collapses — and an invalid row just re-expands.
 function expandedRow(r, invalidFn) {{
-  return !r.existing && inc(r) && (r.editing === true || invalidFn());
+  const open = !r.existing && inc(r) && (r.editing === true || invalidFn());
+  if (open) r.editing = true;
+  return open;
 }}
 
 function dupNames(rows, key) {{
@@ -513,19 +534,35 @@ function renderEvents() {{
     div.appendChild(head(r, "new event", {{collapsible: true, expanded: expanded}}));
     if (!r.existing && !expanded) {{
       const cg = document.createElement("div"); cg.className = "grid";
-      cg.innerHTML = "<code>" + esc(r.name || "(unnamed)") + "</code>" +
-        ((r.params || []).length ? " <span class=\"muted\">" +
-          esc((r.params || []).map(p => p.name + ":" + p.kind +
-            (p.kind === "enumeration" && p.extra ? " (" + p.extra + ")" : "")).join(" · ")) + "</span>" : "");
+      const ek = effectiveKind(r);
+      // The summary mirrors the HAND-BACK, not the raw state: debug / SDK-composed rows
+      // ship params: [], so listing their params here would misrepresent the plan.
+      const paramsHtml = ek === "debug"
+        ? " <span class=\"muted\">skipped at implementation (SDK/backend telemetry)</span>"
+        : (ek === "predefined" && isSdkAutomatic(r.name) && INTEGRATION_TYPE === "SDK")
+          ? " <span class=\"muted\">params composed by the SDK (not redefinable)</span>"
+          : ((r.params || []).length ? " <span class=\"muted\">" +
+              esc((r.params || []).map(p => p.name +
+                (SYSTEM_EVENT_PARAM_NAMES.includes(String(p.name || "").trim()) ? " \u26a0" : "") +
+                ":" + p.kind +
+                (p.kind === "enumeration" && p.extra ? " (" + p.extra + ")" : "")).join(" · ")) +
+              "</span>" : "");
+      cg.innerHTML = "<code>" + esc(r.name || "(unnamed)") + "</code>" + paramsHtml;
+      if ((r.params || []).some(p => SYSTEM_EVENT_PARAM_NAMES.includes(String(p.name || "").trim())))
+        cg.title = "\u26a0 a param name collides with a dashboard SYSTEM event param — " +
+                   "the event would lose its standard column; open the row (\u270e) to rename it";
       if (r.note) cg.insertAdjacentHTML("beforeend", " <span class=\"muted\">" + esc(r.note) + "</span>");
       div.appendChild(cg); host.appendChild(div); return;
     }}
     const g = document.createElement("div"); g.className = "grid";
-    if (r.existing || r.kind === "predefined") {{
-      // Predefined wire names are a fixed registry — never editable, even on new rows.
+    if (r.existing) {{
       g.innerHTML = "<code>" + esc(r.name) + "</code>";
     }} else {{
-      g.appendChild(textInput(r.name, "e" + i + "-name", v => r.name = v,
+      // The name is editable even on predefined-tagged NEW rows: renaming it away from
+      // the registry live-downgrades the row to a user event (badge follows) — the
+      // symmetric twin of typing a registry name into a user row.
+      g.appendChild(textInput(r.name, "e" + i + "-name",
+        v => {{ r.name = v; if (r.kind === "predefined" && !isPredefName(v)) r.kind = "custom"; }},
         {{placeholder: "event_name", size: 28, maxlength: 30,
           bad: !String(r.name || "").trim() || dup(r.name) || String(r.name || "").length > 30,
           title: "maximum 30 characters"}}));
@@ -605,7 +642,7 @@ function renderFields() {{
   }});
   const pathDup = r => {{ const p = pathOf(r); return !!p && pathCount.get(p) > 1; }};
   state.player_fields.forEach((r, i) => {{
-    const expanded = expandedRow(r, () => fieldRowInvalid(r, dup, pathDup));
+    const expanded = expandedRow(r, () => fieldRowInvalid(r, dup, pathDup, pathOf));
     const div = document.createElement("div");
     div.className = "row" + (r.existing ? " locked" : "") + (!r.existing && !inc(r) ? " excluded" : "");
     div.appendChild(head(r, "new field", {{collapsible: true, expanded: expanded}}));
@@ -613,7 +650,7 @@ function renderFields() {{
       const cg = document.createElement("div"); cg.className = "grid";
       cg.innerHTML = "<code>" + esc(r.name || "(unnamed)") + "</code> <span class=\"muted\">" +
         esc(r.kind) + (r.kind === "enumeration" && r.extra ? " (" + esc(r.extra) + ")" : "") +
-        " · → path: " + esc(snake(r.name)) +
+        " · → path: " + esc(pathOf(r)) +
         (r.description ? " · " + esc(r.description) : "") + "</span>";
       if (r.note) cg.insertAdjacentHTML("beforeend", " <span class=\"muted\">" + esc(r.note) + "</span>");
       div.appendChild(cg); host.appendChild(div); return;
@@ -622,11 +659,14 @@ function renderFields() {{
     if (r.existing) {{
       g.innerHTML = "<code>" + esc(r.name) + "</code> <span class=\"muted\">" + esc(r.kind) + "</span>";
     }} else {{
-      g.appendChild(textInput(r.name, "f" + i, v => r.name = v,
+      // Renaming re-derives the registration: the producer-measured `path` was a
+      // measurement of the OLD name ([JsonPropertyName] incl.) — clear it so the dup
+      // gate, preview and hand-back all follow the new name instead of a stale pair.
+      g.appendChild(textInput(r.name, "f" + i, v => {{ r.name = v; delete r.path; }},
         {{placeholder: "Wallet.Gold", size: 26, maxlength: 30,
           bad: !String(r.name || "").trim() || dup(r.name) || pathDup(r)
                || !FIELD_NAME_RE.test(String(r.name || "").trim())
-               || String(r.name || "").length > 30 || snake(r.name).length > 100,
+               || String(r.name || "").length > 30 || pathOf(r).length > 100,
           title: "a dot-separated C# property chain (letters, digits, _), maximum 30 "
                  + "characters; the registered snake path must be unique (across "
                  + "existing fields too) and 100 characters or less"}}));
@@ -640,7 +680,7 @@ function renderFields() {{
       g.appendChild(textInput(r.description, "f" + i + "-d", v => r.description = v,
         {{placeholder: "description (optional)", size: 24}}));
       const prev = document.createElement("span"); prev.className = "muted";
-      prev.textContent = "→ path: " + snake(r.name);
+      prev.textContent = "→ path: " + pathOf(r);
       g.appendChild(prev);
     }}
     if (r.note) {{ const n = document.createElement("span"); n.className = "muted"; n.textContent = r.note; g.appendChild(n); }}
@@ -658,7 +698,8 @@ function renderFs() {{
   // by-construction binding guarantee survives select-first.
   const schemaNames = fs.schemas.filter(x => x.existing || inc(x))
     .map(x => String(x.name || "")).filter(Boolean);
-  const newSchemas = new Set(fs.schemas.filter(x => !x.existing).map(x => String(x.name || "")));
+  const shippedSchemas = fs.schemas.filter(x => x.existing || inc(x));
+  const newSchemas = new Set(shippedSchemas.filter(x => !x.existing).map(x => String(x.name || "")));
 
   host.insertAdjacentHTML("beforeend",
     '<div class="muted" style="margin:0.2rem 0 0.4rem"><b>Schemas</b> — column shapes; ONE schema may back several setting keys (columns are defined here once)</div>');
@@ -765,7 +806,7 @@ function renderFs() {{
     div.appendChild(head(r, "new setting", {{collapsible: true, expanded: expanded}}));
     if (!r.existing && !expanded) {{
       const cg = document.createElement("div"); cg.className = "grid";
-      const bound = fs.schemas.find(x => String(x.name || "") === String(r.schema_name || ""));
+      const bound = shippedSchemas.find(x => String(x.name || "") === String(r.schema_name || ""));
       cg.innerHTML = "key <code>" + esc(r.key || "(unnamed)") + "</code> <span class=\"muted\">schema " +
         esc(r.schema_name || "—") + " · v" +
         esc(newSchemas.has(r.schema_name) ? 1 : ((bound && bound.version) || r.version || 1)) + "</span>";
@@ -804,7 +845,7 @@ function renderFs() {{
       sel.addEventListener("change", e => {{ r.schema_name = e.target.value; render(); }});
       g.appendChild(sel);
       const v = document.createElement("span"); v.className = "muted";
-      const boundSchema = fs.schemas.find(x => String(x.name || "") === String(r.schema_name || ""));
+      const boundSchema = shippedSchemas.find(x => String(x.name || "") === String(r.schema_name || ""));
       v.textContent = newSchemas.has(r.schema_name)
         ? "v1 (new schema)"
         : (boundSchema && boundSchema.version
@@ -839,13 +880,18 @@ function renderResources() {{
   const dup = dupNames(state.resources.filter(r => r.existing || inc(r)), "key");
   const ndup = dupNames(state.resources.filter(r => r.existing || inc(r)), "name");
   state.resources.forEach((r, i) => {{
+    const expanded = expandedRow(r, () => resRowInvalid(r, dup, ndup));
     const div = document.createElement("div");
     div.className = "row" + (r.existing ? " locked" : "") + (!r.existing && !inc(r) ? " excluded" : "");
-    div.appendChild(head(r, "new resource", {{}}));
-    if (!r.existing && !inc(r)) {{
+    div.appendChild(head(r, "new resource", {{collapsible: true, expanded: expanded}}));
+    if (!r.existing && !expanded) {{
       const cg = document.createElement("div"); cg.className = "grid";
       cg.innerHTML = "<code>" + esc(r.key || "(unnamed)") + "</code> <span class=\"muted\">" +
-        esc(r.name || "") + " · " + (r.fields || []).length + " field(s)</span>";
+        esc(r.name || "") +
+        ((r.fields || []).length ? " · " +
+          esc((r.fields || []).map(f => f.name + ":" + f.field_type).join(" · ")) : " · key-only") +
+        "</span>";
+      if (r.note) cg.insertAdjacentHTML("beforeend", " <span class=\"muted\">" + esc(r.note) + "</span>");
       div.appendChild(cg); host.appendChild(div); return;
     }}
     const g = document.createElement("div"); g.className = "grid";
@@ -953,7 +999,7 @@ document.getElementById("add-field").addEventListener("click", () => {{
   render();
 }});
 document.getElementById("add-res").addEventListener("click", () => {{
-  state.resources.push({{id: nextId++, name: "", key: "", description: "", existing: false,
+  state.resources.push({{id: nextId++, name: "", key: "", description: "", editing: true, existing: false,
     fields: [], source: "added on page"}});
   render();
 }});
@@ -989,7 +1035,9 @@ function exportJson() {{
         .map(r => r.existing ? r : stripLocal({{...r}})),
       settings: state.feature_settings.settings.filter(keep).map(st => {{
         if (st.existing) return st;  // echoed verbatim — keys wired at older live versions stay so
-        const sch = state.feature_settings.schemas.find(
+        // keep-filtered: an unticked new schema must not shadow a same-named existing
+        // one (it would wrongly resolve version 1 for the bound setting).
+        const sch = state.feature_settings.schemas.filter(keep).find(
           x => String(x.name || "") === String(st.schema_name || ""));
         const ver = sch ? (sch.existing ? (sch.version || st.version || 1) : 1)
                         : (st.version || 1);
