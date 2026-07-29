@@ -192,9 +192,9 @@ footer .grow {{ flex: 1; }}
       Names ship byte-for-byte into your code and, later, onto the Dashboard.
     </div>
     <div class="muted" style="margin-top:0.45rem">
-      This page is <b>optional</b>. Prefer chat? Either <b>ask the assistant for edits</b>
+      This page is optional. Prefer chat? Either ask the assistant for edits
       ("rename X to Y") — it applies the naming conventions and refreshes this page for your
-      final tick-and-download — or say <b>"continue in chat"</b> to close this tab and finish
+      final tick-and-download — or say "continue in chat" to close this tab and finish
       the whole review there.
     </div>
   </div>
