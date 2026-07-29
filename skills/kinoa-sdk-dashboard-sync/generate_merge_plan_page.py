@@ -187,14 +187,15 @@ footer .grow {{ flex: 1; }}
     <div class="muted">
       Game <code>{game_id}</code> · generated {generated_at} ·
       tick the candidates to implement (unticked rows are left out — nothing is deleted),
-      ✎ opens a row for editing, add missed entries with ＋.
-      Rows already in code are read-only — those edit code-first (the code is the source of truth).
+      ✎ opens a row for editing, ＋ adds missed entries.
+      Rows already in code are read-only — edit those code-first (the code is the source of truth).
       Names ship byte-for-byte into your code and, later, onto the Dashboard.
     </div>
     <div class="muted" style="margin-top:0.45rem">
-      This page is <b>optional</b> — you can close the tab and finish the review in chat:
-      tell the assistant your changes (it applies the naming conventions itself) and it will
-      re-render the page.{optionality_note}
+      This page is <b>optional</b>. Prefer chat? Either <b>ask the assistant for edits</b>
+      ("rename X to Y") — it applies the naming conventions and refreshes this page for your
+      final tick-and-download — or say <b>"continue in chat"</b> to close this tab and finish
+      the whole review there.
     </div>
   </div>
 </header>
@@ -1078,12 +1079,7 @@ render();
 
 def build_page(payload):
     data_json = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
-    select_first = any(payload.get(k) is not None
-                       for k in ("events", "player_fields", "feature_settings"))
     return PAGE_TEMPLATE.format(
-        optionality_note=(" Measured candidates are <b>select-first</b>: tick to include, "
-                          "✎ to edit — renames and retypes are often easier asked in chat."
-                          if select_first else ""),
         game_id=payload.get("game_id") or "—",
         generated_at=payload.get("generated_at") or "—",
         data_json=data_json,

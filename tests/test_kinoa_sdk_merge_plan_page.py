@@ -210,6 +210,12 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("const keep = r => r.existing || inc(r);", html)
         self.assertIn("const stripLocal", html)
         self.assertIn("This page is <b>optional</b>", html)
+        # Two chat paths stated separately (user-approved header 2026-07-29): edits-in-chat
+        # refreshes the page; "continue in chat" abandons it — no conflated re-render talk.
+        self.assertIn("refreshes this page for your", html)
+        self.assertIn('say <b>"continue in chat"</b> to close this tab', html)
+        self.assertNotIn("close the tab and finish the review in chat:", html)
+        self.assertNotIn("Measured candidates are <b>select-first</b>", html)
         self.assertNotIn("drop wrong proposals", html)                # old header intro gone
         self.assertIn("minimum 1 column (server rule)", html)        # zero-column schema invalid
         self.assertIn("maxlength: 255", html)                        # schema-name length cap
