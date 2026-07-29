@@ -208,6 +208,11 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("fsSettingRowInvalid", html)
         self.assertIn("resRowInvalid", html)                          # resources collapse too (2026-07-29)
         self.assertIn("REGISTRIES_SOURCE", html)                      # offline-fallback note wired
+        # Param soft-delete trial on events (user decision 2026-07-29): the X leaves a
+        # dim restore line; removed params never ship and never block the gate.
+        self.assertIn("p.removed = true", html)
+        self.assertIn('rs.textContent = "restore"', html)
+        self.assertIn("filter(p => !p.removed).map(cleanParam)", html)
         self.assertIn("offline tables (live listings unavailable", html)
         self.assertIn("const keep = r => r.existing || inc(r);", html)
         self.assertIn("const stripLocal", html)

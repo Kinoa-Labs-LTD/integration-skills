@@ -170,6 +170,8 @@ button.del {{ color: #cf222e; }}
 /* Select-first (user decision 2026-07-29): unticked rows stay alive but dimmed —
    no destructive drop exists; the pencil pins right like the old drop did. */
 .row.excluded {{ opacity: 0.45; }}
+table.sub tr.removedp td {{ opacity: 0.5; }}
+table.sub tr.removedp code {{ text-decoration: line-through; }}
 input.inc {{ width: 1.05rem; height: 1.05rem; accent-color: #1f883d; }}
 .grid > button.pencil {{ margin-left: auto; padding: 0.15rem 0.6rem; font-size: 0.85rem; }}
 table.sub {{ width: 100%; border-collapse: collapse; margin-top: 0.4rem; }}
@@ -434,8 +436,9 @@ function eventRowInvalid(r, dup) {{
       && (!String(r.name || "").trim() || dup(r.name) || String(r.name || "").length > 30)) return true;
   const ek = effectiveKind(r);
   if (ek === "debug" || (ek === "predefined" && isSdkAutomatic(r.name) && INTEGRATION_TYPE === "SDK")) return false;
-  const pdup = dupIn(r.params, "name");
-  return (r.params || []).some(p =>
+  const live = (r.params || []).filter(p => !p.removed);
+  const pdup = dupIn(live, "name");
+  return live.some(p =>
     !String(p.name || "").trim() || pdup(p.name) || String(p.name || "").length > 30
     || !EVENT_PARAM_KINDS.includes(p.kind)
     || (p.kind === "enumeration" && (!String(p.extra || "").trim() || enumValuesTooLong(p.extra))));
@@ -554,9 +557,9 @@ function renderEvents() {{
       div.appendChild(cg);
       // Same read-only table an existing row shows — collapsed and existing are the
       // same kind of view (user feedback 2026-07-29), so they read the same.
-      if (!skipNote && (r.params || []).length) {{
+      if (!skipNote && (r.params || []).filter(p => !p.removed).length) {{
         const ct = document.createElement("table"); ct.className = "sub";
-        (r.params || []).forEach(p => {{
+        (r.params || []).filter(p => !p.removed).forEach(p => {{
           const warn = SYSTEM_EVENT_PARAM_NAMES.includes(String(p.name || "").trim());
           const tr = document.createElement("tr");
           tr.innerHTML = "<td><code>" + esc(p.name) + (warn ? " \u26a0" : "") + "</code></td><td>" +
@@ -606,10 +609,20 @@ function renderEvents() {{
       return;
     }}
     const tbl = document.createElement("table"); tbl.className = "sub";
-    const pdup = dupIn(r.params, "name");
+    const pdup = dupIn((r.params || []).filter(p => !p.removed), "name");
     (r.params || []).forEach((p, j) => {{
       const tr = document.createElement("tr");
       const td = t => {{ const c = document.createElement("td"); c.appendChild(t); return c; }};
+      if (!r.existing && p.removed) {{
+        tr.className = "removedp";
+        tr.innerHTML = "<td><code>" + esc(p.name || "(unnamed)") + "</code></td><td>" + esc(p.kind) +
+          "</td><td class=\"muted\">left out of the plan</td>";
+        const rs = document.createElement("button"); rs.className = "ghost"; rs.textContent = "restore";
+        rs.addEventListener("click", () => {{ delete p.removed; render(); }});
+        tr.appendChild(td(rs));
+        tbl.appendChild(tr);
+        return;
+      }}
       if (r.existing) {{
         tr.innerHTML = "<td><code>" + esc(p.name) + "</code></td><td>" + esc(p.kind) + "</td><td>" + esc(p.extra || "") + "</td>";
       }} else {{
@@ -630,7 +643,8 @@ function renderEvents() {{
               title: "each value must be 50 characters or less"}})));
         }}
         const rm = document.createElement("button"); rm.className = "del"; rm.textContent = "✕";
-        rm.addEventListener("click", () => {{ r.params.splice(j, 1); render(); }});
+        rm.title = "leave this param out (soft — a restore line stays until export)";
+        rm.addEventListener("click", () => {{ p.removed = true; render(); }});
         tr.appendChild(td(rm));
       }}
       tbl.appendChild(tr);
@@ -1036,7 +1050,10 @@ document.getElementById("add-res").addEventListener("click", () => {{
 function exportJson() {{
   // Enum values live in state across kind toggles (so switching back restores them),
   // but the EXPORT carries them only for enumeration kinds — a stale list never ships.
-  const cleanParam = p => p.kind === "enumeration" ? p : {{...p, extra: ""}};
+  const cleanParam = p => {{
+    const {{removed, ...rest}} = p;
+    return rest.kind === "enumeration" ? rest : {{...rest, extra: ""}};
+  }};
   const cleanField = f => {{
     const {{_enumRaw, ...rest}} = f;
     return rest.field_type === "enumeration" ? rest : {{...rest, enumeration_values: []}};
@@ -1054,7 +1071,8 @@ function exportJson() {{
       const ek = effectiveKind(r);
       const collapsed = ek === "debug" ||
         (ek === "predefined" && isSdkAutomatic(r.name) && INTEGRATION_TYPE === "SDK");
-      return stripLocal({{...r, kind: ek, params: collapsed ? [] : (r.params || []).map(cleanParam)}});
+      return stripLocal({{...r, kind: ek,
+        params: collapsed ? [] : (r.params || []).filter(p => !p.removed).map(cleanParam)}});
     }}),
     player_fields: state.player_fields.filter(keep).map(r => {{
       if (r.existing) return r;  // echoed verbatim — the row is a measurement of code
