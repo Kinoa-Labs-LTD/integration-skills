@@ -236,6 +236,7 @@ const PREDEFINED_EVENT_WIRE_NAMES = DATA.predefined_wire_names || [];
 const DEBUG_WIRE_NAMES = DATA.debug_wire_names || DATA.sdk_debug_wire_names || [];
 const SDK_AUTOMATIC_WIRE_NAMES = DATA.sdk_automatic_wire_names || [];
 const INTEGRATION_TYPE = DATA.integration_type || "SDK";
+const REGISTRIES_SOURCE = DATA.registries_source || "";  // "live" | "fallback" | absent
 const PAYLOAD_VERSION = {payload_version};
 const DATA_VERSION = DATA.payload_version || 1;
 const VERSION_MISMATCH = DATA_VERSION > PAYLOAD_VERSION;
@@ -527,6 +528,12 @@ function isReservedFsColumn(n) {{
 
 function renderEvents() {{
   const host = document.getElementById("events"); host.innerHTML = "";
+  if (REGISTRIES_SOURCE === "fallback") {{
+    host.insertAdjacentHTML("beforeend",
+      '<div class="muted" style="margin:0.2rem 0 0.4rem">\u26a0 event registries come from the ' +
+      "SDK's offline tables (live listings unavailable at generation) — live tagging may be " +
+      'incomplete: a backend-added predefined/debug event may show here as "user".</div>');
+  }}
   const dup = dupNames(state.events.filter(r => r.existing || inc(r)), "name");
   state.events.forEach((r, i) => {{
     const expanded = expandedRow(r, () => eventRowInvalid(r, dup));
@@ -538,22 +545,29 @@ function renderEvents() {{
       const ek = effectiveKind(r);
       // The summary mirrors the HAND-BACK, not the raw state: debug / SDK-composed rows
       // ship params: [], so listing their params here would misrepresent the plan.
-      const paramsHtml = ek === "debug"
+      const skipNote = ek === "debug"
         ? " <span class=\"muted\">skipped at implementation (SDK/backend telemetry)</span>"
         : (ek === "predefined" && isSdkAutomatic(r.name) && INTEGRATION_TYPE === "SDK")
-          ? " <span class=\"muted\">params composed by the SDK (not redefinable)</span>"
-          : ((r.params || []).length ? " <span class=\"muted\">" +
-              esc((r.params || []).map(p => p.name +
-                (SYSTEM_EVENT_PARAM_NAMES.includes(String(p.name || "").trim()) ? " \u26a0" : "") +
-                ":" + p.kind +
-                (p.kind === "enumeration" && p.extra ? " (" + p.extra + ")" : "")).join(" · ")) +
-              "</span>" : "");
-      cg.innerHTML = "<code>" + esc(r.name || "(unnamed)") + "</code>" + paramsHtml;
-      if ((r.params || []).some(p => SYSTEM_EVENT_PARAM_NAMES.includes(String(p.name || "").trim())))
-        cg.title = "\u26a0 a param name collides with a dashboard SYSTEM event param — " +
-                   "the event would lose its standard column; open the row (\u270e) to rename it";
+          ? " <span class=\"muted\">params composed by the SDK (not redefinable)</span>" : "";
+      cg.innerHTML = "<code>" + esc(r.name || "(unnamed)") + "</code>" + skipNote;
       if (r.note) cg.insertAdjacentHTML("beforeend", " <span class=\"muted\">" + esc(r.note) + "</span>");
-      div.appendChild(cg); host.appendChild(div); return;
+      div.appendChild(cg);
+      // Same read-only table an existing row shows — collapsed and existing are the
+      // same kind of view (user feedback 2026-07-29), so they read the same.
+      if (!skipNote && (r.params || []).length) {{
+        const ct = document.createElement("table"); ct.className = "sub";
+        (r.params || []).forEach(p => {{
+          const warn = SYSTEM_EVENT_PARAM_NAMES.includes(String(p.name || "").trim());
+          const tr = document.createElement("tr");
+          tr.innerHTML = "<td><code>" + esc(p.name) + (warn ? " \u26a0" : "") + "</code></td><td>" +
+            esc(p.kind) + "</td><td>" + esc(p.kind === "enumeration" ? (p.extra || "") : "") + "</td>";
+          if (warn) tr.title = "\u26a0 collides with a dashboard SYSTEM event param — the event " +
+            "would lose its standard column; open the row (\u270e) to rename it";
+          ct.appendChild(tr);
+        }});
+        div.appendChild(ct);
+      }}
+      host.appendChild(div); return;
     }}
     const g = document.createElement("div"); g.className = "grid";
     if (r.existing) {{
@@ -711,10 +725,16 @@ function renderFs() {{
     div.appendChild(head(r, "new schema", {{collapsible: true, expanded: expanded}}));
     if (!r.existing && !expanded) {{
       const cg = document.createElement("div"); cg.className = "grid";
-      cg.innerHTML = "schema <code>" + esc(r.name || "(unnamed)") + "</code> <span class=\"muted\">" +
-        esc((r.columns || []).map(c => c.name + ":" + c.kind).join(" · ")) + "</span>";
+      cg.innerHTML = "schema <code>" + esc(r.name || "(unnamed)") + "</code>";
       if (r.note) cg.insertAdjacentHTML("beforeend", " <span class=\"muted\">" + esc(r.note) + "</span>");
-      div.appendChild(cg); host.appendChild(div); return;
+      div.appendChild(cg);
+      const ct = document.createElement("table"); ct.className = "sub";
+      (r.columns || []).forEach(c => {{
+        const tr = document.createElement("tr");
+        tr.innerHTML = "<td><code>" + esc(c.name) + "</code></td><td>" + esc(c.kind) + "</td>";
+        ct.appendChild(tr);
+      }});
+      div.appendChild(ct); host.appendChild(div); return;
     }}
     const g = document.createElement("div"); g.className = "grid";
     if (r.existing) {{
@@ -888,12 +908,20 @@ function renderResources() {{
     if (!r.existing && !expanded) {{
       const cg = document.createElement("div"); cg.className = "grid";
       cg.innerHTML = "<code>" + esc(r.key || "(unnamed)") + "</code> <span class=\"muted\">" +
-        esc(r.name || "") +
-        ((r.fields || []).length ? " · " +
-          esc((r.fields || []).map(f => f.name + ":" + f.field_type).join(" · ")) : " · key-only") +
-        "</span>";
+        esc(r.name || "") + ((r.fields || []).length ? "" : " · key-only") + "</span>";
       if (r.note) cg.insertAdjacentHTML("beforeend", " <span class=\"muted\">" + esc(r.note) + "</span>");
-      div.appendChild(cg); host.appendChild(div); return;
+      div.appendChild(cg);
+      if ((r.fields || []).length) {{
+        const ct = document.createElement("table"); ct.className = "sub";
+        (r.fields || []).forEach(f => {{
+          const tr = document.createElement("tr");
+          tr.innerHTML = "<td><code>" + esc(f.name) + "</code></td><td>" + esc(f.field_type) +
+            "</td><td>" + esc((f.enumeration_values || []).join(", ") || f.default || "") + "</td>";
+          ct.appendChild(tr);
+        }});
+        div.appendChild(ct);
+      }}
+      host.appendChild(div); return;
     }}
     const g = document.createElement("div"); g.className = "grid";
     if (r.existing) {{

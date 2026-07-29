@@ -207,6 +207,8 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("fsSchemaRowInvalid", html)
         self.assertIn("fsSettingRowInvalid", html)
         self.assertIn("resRowInvalid", html)                          # resources collapse too (2026-07-29)
+        self.assertIn("REGISTRIES_SOURCE", html)                      # offline-fallback note wired
+        self.assertIn("offline tables (live listings unavailable", html)
         self.assertIn("const keep = r => r.existing || inc(r);", html)
         self.assertIn("const stripLocal", html)
         self.assertIn("This page is <b>optional</b>", html)
