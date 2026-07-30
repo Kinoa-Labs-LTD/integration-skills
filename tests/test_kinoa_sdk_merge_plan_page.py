@@ -226,6 +226,11 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("the value rides the base class", html)
         self.assertIn("composed by the SDK automatically", html)
         self.assertIn("system_field: true", html)
+        # System-param kinds are pinned by the base class (SDK live-read 2026-07-30)
+        self.assertEqual(sorted(self.mod.SYSTEM_PARAM_KINDS), self.mod.SYSTEM_EVENT_PARAM_NAMES)
+        self.assertEqual(self.mod.SYSTEM_PARAM_KINDS["level"], "number")
+        self.assertIn('kk.textContent = p.kind + " (fixed)"', html)
+        self.assertIn("SYSTEM_PARAM_KINDS[t] !== undefined", html)
         # FS column checkbox trial (2026-07-29): unticked columns dim + leave the plan
         self.assertIn('ccb.title = "include this column"', html)
         self.assertIn("columns: (r.columns || []).filter(c => c.included !== false)", html)

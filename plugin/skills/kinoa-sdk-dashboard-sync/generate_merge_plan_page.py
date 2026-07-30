@@ -134,6 +134,12 @@ SYSTEM_EVENT_PARAM_NAMES = ["device_id", "level", "place", "success", "time", "t
 SYSTEM_BASE_PROP_PARAM_NAMES = ["level", "place", "success"]
 SYSTEM_AUTO_PARAM_NAMES = ["device_id", "time", "time_ms", "wifi"]
 assert sorted(SYSTEM_BASE_PROP_PARAM_NAMES + SYSTEM_AUTO_PARAM_NAMES) == SYSTEM_EVENT_PARAM_NAMES
+# Canonical kinds pinned by the SDK base classes (live-read 2026-07-30: GameEventData /
+# ExtendedGameEventData property types) — the page LOCKS the type for system params.
+SYSTEM_PARAM_KINDS = {"device_id": "string", "level": "number", "place": "string",
+                      "success": "boolean", "time": "number", "time_ms": "number",
+                      "wifi": "boolean"}
+assert sorted(SYSTEM_PARAM_KINDS) == SYSTEM_EVENT_PARAM_NAMES
 # Bump ONLY on a breaking payload/hand-back change (contract clause 3).
 PAYLOAD_VERSION = 1
 
@@ -231,6 +237,7 @@ const RESOURCE_KEY_RE = new RegExp({resource_key_re});
 const SYSTEM_EVENT_PARAM_NAMES = {system_event_param_names};
 const SYSTEM_BASE_PROP_PARAM_NAMES = {system_base_prop_param_names};
 const SYSTEM_AUTO_PARAM_NAMES = {system_auto_param_names};
+const SYSTEM_PARAM_KINDS = {system_param_kinds};
 // Registries travel IN THE PAYLOAD (optional keys, contract clause 1) — sourced live from
 // the server taxonomy (type=PREDEFINED / type=DEBUG listings) with the /kinoa module-13
 // tables as offline fallback. Absent keys -> no live tagging (the sync planner's
@@ -278,6 +285,10 @@ const state = {{
   feature_settings: normalizeFs(DATA.feature_settings),
   resources: (DATA.resources || []).map(x => ({{fields: [], ...x}})),
 }};
+state.events.forEach(r => (r.params || []).forEach(p => {{
+  const t = String(p.name || "").trim();
+  if (SYSTEM_PARAM_KINDS[t] !== undefined) p.kind = SYSTEM_PARAM_KINDS[t];
+}}));
 let nextId = 1 + Math.max(0, ...[...state.events, ...state.player_fields,
   ...state.feature_settings.schemas, ...state.feature_settings.settings,
   ...state.resources].map(r => r.id || 0));
@@ -642,10 +653,20 @@ function renderEvents() {{
         // param (the server refuses those names). Renaming is only for the case where the
         // name matches but the MEANING differs (user decision 2026-07-30).
         const sysHit = SYSTEM_EVENT_PARAM_NAMES.includes(String(p.name || "").trim());
-        tr.appendChild(td(textInput(p.name, "e" + i + "-p" + j, v => p.name = v,
+        tr.appendChild(td(textInput(p.name, "e" + i + "-p" + j,
+          v => {{ p.name = v;
+                 const t = String(v || "").trim();
+                 if (SYSTEM_PARAM_KINDS[t] !== undefined) p.kind = SYSTEM_PARAM_KINDS[t]; }},
           {{placeholder: "param_name", size: 20, maxlength: 30,
             bad: !String(p.name || "").trim() || pdup(p.name) || String(p.name || "").length > 30,
             title: "maximum 30 characters"}})));
+        if (sysHit) {{
+          // The type is PINNED by the base class — no select for system params.
+          const kk = document.createElement("span"); kk.className = "muted";
+          kk.textContent = p.kind + " (fixed)";
+          kk.title = "the type is pinned by the event's built-in field — it must match the dashboard exactly";
+          tr.appendChild(td(kk));
+        }}
         if (sysHit) {{
           const sysCell = document.createElement("span");
           const sb = document.createElement("span"); sb.className = "badge b-system";
@@ -668,8 +689,8 @@ function renderEvents() {{
         // Enum-values input shows ONLY while kind === enumeration, but the VALUE is
         // preserved on kind changes (discovery-found candidates must survive a toggle);
         // the EXPORT strips it for non-enumeration kinds instead.
-        tr.appendChild(td(kindSelect(EVENT_PARAM_KINDS, p.kind, v => p.kind = v, "e" + i + "-p" + j + "-k")));
-        if (p.kind === "enumeration") {{
+        if (!sysHit) tr.appendChild(td(kindSelect(EVENT_PARAM_KINDS, p.kind, v => p.kind = v, "e" + i + "-p" + j + "-k")));
+        if (!sysHit && p.kind === "enumeration") {{
           tr.appendChild(td(textInput(p.extra, "e" + i + "-p" + j + "-x", v => p.extra = v,
             {{placeholder: "a, b, c", size: 18,
               bad: !String(p.extra || "").trim() || enumValuesTooLong(p.extra),
@@ -1195,6 +1216,7 @@ def build_page(payload):
         system_event_param_names=json.dumps(SYSTEM_EVENT_PARAM_NAMES),
         system_base_prop_param_names=json.dumps(SYSTEM_BASE_PROP_PARAM_NAMES),
         system_auto_param_names=json.dumps(SYSTEM_AUTO_PARAM_NAMES),
+        system_param_kinds=json.dumps(SYSTEM_PARAM_KINDS),
         payload_version=json.dumps(PAYLOAD_VERSION),
     )
 

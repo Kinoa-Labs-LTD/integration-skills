@@ -172,10 +172,15 @@ function testEvents(file) {
   check("events: system badge + base-class route note shown",
         [...w.document.querySelectorAll("#events .badge")].some(b => b.textContent === "system")
         && w.document.body.textContent.includes("rides the base class"));
+  check("events: system param kind is a fixed label, not a select",
+        w.document.body.textContent.includes("number (fixed)"));
   const planS = exportPlan(w);
   const evS = planS.events.find(e => (e.params || []).some(p2 => p2.name === "level"));
   check("events: system param exports system_field: true",
         evS && evS.params.find(p2 => p2.name === "level").system_field === true,
+        JSON.stringify(evS));
+  check("events: system param kind coerced to the canonical type",
+        evS && evS.params.find(p2 => p2.name === "level").kind === "number",
         JSON.stringify(evS));
   typeInto(w, w.document.querySelector('#events input[placeholder="param_name"]').dataset.fid, oldName);
   const planS2 = exportPlan(w);
