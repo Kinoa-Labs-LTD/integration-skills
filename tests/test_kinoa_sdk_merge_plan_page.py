@@ -238,6 +238,12 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("CALCULATED dashboard field", html)
         self.assertIn("already taken on the dashboard", html)
         self.assertIn("the sync will activate/skip, not create", html)
+        # Separate Name/Path inputs (2026-07-30): path auto-derives, override-able,
+        # registry-checked; description hidden for predefined/calculated matches.
+        self.assertIn("FIELD_PATH_RE", html)
+        self.assertIn('placeholder: "auto (snake of the name)"', html)
+        self.assertIn("if (!frPredef && !frCalc) {", html)
+        self.assertNotIn('prev.textContent = "\u2192 path: "', html.replace("→", "\\u2192"))
         # FS column checkbox trial (2026-07-29): unticked columns dim + leave the plan
         self.assertIn('ccb.title = "include this column"', html)
         self.assertIn("columns: (r.columns || []).filter(c => c.included !== false)", html)

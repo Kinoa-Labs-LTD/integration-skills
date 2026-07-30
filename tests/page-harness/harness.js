@@ -238,8 +238,9 @@ function testFields(file) {
 
   // acronym snake preview parity: XPBonus -> xp_bonus
   typeInto(w, second.dataset.fid, "XPBonus");
-  check("fields: acronym-aware snake preview (xp_bonus)",
-        w.document.querySelector("#player_fields").textContent.includes("path: xp_bonus"));
+  check("fields: acronym-aware snake path auto-derivation (xp_bonus)",
+        [...w.document.querySelectorAll("#player_fields input[type=text]")]
+          .some(i => i.value === "xp_bonus"));
   typeInto(w, second.dataset.fid, "WalletGems");
 
   // stale-path clear: renaming re-derives the registration path
@@ -252,8 +253,28 @@ function testFields(file) {
   const lrOut = planP.player_fields.find(f => f.name === "LastRaceTime");
   check("fields: rename clears the measured path (re-derived from the new name)",
         lrOut && !("path" in lrOut), JSON.stringify(lrOut));
-  check("fields: preview follows the new name",
-        w.document.querySelector("#player_fields").textContent.includes("path: last_race_time"));
+  check("fields: path input follows the new name",
+        [...w.document.querySelectorAll("#player_fields input[type=text]")]
+          .some(i => i.value === "last_race_time"));
+  // manual path override ships in the hand-back; a name edit resets it back to auto
+  const pIn = [...w.document.querySelectorAll("#player_fields input[type=text]")]
+    .find(i => i.value === "last_race_time");
+  // select-all + replace (one input event) — clearing char-by-char would snap back to auto
+  pIn.value = "race.finished_at";
+  pIn.dispatchEvent(new w.Event("input", { bubbles: true }));
+  const planOv = exportPlan(w);
+  const ov = planOv.player_fields.find(f => f.name === "LastRaceTime");
+  check("fields: manual path override ships", ov && ov.path === "race.finished_at",
+        JSON.stringify(ov));
+  const nIn = [...w.document.querySelectorAll("#player_fields input[type=text]")]
+    .find(i => i.value === "LastRaceTime");
+  typeInto(w, nIn.dataset.fid, "LastRaceTime2");
+  const planOv2 = exportPlan(w);
+  const ov2 = planOv2.player_fields.find(f => f.name === "LastRaceTime2");
+  check("fields: editing the name resets the override to auto",
+        ov2 && !("path" in ov2), JSON.stringify(ov2));
+  typeInto(w, [...w.document.querySelectorAll("#player_fields input[type=text]")]
+    .find(i => i.value === "LastRaceTime2").dataset.fid, "LastRaceAt");
   typeInto(w, w.document.querySelector('#player_fields input[type=text][value=""]') ? lrInput.dataset.fid : lrInput.dataset.fid, "LastRaceAt");
 
   // ---- dashboard field registry: predefined path = valid + activate route
@@ -262,6 +283,10 @@ function testFields(file) {
     .find(i => i.placeholder === "Wallet.Gold" && i.value === "");
   typeInto(w, regInp.dataset.fid, "Level");
   check("fields: predefined dashboard path does NOT block", !gateBlocked(w));
+  check("fields: description input hidden for a predefined match",
+        ![...w.document.querySelectorAll("#player_fields input[type=text]")]
+          .some(i => i.placeholder === "description (optional)" &&
+                     i.closest(".row") && i.closest(".row").textContent.includes("predefined")));
   check("fields: predefined badge + fixed kind shown",
         [...w.document.querySelectorAll("#player_fields .badge")].some(b => b.textContent === "predefined")
         && w.document.querySelector("#player_fields").textContent.includes("number (fixed)"));
@@ -277,7 +302,11 @@ function testFields(file) {
   typeInto(w, [...w.document.querySelectorAll("#player_fields input[type=text]")]
     .find(i => i.value === "DaysSinceInstall").dataset.fid, "Level2");
   check("fields: recovery to a free name reopens the gate", !gateBlocked(w));
-  setCheckbox(w, "player_fields", "path: level2", false);
+  // the textual path preview is gone (path lives in an input) — find the row by its input
+  const l2row = [...w.document.querySelectorAll("#player_fields .row")]
+    .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "Level2"));
+  const l2cb = l2row.querySelector("input.inc");
+  l2cb.checked = false; l2cb.dispatchEvent(new w.Event("change", { bubbles: true }));
 
   // description authored on page ships in export
   const descInp = [...w.document.querySelectorAll("#player_fields input[type=text]")]

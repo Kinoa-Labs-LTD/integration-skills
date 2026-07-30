@@ -335,6 +335,8 @@ function snake(s) {{ return String(s || "").replace(/([A-Z]+)([A-Z][a-z])/g, "$1
 // Field NAME must be a dot-separated C# property chain — it ships byte-for-byte
 // into code as identifiers (resource keys already get the same class of rule).
 const FIELD_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/;
+// Registered-path charset (server rule): letter first; letters, digits, _, -, dots.
+const FIELD_PATH_RE = /^[A-Za-z][A-Za-z0-9_\-]*(\.[A-Za-z0-9_\-]+)*$/;
 
 // Re-render destroys every node — remember the focused input and caret so
 // live-validated typing doesn't drop focus.
@@ -487,6 +489,7 @@ function fieldRowInvalid(r, dup, pathDup, pathOf) {{
   return !String(r.name || "").trim() || dup(r.name) || pathDup(r)
     || FR_CALC[pathOf(r)] !== undefined || fieldTakenName(r, pathOf)
     || !FIELD_NAME_RE.test(String(r.name || "").trim())
+    || !FIELD_PATH_RE.test(pathOf(r))
     || String(r.name || "").length > 30 || pathOf(r).length > 100
     || !FIELD_KINDS.includes(r.kind)
     || (r.kind === "enumeration" && (!String(r.extra || "").trim() || enumValuesTooLong(r.extra)));
@@ -798,6 +801,21 @@ function renderFields() {{
       }} else {{
         g.appendChild(kindSelect(FIELD_KINDS, r.kind, v => r.kind = v, "f" + i + "-k"));
       }}
+      // Path is a first-class input: auto-derived from the name (editing the name
+      // resets it); a manual edit stores an override — the implementation carries it
+      // as [JsonPropertyName] on the property. Checked against the registry too.
+      g.insertAdjacentHTML("beforeend", "<span class=\"muted\">\u2192 path</span>");
+      g.appendChild(textInput(pathOf(r), "f" + i + "-p",
+        v => {{ const t = String(v || "").trim();
+               if (!t || t === snake(String(r.name || "").trim())) delete r.path;
+               else r.path = t; }},
+        {{placeholder: "auto (snake of the name)", size: 18,
+          bad: !frPredef && (!FIELD_PATH_RE.test(pathOf(r)) || pathOf(r).length > 100
+               || pathDup(r) || frCalc),
+          title: frCalc ? "this path is a CALCULATED dashboard field — computed server-side; "
+                          + "pick another path or rename"
+                        : "letter first; letters, digits, _, - and dot separators; unique "
+                          + "across existing fields; maximum 100 characters"}}));
       if (!frPredef && FR_CUSTOM_PATHS.has(pathOf(r))) {{
         const ex = document.createElement("span"); ex.className = "muted";
         ex.textContent = "already registered on the dashboard — the sync will activate/skip, not create";
@@ -809,11 +827,10 @@ function renderFields() {{
             bad: !String(r.extra || "").trim() || enumValuesTooLong(r.extra),
             title: "each value must be 50 characters or less"}}));
       }}
-      g.appendChild(textInput(r.description, "f" + i + "-d", v => r.description = v,
-        {{placeholder: "description (optional)", size: 24}}));
-      const prev = document.createElement("span"); prev.className = "muted";
-      prev.textContent = "→ path: " + pathOf(r);
-      g.appendChild(prev);
+      if (!frPredef && !frCalc) {{
+        g.appendChild(textInput(r.description, "f" + i + "-d", v => r.description = v,
+          {{placeholder: "description (optional)", size: 24}}));
+      }}
     }}
     if (r.note) {{ const n = document.createElement("span"); n.className = "muted"; n.textContent = r.note; g.appendChild(n); }}
     div.appendChild(g);
