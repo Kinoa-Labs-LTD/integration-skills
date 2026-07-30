@@ -231,6 +231,13 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertEqual(self.mod.SYSTEM_PARAM_KINDS["level"], "number")
         self.assertIn('kk.textContent = p.kind + " (fixed)"', html)
         self.assertIn("SYSTEM_PARAM_KINDS[t] !== undefined", html)
+        # Dashboard field registry (2026-07-30): predefined path = valid + activate route;
+        # calculated path / taken name = red; live custom path = informational.
+        self.assertIn("dashboard_field_registry", html)
+        self.assertIn("predefined_field = true", html)
+        self.assertIn("CALCULATED dashboard field", html)
+        self.assertIn("already taken on the dashboard", html)
+        self.assertIn("the sync will activate/skip, not create", html)
         # FS column checkbox trial (2026-07-29): unticked columns dim + leave the plan
         self.assertIn('ccb.title = "include this column"', html)
         self.assertIn("columns: (r.columns || []).filter(c => c.included !== false)", html)

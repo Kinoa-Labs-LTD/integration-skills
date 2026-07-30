@@ -256,6 +256,29 @@ function testFields(file) {
         w.document.querySelector("#player_fields").textContent.includes("path: last_race_time"));
   typeInto(w, w.document.querySelector('#player_fields input[type=text][value=""]') ? lrInput.dataset.fid : lrInput.dataset.fid, "LastRaceAt");
 
+  // ---- dashboard field registry: predefined path = valid + activate route
+  w.document.getElementById("add-field").click();
+  let regInp = [...w.document.querySelectorAll("#player_fields input[type=text]")]
+    .find(i => i.placeholder === "Wallet.Gold" && i.value === "");
+  typeInto(w, regInp.dataset.fid, "Level");
+  check("fields: predefined dashboard path does NOT block", !gateBlocked(w));
+  check("fields: predefined badge + fixed kind shown",
+        [...w.document.querySelectorAll("#player_fields .badge")].some(b => b.textContent === "predefined")
+        && w.document.querySelector("#player_fields").textContent.includes("number (fixed)"));
+  const planFR = exportPlan(w);
+  const lvl = planFR.player_fields.find(f => f.name === "Level");
+  check("fields: predefined field exports marker + pinned kind",
+        lvl && lvl.predefined_field === true && lvl.kind === "number", JSON.stringify(lvl));
+  // calculated path = red
+  typeInto(w, [...w.document.querySelectorAll("#player_fields input[type=text]")]
+    .find(i => i.value === "Level").dataset.fid, "DaysSinceInstall");
+  check("fields: calculated dashboard path blocks the export", gateBlocked(w));
+  // taken name (different path) = red
+  typeInto(w, [...w.document.querySelectorAll("#player_fields input[type=text]")]
+    .find(i => i.value === "DaysSinceInstall").dataset.fid, "Level2");
+  check("fields: recovery to a free name reopens the gate", !gateBlocked(w));
+  setCheckbox(w, "player_fields", "path: level2", false);
+
   // description authored on page ships in export
   const descInp = [...w.document.querySelectorAll("#player_fields input[type=text]")]
     .filter(i => i.placeholder === "description (optional)").pop();

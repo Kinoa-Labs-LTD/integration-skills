@@ -51,6 +51,11 @@ PAGES = {
              "params": [{"name": "position", "kind": "number", "extra": ""}]}]},
     "e2e-fields.html": {
         "payload_version": 1, "generated_at": TS, "game_id": GAME,
+        "dashboard_field_registry": {
+            "predefined": [{"path": "level", "kind": "number"}],
+            "calculated": [{"path": "days_since_install", "kind": "number"}],
+            "custom_paths": ["transaction_count"],
+            "names": ["Level", "Days since install", "TransactionCount"]},
         "player_fields": [
             {"id": 1, "name": "EpisodeNumber", "kind": "number", "extra": "", "existing": True,
              "source": "CustomPlayerState.cs:18", "path": "episode_number",

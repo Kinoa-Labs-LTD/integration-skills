@@ -253,6 +253,16 @@ const DEBUG_WIRE_NAMES = DATA.debug_wire_names || DATA.sdk_debug_wire_names || [
 const SDK_AUTOMATIC_WIRE_NAMES = DATA.sdk_automatic_wire_names || [];
 const INTEGRATION_TYPE = DATA.integration_type || "SDK";
 const REGISTRIES_SOURCE = DATA.registries_source || "";  // "live" | "fallback" | absent
+// Dashboard field registry (optional, live-sourced like the event registries) — the
+// server reserves predefined/calculated paths and enforces NAME uniqueness across
+// ALL statuses ("path is reserved" / "name has already been taken").
+const FIELD_REGISTRY = DATA.dashboard_field_registry || {{}};
+const FR_PREDEF = {{}};
+(FIELD_REGISTRY.predefined || []).forEach(e => {{ if (e && e.path) FR_PREDEF[e.path] = e.kind || ""; }});
+const FR_CALC = {{}};
+(FIELD_REGISTRY.calculated || []).forEach(e => {{ if (e && e.path) FR_CALC[e.path] = e.kind || ""; }});
+const FR_CUSTOM_PATHS = new Set(FIELD_REGISTRY.custom_paths || []);
+const FR_NAMES = new Set((FIELD_REGISTRY.names || []).map(n => String(n).trim().toLowerCase()));
 const PAYLOAD_VERSION = {payload_version};
 const DATA_VERSION = DATA.payload_version || 1;
 const VERSION_MISMATCH = DATA_VERSION > PAYLOAD_VERSION;
@@ -461,8 +471,21 @@ function eventRowInvalid(r, dup) {{
     || !EVENT_PARAM_KINDS.includes(p.kind)
     || (p.kind === "enumeration" && (!String(p.extra || "").trim() || enumValuesTooLong(p.extra))));
 }}
+function fieldTakenName(r, pathOf) {{
+  // Name taken on the dashboard by a DIFFERENT field (same-path matches are handled
+  // as predefined/existing routes, not collisions).
+  const n = String(r.name || "").trim().toLowerCase();
+  return !!n && FR_NAMES.has(n)
+    && FR_PREDEF[pathOf(r)] === undefined && !FR_CUSTOM_PATHS.has(pathOf(r));
+}}
 function fieldRowInvalid(r, dup, pathDup, pathOf) {{
+  if (FR_PREDEF[pathOf(r)] !== undefined) {{
+    // predefined dashboard field: valid candidate; only name-shape rules apply
+    return !String(r.name || "").trim() || dup(r.name)
+      || !FIELD_NAME_RE.test(String(r.name || "").trim()) || String(r.name || "").length > 30;
+  }}
   return !String(r.name || "").trim() || dup(r.name) || pathDup(r)
+    || FR_CALC[pathOf(r)] !== undefined || fieldTakenName(r, pathOf)
     || !FIELD_NAME_RE.test(String(r.name || "").trim())
     || String(r.name || "").length > 30 || pathOf(r).length > 100
     || !FIELD_KINDS.includes(r.kind)
@@ -741,16 +764,46 @@ function renderFields() {{
       // Renaming re-derives the registration: the producer-measured `path` was a
       // measurement of the OLD name ([JsonPropertyName] incl.) — clear it so the dup
       // gate, preview and hand-back all follow the new name instead of a stale pair.
+      const frPredef = FR_PREDEF[pathOf(r)] !== undefined;
+      const frCalc = FR_CALC[pathOf(r)] !== undefined;
+      const frTaken = fieldTakenName(r, pathOf);
       g.appendChild(textInput(r.name, "f" + i, v => {{ r.name = v; delete r.path; }},
         {{placeholder: "Wallet.Gold", size: 26, maxlength: 30,
-          bad: !String(r.name || "").trim() || dup(r.name) || pathDup(r)
+          bad: !String(r.name || "").trim() || dup(r.name) || (!frPredef && pathDup(r))
+               || frCalc || frTaken
                || !FIELD_NAME_RE.test(String(r.name || "").trim())
-               || String(r.name || "").length > 30 || pathOf(r).length > 100,
-          title: "a dot-separated C# property chain (letters, digits, _), maximum 30 "
-                 + "characters; the registered snake path must be unique (across "
-                 + "existing fields too) and 100 characters or less"}}));
-      g.appendChild(kindSelect(FIELD_KINDS, r.kind, v => r.kind = v, "f" + i + "-k"));
-      if (r.kind === "enumeration") {{
+               || String(r.name || "").length > 30 || (!frPredef && pathOf(r).length > 100),
+          title: frCalc ? "this path is a CALCULATED dashboard field — computed server-side, "
+                          + "the game cannot write it; rename if you meant a different value"
+                 : frTaken ? "this name is already taken on the dashboard (names are unique "
+                             + "across ALL statuses); rename"
+                 : "a dot-separated C# property chain (letters, digits, _), maximum 30 "
+                   + "characters; the registered snake path must be unique (across "
+                   + "existing fields too) and 100 characters or less"}}));
+      if (frPredef) {{
+        const b = document.createElement("span"); b.className = "badge b-predef";
+        b.textContent = "predefined";
+        b.title = "built-in dashboard player field — the sync ACTIVATES it (never creates); "
+                  + "the value is set via the SDK's own state route (module 02)";
+        g.appendChild(b);
+        if (FR_PREDEF[pathOf(r)]) {{
+          r.kind = FR_PREDEF[pathOf(r)];
+          const kk = document.createElement("span"); kk.className = "muted";
+          kk.textContent = r.kind + " (fixed)";
+          kk.title = "the kind is pinned by the dashboard's predefined field";
+          g.appendChild(kk);
+        }} else {{
+          g.appendChild(kindSelect(FIELD_KINDS, r.kind, v => r.kind = v, "f" + i + "-k"));
+        }}
+      }} else {{
+        g.appendChild(kindSelect(FIELD_KINDS, r.kind, v => r.kind = v, "f" + i + "-k"));
+      }}
+      if (!frPredef && FR_CUSTOM_PATHS.has(pathOf(r))) {{
+        const ex = document.createElement("span"); ex.className = "muted";
+        ex.textContent = "already registered on the dashboard — the sync will activate/skip, not create";
+        g.appendChild(ex);
+      }}
+      if (!frPredef && r.kind === "enumeration") {{
         g.appendChild(textInput(r.extra, "f" + i + "-x", v => r.extra = v,
           {{placeholder: "a, b, c", size: 16,
             bad: !String(r.extra || "").trim() || enumValuesTooLong(r.extra),
@@ -1153,7 +1206,12 @@ function exportJson() {{
     }}),
     player_fields: state.player_fields.filter(keep).map(r => {{
       if (r.existing) return r;  // echoed verbatim — the row is a measurement of code
-      return stripLocal(r.kind === "enumeration" ? {{...r}} : {{...r, extra: ""}});
+      const out = stripLocal(r.kind === "enumeration" ? {{...r}} : {{...r, extra: ""}});
+      const p = String(r.path || "").trim() || snake(String(r.name || "").trim());
+      // Append-only marker: the sync ACTIVATES the dashboard's predefined field —
+      // implementation takes the module-02 SDK-state route, never a custom create.
+      if (FR_PREDEF[p] !== undefined) out.predefined_field = true;
+      return out;
     }}),
     feature_settings: {{schemas: state.feature_settings.schemas.filter(keep)
         .map(r => r.existing ? r : stripLocal({{...r,
