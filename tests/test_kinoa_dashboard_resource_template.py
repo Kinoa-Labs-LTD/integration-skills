@@ -17,7 +17,7 @@ import unittest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT_PATH = os.path.join(
-    REPO_ROOT, "skills", "kinoa-dashboard-resource-template",
+    REPO_ROOT, "plugin", "skills", "kinoa-dashboard-resource-template",
     "kinoa_dashboard_resource_template.py",
 )
 

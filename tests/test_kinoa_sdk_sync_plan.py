@@ -14,7 +14,7 @@ import tempfile
 import unittest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRIPT_PATH = os.path.join(REPO_ROOT, "skills", "kinoa-sdk-dashboard-sync", "kinoa_sdk_sync_plan.py")
+SCRIPT_PATH = os.path.join(REPO_ROOT, "plugin", "skills", "kinoa-sdk-dashboard-sync", "kinoa_sdk_sync_plan.py")
 
 
 def _load_module():
@@ -422,10 +422,10 @@ class BuildPlanTests(unittest.TestCase):
             raise AssertionError(f"{name} not found in {path}")
 
         self.assertEqual(set(self.mod.EVENT_PARAM_KINDS),
-                         _const_set(("skills", "kinoa-dashboard-event", "kinoa_dashboard_event.py"),
+                         _const_set(("plugin", "skills", "kinoa-dashboard-event", "kinoa_dashboard_event.py"),
                                     "ALLOWED_PARAM_KINDS"))
         self.assertEqual(set(self.mod.FIELD_KINDS),
-                         _const_set(("skills", "kinoa-dashboard-player-fields", "kinoa_dashboard_player_fields.py"),
+                         _const_set(("plugin", "skills", "kinoa-dashboard-player-fields", "kinoa_dashboard_player_fields.py"),
                                     "ALLOWED_KINDS"))
 
     # ---- vocabulary-drift detector ----
@@ -1062,7 +1062,7 @@ class ResourcesPlanTests(unittest.TestCase):
         import ast
 
         def _const(name):
-            path = os.path.join(REPO_ROOT, "skills", "kinoa-dashboard-resource-template",
+            path = os.path.join(REPO_ROOT, "plugin", "skills", "kinoa-dashboard-resource-template",
                                 "kinoa_dashboard_resource_template.py")
             with open(path, encoding="utf-8") as f:
                 tree = ast.parse(f.read())

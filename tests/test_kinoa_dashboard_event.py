@@ -15,7 +15,7 @@ import tempfile
 import unittest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRIPT_PATH = os.path.join(REPO_ROOT, "skills", "kinoa-dashboard-event", "kinoa_dashboard_event.py")
+SCRIPT_PATH = os.path.join(REPO_ROOT, "plugin", "skills", "kinoa-dashboard-event", "kinoa_dashboard_event.py")
 
 EVENT_ID = "22222222-2222-2222-2222-222222222222"
 

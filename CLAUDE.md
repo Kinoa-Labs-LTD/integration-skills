@@ -4,7 +4,7 @@ Claude Code sub-skills that integrate a game/application with the **Kinoa** plat
 
 ## Distribution & install
 
-The repo doubles as a **Claude Code plugin marketplace** ([`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json)) with a single plugin **`kinoa-dashboard`** exposing every skill under `skills/`. Plugin-installed skills are invoked namespaced: `/kinoa-dashboard:kinoa-api-integration`, `/kinoa-dashboard:kinoa-sdk-dashboard-sync`, etc.
+The repo doubles as a **Claude Code plugin marketplace** ([`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json)) with a single plugin **`kinoa-dashboard`** exposing every skill under `plugin/skills/` (the marketplace entry points at `./plugin` — nothing outside it ships to users). Plugin-installed skills are invoked namespaced: `/kinoa-dashboard:kinoa-api-integration`, `/kinoa-dashboard:kinoa-sdk-dashboard-sync`, etc.
 
 ```bash
 claude plugin marketplace add Kinoa-Labs-LTD/integration-skills   # or /plugin marketplace add … in-session
@@ -22,12 +22,12 @@ Legacy symlink install (no plugin system) still works:
 ```bash
 # run from the repo root of this checkout ($PWD must be absolute — symlink targets need it)
 mkdir -p ~/.claude/skills
-for d in "$PWD"/skills/*/; do
+for d in "$PWD"/plugin/skills/*/; do
   ln -sfn "$d" ~/.claude/skills/"$(basename "$d")"
 done
 ```
 
-Restart Claude Code. Walkthrough: [`skills/kinoa-api-integration/HOW-TO.md`](skills/kinoa-api-integration/HOW-TO.md). API-mode dispatcher: [`skills/kinoa-api-integration/SKILL.md`](skills/kinoa-api-integration/SKILL.md). SDK-mode entry: [`skills/kinoa-sdk-dashboard-sync/SKILL.md`](skills/kinoa-sdk-dashboard-sync/SKILL.md).
+Restart Claude Code. Walkthrough: [`plugin/skills/kinoa-api-integration/HOW-TO.md`](plugin/skills/kinoa-api-integration/HOW-TO.md). API-mode dispatcher: [`plugin/skills/kinoa-api-integration/SKILL.md`](plugin/skills/kinoa-api-integration/SKILL.md). SDK-mode entry: [`plugin/skills/kinoa-sdk-dashboard-sync/SKILL.md`](plugin/skills/kinoa-sdk-dashboard-sync/SKILL.md).
 
 ---
 
@@ -91,7 +91,7 @@ Two distinct API surfaces. **Mixing them up is a security mistake.**
 
 ## Conventions for sub-skills
 
-**Folder layout**: `skills/kinoa-<role>/SKILL.md` (required) plus optional `kinoa_<role>.py`. Everything under `skills/` ships in the `kinoa-dashboard` plugin; sibling references (`${CLAUDE_SKILL_DIR}/../kinoa-<other>/…`) keep working because the whole `skills/` tree is installed together.
+**Folder layout**: `plugin/skills/kinoa-<role>/SKILL.md` (required) plus optional `kinoa_<role>.py`. Everything under `plugin/skills/` ships in the `kinoa-dashboard` plugin; sibling references (`${CLAUDE_SKILL_DIR}/../kinoa-<other>/…`) keep working because the whole `skills/` tree is installed together.
 
 **Frontmatter**:
 
@@ -146,7 +146,7 @@ Alongside the machine state lives **`KINOA-INTEGRATION.md`** — the human-reada
 
 **Install-time player fields & the `install` event** — install attribution is fed either by the `install` event or by the predefined player fields `install_time` (Unix epoch **seconds**) + `install_time_ms` (same instant in **milliseconds**). `install_time_ms` is **mandatory**; `install_time` is implemented alongside it (derive one from the other, captured once at first launch and persisted). The player-fields workflow pulls both to the top of its 3.3 checklist (❗/⭐) and records the outcome in the state file (`phases.player_fields.install_time_fields`). When **both** are implemented + active, the `install` event is **optional**: the event sync drops its ⭐, notes the coverage, and counts `install` as integrated in the report's critical-events section.
 
-**Deletion confirmation** — before ANY delete against the dashboard (player-field `delete` — soft; event `delete` — HARD, irreversible; `delete-config`), always confirm via `AskUserQuestion` with the resolved resource id + human name and the delete semantics; proceed only on an explicit Yes from this session. Canonical wording: [`skills/kinoa-api-integration/SKILL.md`](skills/kinoa-api-integration/SKILL.md) (intro) + each dashboard helper's delete doc.
+**Deletion confirmation** — before ANY delete against the dashboard (player-field `delete` — soft; event `delete` — HARD, irreversible; `delete-config`), always confirm via `AskUserQuestion` with the resolved resource id + human name and the delete semantics; proceed only on an explicit Yes from this session. Canonical wording: [`plugin/skills/kinoa-api-integration/SKILL.md`](plugin/skills/kinoa-api-integration/SKILL.md) (intro) + each dashboard helper's delete doc.
 
 **`session_start` — auto-fire vs explicit emit** *(API-integration workflows; SDK games handle session lifecycle inside the Kinoa SDK)*. Two open-session endpoints exist; only one auto-fires:
 
@@ -203,12 +203,12 @@ For games integrated via the Kinoa Unity SDK, the `/kinoa` skill (shipped inside
 ## File index
 
 - [`README.md`](README.md) — human-facing repo entry point (plugin overview, install, skills table, architecture, security boundary). **Keep it current** whenever skills, install steps, architecture, or the security boundary change.
-- [`skills/kinoa-api-integration/SKILL.md`](skills/kinoa-api-integration/SKILL.md) — API-mode orchestrator dispatcher
+- [`plugin/skills/kinoa-api-integration/SKILL.md`](plugin/skills/kinoa-api-integration/SKILL.md) — API-mode orchestrator dispatcher
 - [`skills/kinoa-api-integration/references/`](skills/kinoa-api-integration/references/) — canonical cross-cutting convention docs read on demand by the orchestrator and every sub-skill: `telemetry.md`, `architecture-modes.md` (incl. the MULTI_REPO central index), `run-state.md`, `integration-registry.md`
 - [`skills/kinoa-sync-resource-template-integration/SKILL.md`](skills/kinoa-sync-resource-template-integration/SKILL.md) — resource-registration workflow (discover → interactive confirm → register → verify); `generate_confirm_page.py` (interactive editor) + `generate_report.py`
 - [`skills/kinoa-dashboard-resource-template/SKILL.md`](skills/kinoa-dashboard-resource-template/SKILL.md) — resource-template admin CLI (bundles service on `gate.kinoa.io/bundle`)
-- [`skills/kinoa-sdk-dashboard-sync/SKILL.md`](skills/kinoa-sdk-dashboard-sync/SKILL.md) — SDK-mode dashboard sync (manifest contract, phases, hard rules)
-- [`skills/kinoa-api-integration/HOW-TO.md`](skills/kinoa-api-integration/HOW-TO.md) — install, token acquisition, walkthrough
+- [`plugin/skills/kinoa-sdk-dashboard-sync/SKILL.md`](plugin/skills/kinoa-sdk-dashboard-sync/SKILL.md) — SDK-mode dashboard sync (manifest contract, phases, hard rules)
+- [`plugin/skills/kinoa-api-integration/HOW-TO.md`](plugin/skills/kinoa-api-integration/HOW-TO.md) — install, token acquisition, walkthrough
 - [`skills/kinoa-api-integration/references/postman-collection.json`](skills/kinoa-api-integration/references/postman-collection.json) — runtime API spec (public hosts only)
 - [`skills/kinoa-api-integration/evals/evals.json`](skills/kinoa-api-integration/evals/evals.json) — eval cases
 - [`tests/`](tests/) — offline unit tests for the python helpers

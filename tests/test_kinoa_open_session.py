@@ -15,7 +15,7 @@ import tempfile
 import unittest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRIPT_PATH = os.path.join(REPO_ROOT, "skills", "kinoa-open-session", "kinoa_open_session.py")
+SCRIPT_PATH = os.path.join(REPO_ROOT, "plugin", "skills", "kinoa-open-session", "kinoa_open_session.py")
 
 
 def _load_module():

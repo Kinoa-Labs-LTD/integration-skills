@@ -15,8 +15,8 @@ import tempfile
 import unittest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PRIMARY = os.path.join(REPO_ROOT, "skills", "kinoa-api-integration", "kinoa_webhook.py")
-COPY = os.path.join(REPO_ROOT, "skills", "kinoa-sdk-dashboard-sync", "kinoa_webhook.py")
+PRIMARY = os.path.join(REPO_ROOT, "plugin", "skills", "kinoa-api-integration", "kinoa_webhook.py")
+COPY = os.path.join(REPO_ROOT, "plugin", "skills", "kinoa-sdk-dashboard-sync", "kinoa_webhook.py")
 
 
 def _load_module(path):

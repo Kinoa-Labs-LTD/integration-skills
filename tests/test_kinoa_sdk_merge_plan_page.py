@@ -15,9 +15,9 @@ import tempfile
 import unittest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRIPT_PATH = os.path.join(REPO_ROOT, "skills", "kinoa-sdk-dashboard-sync",
+SCRIPT_PATH = os.path.join(REPO_ROOT, "plugin", "skills", "kinoa-sdk-dashboard-sync",
                            "generate_merge_plan_page.py")
-PLANNER_PATH = os.path.join(REPO_ROOT, "skills", "kinoa-sdk-dashboard-sync",
+PLANNER_PATH = os.path.join(REPO_ROOT, "plugin", "skills", "kinoa-sdk-dashboard-sync",
                             "kinoa_sdk_sync_plan.py")
 
 

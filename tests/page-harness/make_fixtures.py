@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-GENERATOR = os.path.join(HERE, "..", "..", "skills", "kinoa-sdk-dashboard-sync",
+GENERATOR = os.path.join(HERE, "..", "..", "plugin", "skills", "kinoa-sdk-dashboard-sync",
                          "generate_merge_plan_page.py")
 
 PREDEFINED = ["collect_milestones", "collected_resource", "in_app_click", "in_app_close",

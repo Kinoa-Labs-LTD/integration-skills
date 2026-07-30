@@ -22,7 +22,7 @@ import os
 import unittest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SKILLS_DIR = os.path.join(REPO_ROOT, "skills")
+SKILLS_DIR = os.path.join(REPO_ROOT, "plugin", "skills")
 
 ALL_PY = sorted(
     glob.glob(os.path.join(SKILLS_DIR, "**", "*.py"), recursive=True)
