@@ -163,14 +163,26 @@ function testEvents(file) {
   check("events: reticked param returns intact without page-local flags",
         rfr2 && rfr2.params.length === 1 && !("included" in rfr2.params[0]), JSON.stringify(rfr2));
 
-  // ---- reserved system param name = red blocker (backend-confirmed list)
+  // ---- system-named param = VALID candidate, different route (never blocks)
   const pn = [...w.document.querySelectorAll("#events input[type=text]")]
     .find(i2 => i2.placeholder === "param_name");
   const oldName = pn.value;
   typeInto(w, pn.dataset.fid, "level");
-  check("events: reserved param name blocks the export", gateBlocked(w));
+  check("events: system-named param does NOT block the export", !gateBlocked(w));
+  check("events: system badge + base-class route note shown",
+        [...w.document.querySelectorAll("#events .badge")].some(b => b.textContent === "system")
+        && w.document.body.textContent.includes("rides the base class"));
+  const planS = exportPlan(w);
+  const evS = planS.events.find(e => (e.params || []).some(p2 => p2.name === "level"));
+  check("events: system param exports system_field: true",
+        evS && evS.params.find(p2 => p2.name === "level").system_field === true,
+        JSON.stringify(evS));
   typeInto(w, w.document.querySelector('#events input[placeholder="param_name"]').dataset.fid, oldName);
-  check("events: renaming off the reserved list reopens the gate", !gateBlocked(w));
+  const planS2 = exportPlan(w);
+  const evS2 = planS2.events.find(e => (e.params || []).some(p2 => p2.name === oldName));
+  check("events: renaming off the reserved list drops the marker",
+        evS2 && !("system_field" in evS2.params.find(p2 => p2.name === oldName)),
+        JSON.stringify(evS2));
   clickPencil(w, "events", "GameStateService.cs:130");  // collapse back (expanded row: name lives in the input, match by source)
 
   // ---- predefined-name editability: renaming away from the registry downgrades to user

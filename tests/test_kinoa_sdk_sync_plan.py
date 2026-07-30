@@ -221,6 +221,25 @@ class BuildPlanTests(unittest.TestCase):
                               if "duplicate registered path" in w.get("reason", "")]), 1)
         self.assertEqual(len(pf["create"]), 1)
 
+    def test_system_field_param_excluded_from_registration(self):
+        manifest = _manifest()
+        manifest["events"]["custom"] = [{"name": "race_finished", "params": [
+            {"name": "level", "kind": "number", "system_field": True},
+            {"name": "position", "kind": "number"}]}]
+        plan = self._plan(manifest)
+        create = plan["events"]["create"][0]
+        self.assertEqual([p["name"] for p in create["params"]], ["position"])
+        self.assertTrue(any("built-in system field" in w.get("reason", "")
+                            for w in plan["events"]["warnings"]))
+        # an UNFLAGGED reserved name still warns and stays (byte-for-byte manifest)
+        manifest2 = _manifest()
+        manifest2["events"]["custom"] = [{"name": "e2", "params": [
+            {"name": "time", "kind": "number"}]}]
+        plan2 = self._plan(manifest2)
+        self.assertEqual([p["name"] for p in plan2["events"]["create"][0]["params"]], ["time"])
+        self.assertTrue(any("RESERVED by system parameters" in w.get("reason", "")
+                            for w in plan2["events"]["warnings"]))
+
     def test_custom_field_case_collision_warns(self):
         manifest = _manifest()
         manifest["player_fields"]["custom"] = [{"name": "Wallet.Gold", "path": "Wallet.gold",

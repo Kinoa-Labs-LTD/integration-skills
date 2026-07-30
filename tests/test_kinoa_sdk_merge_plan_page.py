@@ -212,12 +212,20 @@ class MergePlanPageTests(unittest.TestCase):
         # params AND resource fields (FS columns already had them); X+restore removed.
         self.assertIn('pcb.title = "include this param"', html)
         self.assertIn('fcb.title = "include this field"', html)
-        self.assertIn("filter(p => p.included !== false).map(cleanParam)", html)
+        self.assertIn("filter(p => p.included !== false).map(p => {", html)
         self.assertIn("filter(f => f.included !== false).map(cleanField)", html)
         self.assertNotIn("p.removed = true", html)
-        # Reserved system params (backend-confirmed 2026-07-29): red blocker, 7 names
+        # System-param tagging (user decision 2026-07-30): valid candidate, different ROUTE —
+        # badge + route note, export carries system_field: true, gate NOT blocked.
         self.assertIn("level", self.mod.SYSTEM_EVENT_PARAM_NAMES)
-        self.assertIn("reserved by system parameters", html)
+        self.assertEqual(sorted(self.mod.SYSTEM_BASE_PROP_PARAM_NAMES
+                                + self.mod.SYSTEM_AUTO_PARAM_NAMES),
+                         self.mod.SYSTEM_EVENT_PARAM_NAMES)
+        self.assertIn("b-system", html)
+        self.assertIn("reserved by system parameters", html)            # badge tooltip
+        self.assertIn("the value rides the base class", html)
+        self.assertIn("composed by the SDK automatically", html)
+        self.assertIn("system_field: true", html)
         # FS column checkbox trial (2026-07-29): unticked columns dim + leave the plan
         self.assertIn('ccb.title = "include this column"', html)
         self.assertIn("columns: (r.columns || []).filter(c => c.included !== false)", html)

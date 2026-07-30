@@ -129,6 +129,11 @@ RESOURCE_KEY_RE = r"^[a-zA-Z][a-zA-Z0-9_-]*$"
 # The dashboard auto-attaches these to every event; an operator param with the same
 # name silently DISPLACES the system column (planner constant — parity-tested).
 SYSTEM_EVENT_PARAM_NAMES = ["device_id", "level", "place", "success", "time", "time_ms", "wifi"]
+# The reserved set splits by ROUTE (SDK internals, verified 2026-07-29/30): base-class
+# properties the game sets vs values the SDK composes itself. Union == the reserved list.
+SYSTEM_BASE_PROP_PARAM_NAMES = ["level", "place", "success"]
+SYSTEM_AUTO_PARAM_NAMES = ["device_id", "time", "time_ms", "wifi"]
+assert sorted(SYSTEM_BASE_PROP_PARAM_NAMES + SYSTEM_AUTO_PARAM_NAMES) == SYSTEM_EVENT_PARAM_NAMES
 # Bump ONLY on a breaking payload/hand-back change (contract clause 3).
 PAYLOAD_VERSION = 1
 
@@ -161,7 +166,7 @@ input.bad, select.bad {{ border-color: #cf222e; background: #fff5f5; }}
 input.warnp {{ border-color: #bf8700; }}
 .badge {{ display: inline-block; font-size: 0.72rem; padding: 0.1rem 0.5rem; border-radius: 999px;
          border: 1px solid currentColor; white-space: nowrap; }}
-.b-existing {{ color: #57606a; }} .b-new {{ color: #1a7f37; }} .b-predef {{ color: #0969da; }} .b-debug {{ color: #bf8700; }} .b-user {{ color: #8250df; }}
+.b-existing {{ color: #57606a; }} .b-new {{ color: #1a7f37; }} .b-predef {{ color: #0969da; }} .b-debug {{ color: #bf8700; }} .b-user {{ color: #8250df; }} .b-system {{ color: #0e7490; }}
 button {{ font: inherit; padding: 0.35rem 0.8rem; border-radius: 6px; cursor: pointer;
          border: 1px solid #d0d7de; background: #fff; color: #1f2328; }}
 button.ghost {{ border-style: dashed; }}
@@ -224,6 +229,8 @@ const FS_COLUMN_KINDS = {fs_column_kinds};
 const RESOURCE_FIELD_TYPES = {resource_field_types};
 const RESOURCE_KEY_RE = new RegExp({resource_key_re});
 const SYSTEM_EVENT_PARAM_NAMES = {system_event_param_names};
+const SYSTEM_BASE_PROP_PARAM_NAMES = {system_base_prop_param_names};
+const SYSTEM_AUTO_PARAM_NAMES = {system_auto_param_names};
 // Registries travel IN THE PAYLOAD (optional keys, contract clause 1) — sourced live from
 // the server taxonomy (type=PREDEFINED / type=DEBUG listings) with the /kinoa module-13
 // tables as offline fallback. Absent keys -> no live tagging (the sync planner's
@@ -440,7 +447,6 @@ function eventRowInvalid(r, dup) {{
   const pdup = dupIn(live, "name");
   return live.some(p =>
     !String(p.name || "").trim() || pdup(p.name) || String(p.name || "").length > 30
-    || SYSTEM_EVENT_PARAM_NAMES.includes(String(p.name || "").trim())
     || !EVENT_PARAM_KINDS.includes(p.kind)
     || (p.kind === "enumeration" && (!String(p.extra || "").trim() || enumValuesTooLong(p.extra))));
 }}
@@ -563,8 +569,10 @@ function renderEvents() {{
       if (!skipNote && (r.params || []).filter(p => p.included !== false).length) {{
         const ct = document.createElement("table"); ct.className = "sub";
         (r.params || []).filter(p => p.included !== false).forEach(p => {{
+          const sys = SYSTEM_EVENT_PARAM_NAMES.includes(String(p.name || "").trim());
           const tr = document.createElement("tr");
-          tr.innerHTML = "<td><code>" + esc(p.name) + "</code></td><td>" +
+          tr.innerHTML = "<td><code>" + esc(p.name) + "</code>" +
+            (sys ? ' <span class="badge b-system">system</span>' : "") + "</td><td>" +
             esc(p.kind) + "</td><td>" + esc(p.kind === "enumeration" ? (p.extra || "") : "") + "</td>";
           ct.appendChild(tr);
         }});
@@ -629,16 +637,34 @@ function renderEvents() {{
       if (r.existing) {{
         tr.innerHTML = "<td><code>" + esc(p.name) + "</code></td><td>" + esc(p.kind) + "</td><td>" + esc(p.extra || "") + "</td>";
       }} else {{
-        // Reserved names are a hard server refusal ("Parameter name(s) [X] are reserved
-        // by system parameters", backend-confirmed 2026-07-29) — red, blocks the export.
+        // A reserved system name is a VALID candidate — the value just takes a different
+        // ROUTE (base-class property or SDK-composed) and is never registered as a custom
+        // param (the server refuses those names). Renaming is only for the case where the
+        // name matches but the MEANING differs (user decision 2026-07-30).
         const sysHit = SYSTEM_EVENT_PARAM_NAMES.includes(String(p.name || "").trim());
         tr.appendChild(td(textInput(p.name, "e" + i + "-p" + j, v => p.name = v,
           {{placeholder: "param_name", size: 20, maxlength: 30,
-            bad: !String(p.name || "").trim() || pdup(p.name) || String(p.name || "").length > 30
-                 || sysHit,
-            title: sysHit ? "reserved by system parameters (" + SYSTEM_EVENT_PARAM_NAMES.join(", ") +
-                            ") — the dashboard refuses to register it; rename (e.g. time -> time_of_day)"
-                          : "maximum 30 characters"}})));
+            bad: !String(p.name || "").trim() || pdup(p.name) || String(p.name || "").length > 30,
+            title: "maximum 30 characters"}})));
+        if (sysHit) {{
+          const sysCell = document.createElement("span");
+          const sb = document.createElement("span"); sb.className = "badge b-system";
+          sb.textContent = "system";
+          sb.title = "reserved by system parameters — already built into every event; rename " +
+                     "(e.g. time -> race_duration) ONLY if you mean a different concept";
+          sysCell.appendChild(sb);
+          const sn = document.createElement("span"); sn.className = "muted";
+          // The ROUTE branches by integration type: the SDK carries these via the base
+          // class / composes them itself; an API integration supplies the values
+          // directly in the event body (user decision 2026-07-30).
+          sn.textContent = INTEGRATION_TYPE === "API"
+            ? " built-in system field — your integration supplies its value directly in the event body; never registered as a custom param"
+            : (SYSTEM_BASE_PROP_PARAM_NAMES.includes(String(p.name || "").trim())
+               ? " built-in event field — the value rides the base class; no dashboard registration"
+               : " composed by the SDK automatically — nothing to implement");
+          sysCell.appendChild(sn);
+          tr.appendChild(td(sysCell));
+        }}
         // Enum-values input shows ONLY while kind === enumeration, but the VALUE is
         // preserved on kind changes (discovery-found candidates must survive a toggle);
         // the EXPORT strips it for non-enumeration kinds instead.
@@ -1096,7 +1122,13 @@ function exportJson() {{
       const collapsed = ek === "debug" ||
         (ek === "predefined" && isSdkAutomatic(r.name) && INTEGRATION_TYPE === "SDK");
       return stripLocal({{...r, kind: ek,
-        params: collapsed ? [] : (r.params || []).filter(p => p.included !== false).map(cleanParam)}});
+        params: collapsed ? [] : (r.params || []).filter(p => p.included !== false).map(p => {{
+          const c = cleanParam(p);
+          // Append-only marker (contract clause 2): the implementation routes these via
+          // the base class / SDK and NEVER registers them as custom params.
+          return SYSTEM_EVENT_PARAM_NAMES.includes(String(p.name || "").trim())
+            ? {{...c, system_field: true}} : c;
+        }})}});
     }}),
     player_fields: state.player_fields.filter(keep).map(r => {{
       if (r.existing) return r;  // echoed verbatim — the row is a measurement of code
@@ -1161,6 +1193,8 @@ def build_page(payload):
         resource_field_types=json.dumps(RESOURCE_FIELD_TYPES),
         resource_key_re=json.dumps(RESOURCE_KEY_RE),
         system_event_param_names=json.dumps(SYSTEM_EVENT_PARAM_NAMES),
+        system_base_prop_param_names=json.dumps(SYSTEM_BASE_PROP_PARAM_NAMES),
+        system_auto_param_names=json.dumps(SYSTEM_AUTO_PARAM_NAMES),
         payload_version=json.dumps(PAYLOAD_VERSION),
     )
 

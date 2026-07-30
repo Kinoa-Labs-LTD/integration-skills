@@ -175,7 +175,10 @@ def _validate_params(params, allowed, owner, unsupported):
     for p in params or []:
         kind = (p.get("kind") or "").strip()
         if kind in allowed:
-            ok.append({"name": p.get("name"), "kind": kind, "extra": p.get("extra") or None})
+            item = {"name": p.get("name"), "kind": kind, "extra": p.get("extra") or None}
+            if p.get("system_field"):
+                item["system_field"] = True
+            ok.append(item)
         else:
             unsupported.append({
                 "surface": "event_param",
@@ -530,17 +533,31 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
         if _norm(item.get("name")) in published_names:
             item["resolve_id_after_publish"] = True
 
-    # --- System-param collision advisory: warn, never block (manifest is byte-for-byte). ---
+    # --- System params: flagged ones (system_field: true — the value rides the event's
+    # base class / SDK composition) are EXCLUDED from registration payloads; an
+    # unflagged reserved name still warns (the server refuses it), never blocks. ---
     for item in plan["events"]["create"] + plan["events"]["add_params"]:
+        kept = []
         for p in item.get("params") or []:
+            if p.get("system_field"):
+                plan["events"]["warnings"].append({
+                    "name": item.get("name"), "param": p.get("name"),
+                    "reason": f"'{p.get('name')}' is a built-in system field — excluded from "
+                              "registration (the value rides the event's base class or the SDK "
+                              "composes it; the column already exists on every event)",
+                })
+                continue
             if _norm(p.get("name")) in SYSTEM_EVENT_PARAM_NAMES:
                 plan["events"]["warnings"].append({
                     "name": item.get("name"), "param": p.get("name"),
                     "reason": f"system-param collision: '{p.get('name')}' is RESERVED by system "
                               "parameters — the server refuses the registration ('Parameter name(s) "
                               "[...] are reserved by system parameters', backend-confirmed 2026-07-29). "
-                              "Rename the param in game code.",
+                              "Route the value via the base class (level/place/success) or rename "
+                              "the param in game code if it means something else.",
                 })
+            kept.append(p)
+        item["params"] = kept
 
     # --- Informational: dashboard ACTIVE entities the manifest doesn't mention. Never deleted. ---
     for name, record in ev_custom_by_name.items():
