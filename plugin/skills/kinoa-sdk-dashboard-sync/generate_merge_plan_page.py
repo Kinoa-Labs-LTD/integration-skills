@@ -470,6 +470,7 @@ function eventRowInvalid(r, dup) {{
   const pdup = dupIn(live, "name");
   return live.some(p =>
     !String(p.name || "").trim() || pdup(p.name) || String(p.name || "").length > 30
+    || sysUnroutable(r, p)
     || !EVENT_PARAM_KINDS.includes(p.kind)
     || (p.kind === "enumeration" && (!String(p.extra || "").trim() || enumValuesTooLong(p.extra))));
 }}
@@ -480,6 +481,11 @@ function fieldTakenName(r, pathOf) {{
   return !!n && FR_NAMES.has(n)
     && FR_PREDEF[pathOf(r)] === undefined && !FR_CUSTOM_PATHS.has(pathOf(r));
 }}
+function pathSegMismatch(r, pathOf) {{
+  // A dotted override maps PER-SEGMENT onto the property chain ([JsonPropertyName]
+  // per segment) — nesting depth comes from nested properties, never from the string.
+  return pathOf(r).split(".").length !== String(r.name || "").trim().split(".").length;
+}}
 function fieldRowInvalid(r, dup, pathDup, pathOf) {{
   if (FR_PREDEF[pathOf(r)] !== undefined) {{
     // predefined dashboard field: valid candidate; only name-shape rules apply
@@ -489,7 +495,7 @@ function fieldRowInvalid(r, dup, pathDup, pathOf) {{
   return !String(r.name || "").trim() || dup(r.name) || pathDup(r)
     || FR_CALC[pathOf(r)] !== undefined || fieldTakenName(r, pathOf)
     || !FIELD_NAME_RE.test(String(r.name || "").trim())
-    || !FIELD_PATH_RE.test(pathOf(r))
+    || !FIELD_PATH_RE.test(pathOf(r)) || pathSegMismatch(r, pathOf)
     || String(r.name || "").length > 30 || pathOf(r).length > 100
     || !FIELD_KINDS.includes(r.kind)
     || (r.kind === "enumeration" && (!String(r.extra || "").trim() || enumValuesTooLong(r.extra)));
@@ -522,6 +528,15 @@ function fsSettingRowInvalid(r, kdup, schemaNames) {{
   return !String(r.key || "").trim() || kdup(r.key) || String(r.key || "").length > 100
     || !r.schema_name || !schemaNames.includes(r.schema_name);
 }}
+// level/place live ONLY on ExtendedGameEventData (predefined vehicles) — a CUSTOM
+// event's vehicle (GameEventData) has no field to carry them under an SDK integration
+// (SDK live-read 2026-07-31); success exists on GameEventData and routes everywhere.
+function sysUnroutable(row, p) {{
+  return INTEGRATION_TYPE === "SDK"
+    && ["level", "place"].includes(String(p.name || "").trim())
+    && effectiveKind(row) !== "predefined";
+}}
+
 // Expanded iff: new + included + (explicitly editing OR invalid — red must stay visible).
 // STICKY: an auto-expanded (invalid) row is stamped editing=true, so fixing the last
 // error never collapses it mid-typing (focus theft / truncated input); only the
@@ -679,13 +694,19 @@ function renderEvents() {{
         // param (the server refuses those names). Renaming is only for the case where the
         // name matches but the MEANING differs (user decision 2026-07-30).
         const sysHit = SYSTEM_EVENT_PARAM_NAMES.includes(String(p.name || "").trim());
+        const unroutable = sysUnroutable(r, p);
         tr.appendChild(td(textInput(p.name, "e" + i + "-p" + j,
           v => {{ p.name = v;
                  const t = String(v || "").trim();
                  if (SYSTEM_PARAM_KINDS[t] !== undefined) p.kind = SYSTEM_PARAM_KINDS[t]; }},
           {{placeholder: "param_name", size: 20, maxlength: 30,
-            bad: !String(p.name || "").trim() || pdup(p.name) || String(p.name || "").length > 30,
-            title: "maximum 30 characters"}})));
+            bad: !String(p.name || "").trim() || pdup(p.name) || String(p.name || "").length > 30
+                 || unroutable,
+            title: unroutable
+              ? "the SDK cannot carry '" + p.name + "' on a user event (the custom-event "
+                + "vehicle has no such built-in field) — rename it (e.g. player_" + p.name
+                + ") to send it as a regular param, or untick it"
+              : "maximum 30 characters"}})));
         if (sysHit) {{
           // The type is PINNED by the base class — no select for system params.
           const kk = document.createElement("span"); kk.className = "muted";
@@ -706,9 +727,11 @@ function renderEvents() {{
           // directly in the event body (user decision 2026-07-30).
           sn.textContent = INTEGRATION_TYPE === "API"
             ? " built-in system field — your integration supplies its value directly in the event body; never registered as a custom param"
-            : (SYSTEM_BASE_PROP_PARAM_NAMES.includes(String(p.name || "").trim())
-               ? " built-in event field — the value rides the base class; no dashboard registration"
-               : " composed by the SDK automatically — nothing to implement");
+            : unroutable
+              ? " not carriable on a user event under the SDK — rename or untick"
+              : (SYSTEM_BASE_PROP_PARAM_NAMES.includes(String(p.name || "").trim())
+                 ? " built-in event field — the value rides the base class; no dashboard registration"
+                 : " composed by the SDK automatically — nothing to implement");
           sysCell.appendChild(sn);
           tr.appendChild(td(sysCell));
         }}
@@ -811,11 +834,15 @@ function renderFields() {{
                else r.path = t; }},
         {{placeholder: "auto (snake of the name)", size: 18,
           bad: !frPredef && (!FIELD_PATH_RE.test(pathOf(r)) || pathOf(r).length > 100
-               || pathDup(r) || frCalc),
+               || pathDup(r) || frCalc || pathSegMismatch(r, pathOf)),
           title: frCalc ? "this path is a CALCULATED dashboard field — computed server-side; "
                           + "pick another path or rename"
-                        : "letter first; letters, digits, _, - and dot separators; unique "
-                          + "across existing fields; maximum 100 characters"}}));
+                 : pathSegMismatch(r, pathOf)
+                   ? "the override maps per-segment onto the property chain — segment counts "
+                     + "must match (nesting depth comes from nested properties: name "
+                     + "Wallet.Gold can map to wallet.gold_amount, not to a deeper path)"
+                   : "letter first; letters, digits, _, - and dot separators; unique "
+                     + "across existing fields; maximum 100 characters"}}));
       if (!frPredef && FR_CUSTOM_PATHS.has(pathOf(r))) {{
         const ex = document.createElement("span"); ex.className = "muted";
         ex.textContent = "already registered on the dashboard — the sync will activate/skip, not create";

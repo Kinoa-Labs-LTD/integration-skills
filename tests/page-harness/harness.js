@@ -167,20 +167,26 @@ function testEvents(file) {
   const pn = [...w.document.querySelectorAll("#events input[type=text]")]
     .find(i2 => i2.placeholder === "param_name");
   const oldName = pn.value;
+  // level/place are NOT carriable on a user event (only predefined vehicles have them)
   typeInto(w, pn.dataset.fid, "level");
-  check("events: system-named param does NOT block the export", !gateBlocked(w));
+  check("events: level on a USER event blocks the export (not carriable)", gateBlocked(w));
+  check("events: unroutable note shown",
+        w.document.body.textContent.includes("not carriable on a user event"));
+  // success routes via the base class everywhere — the valid system flow
+  typeInto(w, w.document.querySelector('#events input[placeholder="param_name"]').dataset.fid, "success");
+  check("events: success on a user event does NOT block", !gateBlocked(w));
   check("events: system badge + base-class route note shown",
         [...w.document.querySelectorAll("#events .badge")].some(b => b.textContent === "system")
         && w.document.body.textContent.includes("rides the base class"));
   check("events: system param kind is a fixed label, not a select",
-        w.document.body.textContent.includes("number (fixed)"));
+        w.document.body.textContent.includes("boolean (fixed)"));
   const planS = exportPlan(w);
-  const evS = planS.events.find(e => (e.params || []).some(p2 => p2.name === "level"));
+  const evS = planS.events.find(e => (e.params || []).some(p2 => p2.name === "success"));
   check("events: system param exports system_field: true",
-        evS && evS.params.find(p2 => p2.name === "level").system_field === true,
+        evS && evS.params.find(p2 => p2.name === "success").system_field === true,
         JSON.stringify(evS));
   check("events: system param kind coerced to the canonical type",
-        evS && evS.params.find(p2 => p2.name === "level").kind === "number",
+        evS && evS.params.find(p2 => p2.name === "success").kind === "boolean",
         JSON.stringify(evS));
   typeInto(w, w.document.querySelector('#events input[placeholder="param_name"]').dataset.fid, oldName);
   const planS2 = exportPlan(w);
@@ -266,6 +272,7 @@ function testFields(file) {
   const ov = planOv.player_fields.find(f => f.name === "LastRaceTime");
   check("fields: manual path override ships", ov && ov.path === "race.finished_at",
         JSON.stringify(ov));
+  check("fields: dotted override with mismatched segments blocks the export", gateBlocked(w));
   const nIn = [...w.document.querySelectorAll("#player_fields input[type=text]")]
     .find(i => i.value === "LastRaceTime");
   typeInto(w, nIn.dataset.fid, "LastRaceTime2");
