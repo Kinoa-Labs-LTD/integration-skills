@@ -167,26 +167,22 @@ function testEvents(file) {
   const pn = [...w.document.querySelectorAll("#events input[type=text]")]
     .find(i2 => i2.placeholder === "param_name");
   const oldName = pn.value;
-  // level/place are NOT carriable on a user event (only predefined vehicles have them)
+  // level is settable on EVERY event (CustomEventData : ExtendedGameEventData, SDK fix
+  // 2026-07-31) — the system route is universal
   typeInto(w, pn.dataset.fid, "level");
-  check("events: level on a USER event blocks the export (not carriable)", gateBlocked(w));
-  check("events: unroutable note shown",
-        w.document.body.textContent.includes("not carriable on a user event"));
-  // success routes via the base class everywhere — the valid system flow
-  typeInto(w, w.document.querySelector('#events input[placeholder="param_name"]').dataset.fid, "success");
-  check("events: success on a user event does NOT block", !gateBlocked(w));
+  check("events: system-named param does NOT block the export", !gateBlocked(w));
   check("events: system badge + base-class route note shown",
         [...w.document.querySelectorAll("#events .badge")].some(b => b.textContent === "system")
         && w.document.body.textContent.includes("rides the base class"));
   check("events: system param kind is a fixed label, not a select",
-        w.document.body.textContent.includes("boolean (fixed)"));
+        w.document.body.textContent.includes("number (fixed)"));
   const planS = exportPlan(w);
-  const evS = planS.events.find(e => (e.params || []).some(p2 => p2.name === "success"));
+  const evS = planS.events.find(e => (e.params || []).some(p2 => p2.name === "level"));
   check("events: system param exports system_field: true",
-        evS && evS.params.find(p2 => p2.name === "success").system_field === true,
+        evS && evS.params.find(p2 => p2.name === "level").system_field === true,
         JSON.stringify(evS));
   check("events: system param kind coerced to the canonical type",
-        evS && evS.params.find(p2 => p2.name === "success").kind === "boolean",
+        evS && evS.params.find(p2 => p2.name === "level").kind === "number",
         JSON.stringify(evS));
   typeInto(w, w.document.querySelector('#events input[placeholder="param_name"]').dataset.fid, oldName);
   const planS2 = exportPlan(w);
