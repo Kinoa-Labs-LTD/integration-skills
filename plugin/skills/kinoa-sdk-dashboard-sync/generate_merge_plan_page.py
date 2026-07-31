@@ -480,12 +480,18 @@ function fieldTakenName(r, pathOf) {{
   return !!n && FR_NAMES.has(n)
     && FR_PREDEF[pathOf(r)] === undefined && !FR_CUSTOM_PATHS.has(pathOf(r));
 }}
+// A registered path is a LEAF — no other field's path may sit strictly inside it
+// (Wallet.Gold vs Wallet.Gold.Price: Gold cannot be a value and an object at once).
+function pathNodeConflict(path, allPaths) {{
+  return !!path && allPaths.some(o => o !== path
+    && (o.startsWith(path + ".") || path.startsWith(o + ".")));
+}}
 function pathSegMismatch(r, pathOf) {{
   // A dotted override maps PER-SEGMENT onto the property chain ([JsonPropertyName]
   // per segment) — nesting depth comes from nested properties, never from the string.
   return pathOf(r).split(".").length !== String(r.name || "").trim().split(".").length;
 }}
-function fieldRowInvalid(r, dup, pathDup, pathOf) {{
+function fieldRowInvalid(r, dup, pathDup, pathOf, nodeConf) {{
   if (FR_PREDEF[pathOf(r)] !== undefined) {{
     // predefined dashboard field: valid candidate; only name-shape rules apply
     return !String(r.name || "").trim() || dup(r.name)
@@ -495,6 +501,7 @@ function fieldRowInvalid(r, dup, pathDup, pathOf) {{
     || FR_CALC[pathOf(r)] !== undefined || fieldTakenName(r, pathOf)
     || !FIELD_NAME_RE.test(String(r.name || "").trim())
     || !FIELD_PATH_RE.test(pathOf(r)) || pathSegMismatch(r, pathOf)
+    || (nodeConf && nodeConf(r))
     || String(r.name || "").length > 30 || pathOf(r).length > 100
     || !FIELD_KINDS.includes(r.kind)
     || (r.kind === "enumeration" && (!String(r.extra || "").trim() || enumValuesTooLong(r.extra)));
@@ -751,8 +758,10 @@ function renderFields() {{
     if (p) pathCount.set(p, (pathCount.get(p) || 0) + 1);
   }});
   const pathDup = r => {{ const p = pathOf(r); return !!p && pathCount.get(p) > 1; }};
+  const allPaths = shipped.map(pathOf).filter(Boolean);
+  const nodeConf = r => pathNodeConflict(pathOf(r), allPaths);
   state.player_fields.forEach((r, i) => {{
-    const expanded = expandedRow(r, () => fieldRowInvalid(r, dup, pathDup, pathOf));
+    const expanded = expandedRow(r, () => fieldRowInvalid(r, dup, pathDup, pathOf, nodeConf));
     const div = document.createElement("div");
     div.className = "row" + (r.existing ? " locked" : "") + (!r.existing && !inc(r) ? " excluded" : "");
     div.appendChild(head(r, "new field", {{collapsible: true, expanded: expanded}}));
@@ -816,9 +825,14 @@ function renderFields() {{
                else r.path = t; }},
         {{placeholder: "auto (snake of the name)", size: 18,
           bad: !frPredef && (!FIELD_PATH_RE.test(pathOf(r)) || pathOf(r).length > 100
-               || pathDup(r) || frCalc || pathSegMismatch(r, pathOf)),
+               || pathDup(r) || frCalc || pathSegMismatch(r, pathOf) || nodeConf(r)),
           title: frCalc ? "this path is a CALCULATED dashboard field — computed server-side; "
                           + "pick another path or rename"
+                 : nodeConf(r)
+                   ? "leaf/object conflict: another field's path sits inside this one "
+                     + "(Wallet.Gold vs Wallet.Gold.Price — Gold cannot be a value AND an "
+                     + "object); restructure as sibling leaves (Wallet.Gold.Amount + "
+                     + "Wallet.Gold.Price)"
                  : pathSegMismatch(r, pathOf)
                    ? "the override maps per-segment onto the property chain — segment counts "
                      + "must match (nesting depth comes from nested properties: name "

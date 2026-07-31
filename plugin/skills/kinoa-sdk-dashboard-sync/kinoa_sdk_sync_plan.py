@@ -425,6 +425,15 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                           "this snake path; only the first is planned, rename one property in code",
             })
             continue
+        node_hit = next((o for o in manifest_field_paths
+                         if o.startswith(path + ".") or path.startswith(o + ".")), None)
+        if node_hit is not None:
+            plan["player_fields"]["warnings"].append({
+                "path": path, "conflicts_with": node_hit,
+                "reason": "leaf/object path conflict: one path sits inside the other "
+                          "(a property cannot be both a value and an object) — real code cannot "
+                          "express this; the manifest looks hand-edited or the producer is broken",
+            })
         manifest_field_paths.add(path)
         kind = (entry.get("kind") or "").strip()
         if kind not in FIELD_KINDS:

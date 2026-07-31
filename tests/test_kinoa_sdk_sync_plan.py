@@ -240,6 +240,15 @@ class BuildPlanTests(unittest.TestCase):
         self.assertTrue(any("RESERVED by system parameters" in w.get("reason", "")
                             for w in plan2["events"]["warnings"]))
 
+    def test_leaf_object_path_conflict_warns(self):
+        manifest = _manifest()
+        manifest["player_fields"]["custom"] = [
+            {"path": "wallet.gold", "kind": "number"},
+            {"path": "wallet.gold.price", "kind": "number"}]
+        pf = self._plan(manifest)["player_fields"]
+        self.assertTrue(any("leaf/object path conflict" in w.get("reason", "")
+                            for w in pf["warnings"]))
+
     def test_custom_field_case_collision_warns(self):
         manifest = _manifest()
         manifest["player_fields"]["custom"] = [{"name": "Wallet.Gold", "path": "Wallet.gold",

@@ -280,6 +280,30 @@ function testFields(file) {
     .find(i => i.value === "LastRaceTime2").dataset.fid, "LastRaceAt");
   typeInto(w, w.document.querySelector('#player_fields input[type=text][value=""]') ? lrInput.dataset.fid : lrInput.dataset.fid, "LastRaceAt");
 
+  // ---- leaf/object path conflict: Wallet.Gold + Wallet.Gold.Price both red
+  w.document.getElementById("add-field").click();
+  let ncInp = [...w.document.querySelectorAll("#player_fields input[type=text]")]
+    .find(i => i.placeholder === "Wallet.Gold" && i.value === "");
+  typeInto(w, ncInp.dataset.fid, "Wallet.Gold");
+  w.document.getElementById("add-field").click();
+  ncInp = [...w.document.querySelectorAll("#player_fields input[type=text]")]
+    .find(i => i.placeholder === "Wallet.Gold" && i.value === "");
+  typeInto(w, ncInp.dataset.fid, "Wallet.Gold.Price");
+  check("fields: leaf/object path conflict blocks the export", gateBlocked(w));
+  check("fields: leaf/object explanation shown",
+        [...w.document.querySelectorAll("#player_fields input.bad")]
+          .some(i => (i.title || "").includes("leaf/object conflict")));
+  typeInto(w, [...w.document.querySelectorAll("#player_fields input[type=text]")]
+    .find(i => i.value === "Wallet.Gold.Price").dataset.fid, "Wallet.GoldPrice");
+  check("fields: restructuring resolves the conflict", !gateBlocked(w));
+  // clean up the two probe rows
+  for (const nm of ["Wallet.Gold", "Wallet.GoldPrice"]) {
+    const row = [...w.document.querySelectorAll("#player_fields .row")]
+      .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === nm));
+    const cb = row.querySelector("input.inc");
+    cb.checked = false; cb.dispatchEvent(new w.Event("change", { bubbles: true }));
+  }
+
   // ---- dashboard field registry: predefined path = valid + activate route
   w.document.getElementById("add-field").click();
   let regInp = [...w.document.querySelectorAll("#player_fields input[type=text]")]

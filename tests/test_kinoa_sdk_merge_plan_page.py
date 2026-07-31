@@ -243,6 +243,7 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("FIELD_PATH_RE", html)
         self.assertIn('placeholder: "auto (snake of the name)"', html)
         self.assertIn("if (!frPredef && !frCalc) {", html)
+        self.assertIn("pathNodeConflict", html)                        # leaf/object conflict red
         self.assertNotIn('prev.textContent = "\u2192 path: "', html.replace("→", "\\u2192"))
         # FS column checkbox trial (2026-07-29): unticked columns dim + leave the plan
         self.assertIn('ccb.title = "include this column"', html)
