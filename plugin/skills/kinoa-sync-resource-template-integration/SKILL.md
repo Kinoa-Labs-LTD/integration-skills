@@ -87,10 +87,10 @@ Record `kinoa_resources_path` in run state.
 ### 6.3.1 Fetch existing resource templates
 
 ```
-python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-resource-template/kinoa_dashboard_resource_template.py" list --rows 200
+python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-resource-template/kinoa_dashboard_resource_template.py" list --rows 200 --statuses DRAFT,ACTIVE,DEPRECATED
 ```
 
-The response is `{ http_status, ok, response: { totalCount, elements: [...] } }` (verified live 2026-07-09). **Truncation guard:** if `totalCount > elements.length`, re-run with `--rows <totalCount or more>` before building the map — a truncated listing misclassifies existing keys as 🔵 CREATE and produces duplicate DRAFTs (whose only cleanup is the hard delete). Each element has `id`, `name`, `key`, `status`, `fields`, `availableActions`. `status` comes back **lowercase** in the JSON (`draft`/`active`/`deprecated`) — compare it case-insensitively; the `--statuses` filter accepts either case. Build a map `key → {id, status}` of what's already on the dashboard.
+**`--statuses` is mandatory here** — the server's DEFAULT listing (no `--statuses`) EXCLUDES DEPRECATED templates (live-verified 2026-07-23); without it a retired key looks absent, the diff proposes 🔵 CREATE instead of 🟠 REVIEW, and the create then 422s with "key already exists". The response is `{ http_status, ok, response: { totalCount, elements: [...] } }` (verified live 2026-07-09). **Truncation guard:** if `totalCount > elements.length`, re-run with `--rows <totalCount or more>` before building the map — a truncated listing misclassifies existing keys as 🔵 CREATE and produces duplicate DRAFTs (whose only cleanup is the hard delete). Each element has `id`, `name`, `key`, `status`, `fields`, `availableActions`. `status` comes back **lowercase** in the JSON (`draft`/`active`/`deprecated`) — compare it case-insensitively; the `--statuses` filter accepts either case. Build a map `key → {id, status}` of what's already on the dashboard.
 
 ### 6.3.2 Compute the diff
 

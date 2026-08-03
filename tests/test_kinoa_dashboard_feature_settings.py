@@ -19,7 +19,7 @@ import unittest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT_PATH = os.path.join(
-    REPO_ROOT, "skills", "kinoa-dashboard-feature-settings", "kinoa_dashboard_feature_settings.py"
+    REPO_ROOT, "plugin", "skills", "kinoa-dashboard-feature-settings", "kinoa_dashboard_feature_settings.py"
 )
 
 GAME_ID = "11111111-1111-1111-1111-111111111111"

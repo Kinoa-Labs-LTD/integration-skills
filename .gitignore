@@ -14,3 +14,6 @@ venv/
 
 # OS
 .DS_Store
+tests/page-harness/node_modules/
+tests/page-harness/.fixtures/
+tests/page-harness/package-lock.json

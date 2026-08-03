@@ -15,7 +15,7 @@ import tempfile
 import unittest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRIPT_PATH = os.path.join(REPO_ROOT, "skills", "kinoa-dashboard-event", "kinoa_dashboard_event.py")
+SCRIPT_PATH = os.path.join(REPO_ROOT, "plugin", "skills", "kinoa-dashboard-event", "kinoa_dashboard_event.py")
 
 EVENT_ID = "22222222-2222-2222-2222-222222222222"
 
@@ -88,6 +88,15 @@ class EventHelperTests(unittest.TestCase):
         self.assertIn("selectedFilters=states", url)
         self.assertIn("states=deleted", url)
         self.assertIn("types=USER", url)
+
+    def test_list_debug_queries_debug_type(self):
+        # DEBUG = SDK/backend-emitted telemetry (live-verified 2026-07-28: distinct event
+        # type, ACTIVE out of the box) — the listing exists so flows can recognize and
+        # reject same-named custom events; no sync ever creates/publishes these.
+        ns = argparse.Namespace(rows=100, states=None)
+        code, result = self._call(self.mod.cmd_list_debug, ns, [(200, json.dumps({"data": []}))])
+        self.assertEqual(code, 0)
+        self.assertIn("types=DEBUG", self.requests[0]["url"])
 
     def test_list_custom_without_states_keeps_legacy_query(self):
         ns = argparse.Namespace(rows=100, states=None)

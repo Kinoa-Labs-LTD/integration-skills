@@ -4,30 +4,30 @@ Claude Code sub-skills that integrate a game/application with the **Kinoa** plat
 
 ## Distribution & install
 
-The repo doubles as a **Claude Code plugin marketplace** ([`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json)) with a single plugin **`kinoa-dashboard`** exposing every skill under `skills/`. Plugin-installed skills are invoked namespaced: `/kinoa-dashboard:kinoa-api-integration`, `/kinoa-dashboard:kinoa-sdk-dashboard-sync`, etc.
+The repo doubles as a **Claude Code plugin marketplace** ([`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json)) with a single plugin **`kinoa-dashboard`** exposing every skill under `plugin/skills/` (the marketplace entry points at `./plugin` — nothing outside it ships to users). Plugin-installed skills are invoked namespaced: `/kinoa-dashboard:kinoa-api-integration`, `/kinoa-dashboard:kinoa-sdk-dashboard-sync`, etc.
 
 ```bash
 claude plugin marketplace add Kinoa-Labs-LTD/integration-skills   # or /plugin marketplace add … in-session
 claude plugin install kinoa-dashboard@kinoa
 ```
 
-A CLI add registers the marketplace with auto-update **off** (third-party default) — turn it on via `/plugin` → **Marketplaces** → `kinoa` → **Enable auto-update**, or add `"autoUpdate": true` to the `kinoa` entry under `extraKnownMarketplaces` in `~/.claude/settings.json` (the CLI add already created that entry). With it on, every session start re-fetches the plugin to the latest `main` commit.
+A CLI add registers the marketplace with auto-update **off** (third-party default) — turn it on via `/plugin` → **Marketplaces** → `kinoa` → **Enable auto-update**, or add `"autoUpdate": true` to the `kinoa` entry under `extraKnownMarketplaces` in `~/.claude/settings.json` (the CLI add already created that entry). With it on, every session start re-checks `main` and updates the plugin **only when the manifest `version` has changed**.
 
-No `version` field is set in the plugin manifest — **every git commit is a new plugin version** (the commit SHA doubles as the integrity checksum); marketplaces registered with `autoUpdate: true` pull the latest on session start. Game projects can pre-wire the marketplace via `.claude/settings.json` → `extraKnownMarketplaces` (with `"autoUpdate": true`) + `enabledPlugins` (the `/kinoa` SDK skill's dashboard-sync phase sets this up). Private-repo access for auto-update uses `GITHUB_TOKEN`/`GH_TOKEN`.
+The plugin manifest ([`plugin/.claude-plugin/plugin.json`](plugin/.claude-plugin/plugin.json)) pins **`version`** — Claude Code compares the resolved version against what a consumer already has and skips the update when it matches, so **consumers receive an update only when this field changes**. Bump it, with a [`CHANGELOG.md`](CHANGELOG.md) entry, as the final commit of every release PR, and tag the release commit on `main` as `vX.Y.Z`. Never add `version` to `marketplace.json` — `plugin.json` silently takes precedence, so a stale value there would mask bumps. Game projects can pre-wire the marketplace via `.claude/settings.json` → `extraKnownMarketplaces` (with `"autoUpdate": true`) + `enabledPlugins` (the `/kinoa` SDK skill's dashboard-sync phase sets this up). Private-repo access for auto-update uses `GITHUB_TOKEN`/`GH_TOKEN`.
 
-**`main` is the live release channel — treat it as release-only.** Because auto-updating consumers pull the latest `main` at session start, anything pushed there is live in customer sessions within minutes, with no pin or rollback. Develop on branches; merge to `main` only after `python -m unittest discover tests` passes and the change is meant to ship. Never push test/experiment commits (e.g. "autoUpdate test.") to `main`.
+**`main` is the release channel — treat it as release-only.** Shipping is gated by the manifest `version`: a commit on `main` reaches consumers only after a version bump — a stray push no longer ships instantly, but the inverse also holds: **a fix pushed without a bump silently reaches no one**. Releases ride short-lived `release/x.y` branches cut from `main` (features PR into the release branch; squash-merge the release PR to `main`; tag `vX.Y.Z`; delete the branch — never reuse a release-branch name). Develop on branches; merge to `main` only via a release PR, after `python -m unittest discover tests` passes, with the version bump + changelog entry included. Rollback = revert on `main` + bump to a new patch version. Never push test/experiment commits to `main`.
 
 Legacy symlink install (no plugin system) still works:
 
 ```bash
 # run from the repo root of this checkout ($PWD must be absolute — symlink targets need it)
 mkdir -p ~/.claude/skills
-for d in "$PWD"/skills/*/; do
+for d in "$PWD"/plugin/skills/*/; do
   ln -sfn "$d" ~/.claude/skills/"$(basename "$d")"
 done
 ```
 
-Restart Claude Code. Walkthrough: [`skills/kinoa-api-integration/HOW-TO.md`](skills/kinoa-api-integration/HOW-TO.md). API-mode dispatcher: [`skills/kinoa-api-integration/SKILL.md`](skills/kinoa-api-integration/SKILL.md). SDK-mode entry: [`skills/kinoa-sdk-dashboard-sync/SKILL.md`](skills/kinoa-sdk-dashboard-sync/SKILL.md).
+Restart Claude Code. Walkthrough: [`plugin/skills/kinoa-api-integration/HOW-TO.md`](plugin/skills/kinoa-api-integration/HOW-TO.md). API-mode dispatcher: [`plugin/skills/kinoa-api-integration/SKILL.md`](plugin/skills/kinoa-api-integration/SKILL.md). SDK-mode entry: [`plugin/skills/kinoa-sdk-dashboard-sync/SKILL.md`](plugin/skills/kinoa-sdk-dashboard-sync/SKILL.md).
 
 ---
 
@@ -91,7 +91,7 @@ Two distinct API surfaces. **Mixing them up is a security mistake.**
 
 ## Conventions for sub-skills
 
-**Folder layout**: `skills/kinoa-<role>/SKILL.md` (required) plus optional `kinoa_<role>.py`. Everything under `skills/` ships in the `kinoa-dashboard` plugin; sibling references (`${CLAUDE_SKILL_DIR}/../kinoa-<other>/…`) keep working because the whole `skills/` tree is installed together.
+**Folder layout**: `plugin/skills/kinoa-<role>/SKILL.md` (required) plus optional `kinoa_<role>.py`. Everything under `plugin/skills/` ships in the `kinoa-dashboard` plugin; sibling references (`${CLAUDE_SKILL_DIR}/../kinoa-<other>/…`) keep working because the whole `skills/` tree is installed together.
 
 **Frontmatter**:
 
@@ -146,7 +146,7 @@ Alongside the machine state lives **`KINOA-INTEGRATION.md`** — the human-reada
 
 **Install-time player fields & the `install` event** — install attribution is fed either by the `install` event or by the predefined player fields `install_time` (Unix epoch **seconds**) + `install_time_ms` (same instant in **milliseconds**). `install_time_ms` is **mandatory**; `install_time` is implemented alongside it (derive one from the other, captured once at first launch and persisted). The player-fields workflow pulls both to the top of its 3.3 checklist (❗/⭐) and records the outcome in the state file (`phases.player_fields.install_time_fields`). When **both** are implemented + active, the `install` event is **optional**: the event sync drops its ⭐, notes the coverage, and counts `install` as integrated in the report's critical-events section.
 
-**Deletion confirmation** — before ANY delete against the dashboard (player-field `delete` — soft; event `delete` — HARD, irreversible; `delete-config`), always confirm via `AskUserQuestion` with the resolved resource id + human name and the delete semantics; proceed only on an explicit Yes from this session. Canonical wording: [`skills/kinoa-api-integration/SKILL.md`](skills/kinoa-api-integration/SKILL.md) (intro) + each dashboard helper's delete doc.
+**Deletion confirmation** — before ANY delete against the dashboard (player-field `delete` — soft; event `delete` — HARD, irreversible; `delete-config`), always confirm via `AskUserQuestion` with the resolved resource id + human name and the delete semantics; proceed only on an explicit Yes from this session. Canonical wording: [`plugin/skills/kinoa-api-integration/SKILL.md`](plugin/skills/kinoa-api-integration/SKILL.md) (intro) + each dashboard helper's delete doc.
 
 **`session_start` — auto-fire vs explicit emit** *(API-integration workflows; SDK games handle session lifecycle inside the Kinoa SDK)*. Two open-session endpoints exist; only one auto-fires:
 
@@ -203,12 +203,12 @@ For games integrated via the Kinoa Unity SDK, the `/kinoa` skill (shipped inside
 ## File index
 
 - [`README.md`](README.md) — human-facing repo entry point (plugin overview, install, skills table, architecture, security boundary). **Keep it current** whenever skills, install steps, architecture, or the security boundary change.
-- [`skills/kinoa-api-integration/SKILL.md`](skills/kinoa-api-integration/SKILL.md) — API-mode orchestrator dispatcher
+- [`plugin/skills/kinoa-api-integration/SKILL.md`](plugin/skills/kinoa-api-integration/SKILL.md) — API-mode orchestrator dispatcher
 - [`skills/kinoa-api-integration/references/`](skills/kinoa-api-integration/references/) — canonical cross-cutting convention docs read on demand by the orchestrator and every sub-skill: `telemetry.md`, `architecture-modes.md` (incl. the MULTI_REPO central index), `run-state.md`, `integration-registry.md`
 - [`skills/kinoa-sync-resource-template-integration/SKILL.md`](skills/kinoa-sync-resource-template-integration/SKILL.md) — resource-registration workflow (discover → interactive confirm → register → verify); `generate_confirm_page.py` (interactive editor) + `generate_report.py`
 - [`skills/kinoa-dashboard-resource-template/SKILL.md`](skills/kinoa-dashboard-resource-template/SKILL.md) — resource-template admin CLI (bundles service on `gate.kinoa.io/bundle`)
-- [`skills/kinoa-sdk-dashboard-sync/SKILL.md`](skills/kinoa-sdk-dashboard-sync/SKILL.md) — SDK-mode dashboard sync (manifest contract, phases, hard rules)
-- [`skills/kinoa-api-integration/HOW-TO.md`](skills/kinoa-api-integration/HOW-TO.md) — install, token acquisition, walkthrough
+- [`plugin/skills/kinoa-sdk-dashboard-sync/SKILL.md`](plugin/skills/kinoa-sdk-dashboard-sync/SKILL.md) — SDK-mode dashboard sync (manifest contract, phases, hard rules)
+- [`plugin/skills/kinoa-api-integration/HOW-TO.md`](plugin/skills/kinoa-api-integration/HOW-TO.md) — install, token acquisition, walkthrough
 - [`skills/kinoa-api-integration/references/postman-collection.json`](skills/kinoa-api-integration/references/postman-collection.json) — runtime API spec (public hosts only)
 - [`skills/kinoa-api-integration/evals/evals.json`](skills/kinoa-api-integration/evals/evals.json) — eval cases
 - [`tests/`](tests/) — offline unit tests for the python helpers

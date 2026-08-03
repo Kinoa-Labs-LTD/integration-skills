@@ -17,7 +17,7 @@ import unittest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT_PATH = os.path.join(
-    REPO_ROOT, "skills", "kinoa-dashboard-resource-template",
+    REPO_ROOT, "plugin", "skills", "kinoa-dashboard-resource-template",
     "kinoa_dashboard_resource_template.py",
 )
 
@@ -66,7 +66,7 @@ class ResourceTemplateHelperTests(unittest.TestCase):
 
     def test_field_spec_basic_number(self):
         f = self.mod._parse_field_spec("gold:number")
-        self.assertEqual(f, {"name": "gold", "field_type": "number", "required": False})
+        self.assertEqual(f, {"name": "gold", "field_type": "number", "required": True})
 
     def test_field_spec_all_allowed_types_parse(self):
         for ftype in self.mod.ALLOWED_FIELD_TYPES:
@@ -81,7 +81,7 @@ class ResourceTemplateHelperTests(unittest.TestCase):
     def test_field_spec_enumeration_values(self):
         f = self.mod._parse_field_spec("rarity:enumeration:common,rare,epic")
         self.assertEqual(f["enumeration_values"], ["common", "rare", "epic"])
-        self.assertFalse(f["required"])
+        self.assertTrue(f["required"])  # defaults True (mirrors FS is_required)
 
     def test_field_spec_enumeration_values_and_required(self):
         f = self.mod._parse_field_spec("rarity:enumeration:common,rare:req")
@@ -154,6 +154,20 @@ class ResourceTemplateHelperTests(unittest.TestCase):
         code, _ = self._call(self.mod.cmd_create, ns, [(200, json.dumps({"id": TEMPLATE_ID}))])
         self.assertEqual(code, 0)
         self.assertEqual(self.requests[0]["body"]["fields"], rich)
+
+    def test_create_fields_json_defaults_required_true(self):
+        # The server 422-rejects a field with required missing/null ("must not be null" —
+        # live-verified 2026-07-23); the helper must default it, never forward the omission.
+        ns = argparse.Namespace(name="Chest", key="chest", description=None, status="draft",
+                                body=None, field=[],
+                                fields_json=json.dumps([
+                                    {"name": "capacity", "field_type": "number"},
+                                    {"name": "locked", "field_type": "boolean", "required": True}]))
+        code, _ = self._call(self.mod.cmd_create, ns, [(200, json.dumps({"id": TEMPLATE_ID}))])
+        self.assertEqual(code, 0)
+        sent = self.requests[0]["body"]["fields"]
+        self.assertEqual(sent[0]["required"], True)
+        self.assertEqual(sent[1]["required"], True)
 
     def test_create_with_body_json(self):
         ns = argparse.Namespace(name="Sword", key="sword", description=None, status="draft",

@@ -3,7 +3,7 @@
 ## Layout
 
 ```
-integration-skills/
+skills/            # installed plugin root (plugin/skills/ in the source repo)
 ├── kinoa-api-integration/                       ← orchestrator (this folder)
 │   ├── SKILL.md
 │   ├── HOW-TO.md                                ← you are here
