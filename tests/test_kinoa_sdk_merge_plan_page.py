@@ -250,6 +250,13 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("duplicate event name on this page", html)
         self.assertIn("duplicate param name on this event", html)
         self.assertIn("duplicate resource key on this page", html)
+        # ✕ remove for page-added rows only (user decision 2026-08-03): the marker is
+        # page-local (stripLocal) and the button renders solely on _pageNew rows.
+        self.assertIn("_pageNew", html)
+        # effectiveKind never re-tags existing rows (measured kind wins over the
+        # registry-name match — the level_up predefined+custom pair, 2026-08-03).
+        self.assertIn('if (r.existing) return r.kind || "custom";', html)
+        self.assertIn("✕ remove", html)
         self.assertNotIn('prev.textContent = "\u2192 path: "', html.replace("→", "\\u2192"))
         # FS column checkbox trial (2026-07-29): unticked columns dim + leave the plan
         self.assertIn('ccb.title = "include this column"', html)

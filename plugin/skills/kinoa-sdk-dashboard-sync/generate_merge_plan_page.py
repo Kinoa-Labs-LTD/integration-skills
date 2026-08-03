@@ -185,6 +185,7 @@ table.sub tr.removedp td {{ opacity: 0.5; }}
 table.sub tr.removedp code {{ text-decoration: line-through; }}
 input.inc {{ width: 1.05rem; height: 1.05rem; accent-color: #1f883d; }}
 .grid > button.pencil {{ margin-left: auto; padding: 0.15rem 0.6rem; font-size: 0.85rem; }}
+.grid > button.remove {{ margin-left: 0.35rem; padding: 0.15rem 0.6rem; font-size: 0.85rem; color: #c0392b; }}
 table.sub {{ width: 100%; border-collapse: collapse; margin-top: 0.4rem; }}
 table.sub td {{ padding: 0.15rem 0.3rem; }}
 footer {{ position: fixed; bottom: 0; left: 0; right: 0; background: #1f2328; color: #fff;
@@ -323,6 +324,10 @@ function isPredefName(n) {{ return PREDEFINED_EVENT_WIRE_NAMES.includes(String(n
 function isDebugName(n) {{ return DEBUG_WIRE_NAMES.includes(String(n || "").trim().toLowerCase()); }}
 function isSdkAutomatic(n) {{ return SDK_AUTOMATIC_WIRE_NAMES.includes(String(n || "").trim().toLowerCase()); }}
 function effectiveKind(r) {{
+  // Existing rows are MEASUREMENTS — their kind ships from code and is never
+  // re-tagged by registry name (a custom mirror may legally collide with a
+  // predefined wire name; a live run badged both level_up rows "predefined").
+  if (r.existing) return r.kind || "custom";
   if (r.kind === "debug" || r.kind === "sdk" || isDebugName(r.name)) return "debug";
   if (r.kind === "predefined" || isPredefName(r.name)) return "predefined";
   return r.kind || "custom";
@@ -443,13 +448,27 @@ function head(row, label, opts = {{}}) {{
     const s = document.createElement("span"); s.className = "muted"; s.textContent = row.source;
     div.appendChild(s);
   }}
-  if (!row.existing && opts.collapsible && inc(row)) {{
+  const pencilShown = !row.existing && opts.collapsible && inc(row);
+  if (pencilShown) {{
     const ed = document.createElement("button"); ed.className = "ghost pencil";
     ed.dataset.fid = "ed-" + (row.id || "");
     ed.textContent = opts.expanded ? "✓ done" : "✎ edit";
     ed.title = opts.expanded ? "collapse (stays open while the row has errors)" : "open the row for editing";
     ed.addEventListener("click", () => {{ row.editing = !opts.expanded; render(); }});
     div.appendChild(ed);
+  }}
+  // ✕ only for rows created by this page session's "+ add" buttons (_pageNew is
+  // page-local and never ships) — measured candidates keep checkbox semantics, and a
+  // round-tripped row loses deletability by design (user decision 2026-08-03).
+  if (row._pageNew && !row.existing && opts.onRemove) {{
+    const rm = document.createElement("button"); rm.className = "ghost remove";
+    rm.dataset.fid = "rm-" + (row.id || "");
+    rm.textContent = "✕ remove";
+    rm.title = "delete this row — available only for rows just added on this page "
+             + "(measured candidates use the checkbox instead)";
+    if (!pencilShown) rm.style.marginLeft = "auto";
+    rm.addEventListener("click", opts.onRemove);
+    div.appendChild(rm);
   }}
   return div;
 }}
@@ -607,7 +626,8 @@ function renderEvents() {{
     const expanded = expandedRow(r, () => eventRowInvalid(r, dup));
     const div = document.createElement("div");
     div.className = "row" + (r.existing ? " locked" : "") + (!r.existing && !inc(r) ? " excluded" : "");
-    div.appendChild(head(r, "new event", {{collapsible: true, expanded: expanded}}));
+    div.appendChild(head(r, "new event", {{collapsible: true, expanded: expanded,
+      onRemove: () => {{ state.events.splice(state.events.indexOf(r), 1); render(); }}}}));
     if (!r.existing && !expanded) {{
       const cg = document.createElement("div"); cg.className = "grid";
       const ek = effectiveKind(r);
@@ -779,7 +799,8 @@ function renderFields() {{
     const expanded = expandedRow(r, () => fieldRowInvalid(r, dup, pathDup, pathOf, nodeConf));
     const div = document.createElement("div");
     div.className = "row" + (r.existing ? " locked" : "") + (!r.existing && !inc(r) ? " excluded" : "");
-    div.appendChild(head(r, "new field", {{collapsible: true, expanded: expanded}}));
+    div.appendChild(head(r, "new field", {{collapsible: true, expanded: expanded,
+      onRemove: () => {{ state.player_fields.splice(state.player_fields.indexOf(r), 1); render(); }}}}));
     if (!r.existing && !expanded) {{
       const cg = document.createElement("div"); cg.className = "grid";
       cg.innerHTML = "<code>" + esc(r.name || "(unnamed)") + "</code> <span class=\"muted\">" +
@@ -905,7 +926,8 @@ function renderFs() {{
     const expanded = expandedRow(r, () => fsSchemaRowInvalid(r, sdup));
     const div = document.createElement("div");
     div.className = "row" + (r.existing ? " locked" : "") + (!r.existing && !inc(r) ? " excluded" : "");
-    div.appendChild(head(r, "new schema", {{collapsible: true, expanded: expanded}}));
+    div.appendChild(head(r, "new schema", {{collapsible: true, expanded: expanded,
+      onRemove: () => {{ fs.schemas.splice(fs.schemas.indexOf(r), 1); render(); }}}}));
     if (!r.existing && !expanded) {{
       const cg = document.createElement("div"); cg.className = "grid";
       cg.innerHTML = "schema <code>" + esc(r.name || "(unnamed)") + "</code>";
@@ -1014,7 +1036,7 @@ function renderFs() {{
   const addS = document.createElement("button"); addS.className = "ghost"; addS.textContent = "＋ Add schema";
   addS.addEventListener("click", () => {{
     fs.schemas.push({{id: nextId++, name: "", existing: false, columns: [], editing: true,
-                     source: "added on page"}});
+                     _pageNew: true, source: "added on page"}});
     render();
   }});
   host.appendChild(addS);
@@ -1025,7 +1047,8 @@ function renderFs() {{
     const expanded = expandedRow(r, () => fsSettingRowInvalid(r, kdup, schemaNames));
     const div = document.createElement("div");
     div.className = "row" + (r.existing ? " locked" : "") + (!r.existing && !inc(r) ? " excluded" : "");
-    div.appendChild(head(r, "new setting", {{collapsible: true, expanded: expanded}}));
+    div.appendChild(head(r, "new setting", {{collapsible: true, expanded: expanded,
+      onRemove: () => {{ fs.settings.splice(fs.settings.indexOf(r), 1); render(); }}}}));
     if (!r.existing && !expanded) {{
       const cg = document.createElement("div"); cg.className = "grid";
       const bound = shippedSchemas.find(x => String(x.name || "") === String(r.schema_name || ""));
@@ -1094,7 +1117,7 @@ function renderFs() {{
   const addK = document.createElement("button"); addK.className = "ghost"; addK.textContent = "＋ Add setting (key)";
   addK.addEventListener("click", () => {{
     fs.settings.push({{id: nextId++, key: "", schema_name: schemaNames[0] || "", version: 1,
-                      editing: true, existing: false, source: "added on page"}});
+                      editing: true, existing: false, _pageNew: true, source: "added on page"}});
     render();
   }});
   host.appendChild(addK);
@@ -1108,7 +1131,8 @@ function renderResources() {{
     const expanded = expandedRow(r, () => resRowInvalid(r, dup, ndup));
     const div = document.createElement("div");
     div.className = "row" + (r.existing ? " locked" : "") + (!r.existing && !inc(r) ? " excluded" : "");
-    div.appendChild(head(r, "new resource", {{collapsible: true, expanded: expanded}}));
+    div.appendChild(head(r, "new resource", {{collapsible: true, expanded: expanded,
+      onRemove: () => {{ state.resources.splice(state.resources.indexOf(r), 1); render(); }}}}));
     if (!r.existing && !expanded) {{
       const cg = document.createElement("div"); cg.className = "grid";
       cg.innerHTML = "<code>" + esc(r.key || "(unnamed)") + "</code> <span class=\"muted\">" +
@@ -1251,17 +1275,17 @@ function renderCounter() {{
 
 document.getElementById("add-event").addEventListener("click", () => {{
   state.events.push({{id: nextId++, kind: "custom", name: "", existing: false, params: [],
-                    editing: true, source: "added on page"}});
+                    editing: true, _pageNew: true, source: "added on page"}});
   render();
 }});
 document.getElementById("add-field").addEventListener("click", () => {{
   state.player_fields.push({{id: nextId++, name: "", kind: "string", description: "",
-                             editing: true, existing: false, source: "added on page"}});
+                             editing: true, existing: false, _pageNew: true, source: "added on page"}});
   render();
 }});
 document.getElementById("add-res").addEventListener("click", () => {{
   state.resources.push({{id: nextId++, name: "", key: "", description: "", editing: true, existing: false,
-    fields: [], source: "added on page"}});
+    _pageNew: true, fields: [], source: "added on page"}});
   render();
 }});
 
@@ -1279,7 +1303,7 @@ function exportJson() {{
   // Select-first: unticked rows are simply absent from the hand-back (same semantics
   // as the old drop); the page-local flags never ship.
   const keep = r => r.existing || inc(r);
-  const stripLocal = r => {{ const {{included, editing, _enumRaw, ...rest}} = r; return rest; }};
+  const stripLocal = r => {{ const {{included, editing, _enumRaw, _pageNew, ...rest}} = r; return rest; }};
   return JSON.stringify({{
     confirmed_at: new Date().toISOString(),
     page_generated_at: DATA.generated_at,

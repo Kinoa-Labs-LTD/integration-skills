@@ -95,6 +95,10 @@ function testEvents(file) {
   const luRows = [...w.document.querySelectorAll("#events .row")]
     .filter(d => d.textContent.includes("level_up"));
   check("events: both same-name existing rows render", luRows.length >= 2, luRows.length);
+  const luBadges = luRows.map(d => [...d.querySelectorAll(".badge")].map(b => b.textContent).join("|"));
+  check("events: existing custom keeps its measured kind badge (user, not predefined)",
+        luBadges.some(t => t.includes("user")) && luBadges.some(t => t.includes("predefined")),
+        JSON.stringify(luBadges));
   check("events: same-name existing pair does not block the export", !gateBlocked(w));
   const luEcho = before.events.filter(e => e.name === "level_up").map(e => e.kind).sort();
   check("events: both same-name existing rows ship in the hand-back",
@@ -110,8 +114,28 @@ function testEvents(file) {
   const luProbe = [...w.document.querySelectorAll("#events .row")]
     .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "level_up")
                && d.querySelector("button.pencil"));
-  const luCb = luProbe.querySelector("input.inc");
-  luCb.checked = false; luCb.dispatchEvent(new w.Event("change", { bubbles: true }));
+  // ---- ✕ remove: only page-added rows are deletable (measured/existing keep checkboxes)
+  check("events: page-added row renders a remove button", !!luProbe.querySelector("button.remove"));
+  check("events: measured candidate has no remove button",
+        !rowByText(w, "events", "race_finished").querySelector("button.remove"));
+  check("events: existing row has no remove button",
+        !rowByText(w, "events", "session_start").querySelector("button.remove"));
+  luProbe.querySelector("button.remove").click();
+  check("events: removing the page-added row reopens the gate", !gateBlocked(w));
+  check("events: removed row is gone from the DOM",
+        ![...w.document.querySelectorAll("#events input[type=text]")].some(i => i.value === "level_up"));
+  // _pageNew never ships in the hand-back
+  w.document.getElementById("add-event").click();
+  const stInp = [...w.document.querySelectorAll("#events input[type=text]")]
+    .find(i => i.placeholder === "event_name" && i.value === "");
+  typeInto(w, stInp.dataset.fid, "probe_strip");
+  const stRow = exportPlan(w).events.find(e => e.name === "probe_strip");
+  check("events: exported page-added row carries no page-local flags",
+        stRow && !("_pageNew" in stRow) && !("editing" in stRow) && !("included" in stRow),
+        JSON.stringify(stRow));
+  [...w.document.querySelectorAll("#events .row")]
+    .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "probe_strip"))
+    .querySelector("button.remove").click();
 
   // add event, leave name empty -> gate blocks
   w.document.getElementById("add-event").click();
@@ -336,13 +360,15 @@ function testFields(file) {
   typeInto(w, [...w.document.querySelectorAll("#player_fields input[type=text]")]
     .find(i => i.value === "Wallet.Gold.Price").dataset.fid, "Wallet.GoldPrice");
   check("fields: restructuring resolves the conflict", !gateBlocked(w));
-  // clean up the two probe rows
+  // clean up the two probe rows via ✕ (page-added rows are deletable)
   for (const nm of ["Wallet.Gold", "Wallet.GoldPrice"]) {
     const row = [...w.document.querySelectorAll("#player_fields .row")]
       .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === nm));
-    const cb = row.querySelector("input.inc");
-    cb.checked = false; cb.dispatchEvent(new w.Event("change", { bubbles: true }));
+    row.querySelector("button.remove").click();
   }
+  check("fields: page-added probes fully removed via ✕",
+        ![...w.document.querySelectorAll("#player_fields input[type=text]")]
+          .some(i => ["Wallet.Gold", "Wallet.GoldPrice"].includes(i.value)));
 
   // ---- dashboard field registry: predefined path = valid + activate route
   w.document.getElementById("add-field").click();
