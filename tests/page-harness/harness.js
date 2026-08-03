@@ -192,6 +192,23 @@ function testEvents(file) {
         JSON.stringify(evS2));
   clickPencil(w, "events", "GameStateService.cs:130");  // collapse back (expanded row: name lives in the input, match by source)
 
+  // ---- duplicate tooltip names the duplicate, not the length limit
+  w.document.getElementById("add-event").click();
+  const dupInp = [...w.document.querySelectorAll("#events input[type=text]")]
+    .find(i2 => i2.placeholder === "event_name" && i2.value === "");
+  typeInto(w, dupInp.dataset.fid, "race_finished");
+  const dupBad = [...w.document.querySelectorAll("#events input.bad")]
+    .find(i2 => i2.value === "race_finished");
+  check("events: duplicate tooltip names the duplicate",
+        dupBad && (dupBad.title || "").includes("duplicate event name"),
+        dupBad ? dupBad.title : "no red dup input");
+  // drop the probe row via its checkbox
+  const dupRow = [...w.document.querySelectorAll("#events .row")]
+    .find(d => [...d.querySelectorAll("input[type=text]")].some(i2 => i2.value === "race_finished")
+               && d.querySelector("button.pencil"));
+  const dupCb = dupRow.querySelector("input.inc");
+  dupCb.checked = false; dupCb.dispatchEvent(new w.Event("change", { bubbles: true }));
+
   // ---- predefined-name editability: renaming away from the registry downgrades to user
   const nm = [...w.document.querySelectorAll("#events input[type=text]")]
     .find(i => i.value === "install");

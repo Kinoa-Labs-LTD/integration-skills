@@ -124,7 +124,7 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn(json.dumps(self.mod.SYSTEM_EVENT_PARAM_NAMES), html)
         self.assertIn("v1 (new schemas always start at 1)", html)
         self.assertIn("never editable", html)                      # predefined wire names
-        self.assertIn("unique on the server across ALL statuses", html)  # resource NAME rule
+        self.assertIn("uniqueness across ALL statuses", html)  # resource NAME rule
         self.assertIn("c.is_required = true", html)                # FS required: ALWAYS true, no UI control
         # Enum values: state survives kind toggles; the EXPORT strips them for non-enum kinds.
         self.assertIn("cleanParam", html)
@@ -244,6 +244,12 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn('placeholder: "auto (snake of the name)"', html)
         self.assertIn("if (!frPredef && !frCalc) {", html)
         self.assertIn("pathNodeConflict", html)                        # leaf/object conflict red
+        # Context-aware validation tooltips (2026-08-03): the first failing condition
+        # names itself — a duplicate no longer shows "maximum 30 characters".
+        self.assertIn("function firstBad", html)
+        self.assertIn("duplicate event name on this page", html)
+        self.assertIn("duplicate param name on this event", html)
+        self.assertIn("duplicate resource key on this page", html)
         self.assertNotIn('prev.textContent = "\u2192 path: "', html.replace("→", "\\u2192"))
         # FS column checkbox trial (2026-07-29): unticked columns dim + leave the plan
         self.assertIn('ccb.title = "include this column"', html)

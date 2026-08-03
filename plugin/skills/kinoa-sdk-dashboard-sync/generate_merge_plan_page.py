@@ -544,6 +544,13 @@ function expandedRow(r, invalidFn) {{
   return open;
 }}
 
+// The bad-predicates OR several conditions; the tooltip must name the one that
+// actually fired (a duplicate used to show "maximum 30 characters").
+function firstBad(pairs, fallback) {{
+  for (const pr of pairs) if (pr[0]) return pr[1];
+  return fallback;
+}}
+
 function dupNames(rows, key) {{
   const seen = new Map();
   rows.forEach(r => {{ const n = String(r[key] || "").trim().toLowerCase();
@@ -640,7 +647,10 @@ function renderEvents() {{
         v => {{ r.name = v; if (r.kind === "predefined" && !isPredefName(v)) r.kind = "custom"; }},
         {{placeholder: "event_name", size: 28, maxlength: 30,
           bad: !String(r.name || "").trim() || dup(r.name) || String(r.name || "").length > 30,
-          title: "maximum 30 characters"}}));
+          title: firstBad([
+            [!String(r.name || "").trim(), "the event name is required"],
+            [dup(r.name), "duplicate event name on this page"],
+          ], "maximum 30 characters")}}));
     }}
     if (r.note) {{ const n = document.createElement("span"); n.className = "muted"; n.textContent = r.note; g.appendChild(n); }}
     div.appendChild(g);
@@ -697,7 +707,10 @@ function renderEvents() {{
                  if (SYSTEM_PARAM_KINDS[t] !== undefined) p.kind = SYSTEM_PARAM_KINDS[t]; }},
           {{placeholder: "param_name", size: 20, maxlength: 30,
             bad: !String(p.name || "").trim() || pdup(p.name) || String(p.name || "").length > 30,
-            title: "maximum 30 characters"}})));
+            title: firstBad([
+              [!String(p.name || "").trim(), "the param name is required"],
+              [pdup(p.name), "duplicate param name on this event"],
+            ], "maximum 30 characters")}})));
         if (sysHit) {{
           // The type is PINNED by the base class — no select for system params.
           const kk = document.createElement("span"); kk.className = "muted";
@@ -732,7 +745,9 @@ function renderEvents() {{
           tr.appendChild(td(textInput(p.extra, "e" + i + "-p" + j + "-x", v => p.extra = v,
             {{placeholder: "a, b, c", size: 18,
               bad: !String(p.extra || "").trim() || enumValuesTooLong(p.extra),
-              title: "each value must be 50 characters or less"}})));
+              title: firstBad([
+                [!String(p.extra || "").trim(), "an enumeration needs at least one value"],
+              ], "each value must be 50 characters or less")}})));
         }}
       }}
       tbl.appendChild(tr);
@@ -790,13 +805,19 @@ function renderFields() {{
                || frCalc || frTaken
                || !FIELD_NAME_RE.test(String(r.name || "").trim())
                || String(r.name || "").length > 30 || (!frPredef && pathOf(r).length > 100),
-          title: frCalc ? "this path is a CALCULATED dashboard field — computed server-side, "
-                          + "the game cannot write it; rename if you meant a different value"
-                 : frTaken ? "this name is already taken on the dashboard (names are unique "
-                             + "across ALL statuses); rename"
-                 : "a dot-separated C# property chain (letters, digits, _), maximum 30 "
-                   + "characters; the registered snake path must be unique (across "
-                   + "existing fields too) and 100 characters or less"}}));
+          title: firstBad([
+            [frCalc, "this path is a CALCULATED dashboard field — computed server-side, "
+                     + "the game cannot write it; rename if you meant a different value"],
+            [frTaken, "this name is already taken on the dashboard (names are unique "
+                      + "across ALL statuses); rename"],
+            [!String(r.name || "").trim(), "the field name is required"],
+            [dup(r.name), "duplicate field name on this page"],
+            [!frPredef && pathDup(r), "another field registers the SAME path — rename one "
+                                      + "(the registered snake path must be unique)"],
+            [!FIELD_NAME_RE.test(String(r.name || "").trim()),
+             "must be a dot-separated C# property chain (letters, digits, _)"],
+            [String(r.name || "").length > 30, "maximum 30 characters"],
+          ], "the registered snake path must be unique and 100 characters or less")}}));
       if (frPredef) {{
         const b = document.createElement("span"); b.className = "badge b-predef";
         b.textContent = "predefined";
@@ -826,9 +847,12 @@ function renderFields() {{
         {{placeholder: "auto (snake of the name)", size: 18,
           bad: !frPredef && (!FIELD_PATH_RE.test(pathOf(r)) || pathOf(r).length > 100
                || pathDup(r) || frCalc || pathSegMismatch(r, pathOf) || nodeConf(r)),
-          title: frCalc ? "this path is a CALCULATED dashboard field — computed server-side; "
-                          + "pick another path or rename"
-                 : nodeConf(r)
+          title: firstBad([
+            [frCalc, "this path is a CALCULATED dashboard field — computed server-side; "
+                     + "pick another path or rename"],
+            [!frPredef && pathDup(r), "duplicate registered path — another field (incl. "
+                                      + "existing ones) already uses it"],
+          ], frCalc ? "" : nodeConf(r)
                    ? "leaf/object conflict: another field's path sits inside this one "
                      + "(Wallet.Gold vs Wallet.Gold.Price — Gold cannot be a value AND an "
                      + "object); restructure as sibling leaves (Wallet.Gold.Amount + "
@@ -838,7 +862,7 @@ function renderFields() {{
                      + "must match (nesting depth comes from nested properties: name "
                      + "Wallet.Gold can map to wallet.gold_amount, not to a deeper path)"
                    : "letter first; letters, digits, _, - and dot separators; unique "
-                     + "across existing fields; maximum 100 characters"}}));
+                     + "across existing fields; maximum 100 characters")}}));
       if (!frPredef && FR_CUSTOM_PATHS.has(pathOf(r))) {{
         const ex = document.createElement("span"); ex.className = "muted";
         ex.textContent = "already registered on the dashboard — the sync will activate/skip, not create";
@@ -848,7 +872,9 @@ function renderFields() {{
         g.appendChild(textInput(r.extra, "f" + i + "-x", v => r.extra = v,
           {{placeholder: "a, b, c", size: 16,
             bad: !String(r.extra || "").trim() || enumValuesTooLong(r.extra),
-            title: "each value must be 50 characters or less"}}));
+            title: firstBad([
+              [!String(r.extra || "").trim(), "an enumeration needs at least one value"],
+            ], "each value must be 50 characters or less")}}));
       }}
       if (!frPredef && !frCalc) {{
         g.appendChild(textInput(r.description, "f" + i + "-d", v => r.description = v,
@@ -909,8 +935,11 @@ function renderFs() {{
         {{placeholder: "SchemaName", size: 22, maxlength: 255,
           bad: !String(r.name || "").trim() || sdup(r.name)
                || String(r.name || "").length > 255 || noColumns,
-          title: noColumns ? "Schema should contain minimum 1 column (server rule)"
-                           : "maximum 255 characters"}}));
+          title: firstBad([
+            [noColumns, "Schema should contain minimum 1 column (server rule)"],
+            [!String(r.name || "").trim(), "the schema name is required"],
+            [sdup(r.name), "duplicate schema name on this page"],
+          ], "maximum 255 characters")}}));
       // A NEW schema always wires as version 1 (module 07) — shown, never editable.
       g.insertAdjacentHTML("beforeend", "<span class=\"muted\">v1 (new schemas always start at 1)</span>");
     }}
@@ -955,7 +984,11 @@ function renderFs() {{
           {{placeholder: "column", size: 20, maxlength: 100,
             bad: !String(c.name || "").trim() || cdup(c.name) || reserved
                  || String(c.name || "").length > 100,
-            title: reserved ? "filters are configuration-level (IncludeFilters readers), not schema columns — the operator picks them on the configuration table; unreplaced <placeholders> are scaffold" : ""}})));
+            title: firstBad([
+              [reserved, "filters are configuration-level (IncludeFilters readers), not schema columns — the operator picks them on the configuration table; unreplaced <placeholders> are scaffold"],
+              [!String(c.name || "").trim(), "the column name is required"],
+              [cdup(c.name), "duplicate column name in this schema"],
+            ], "maximum 100 characters")}})));
         tr.appendChild(td(kindSelect(FS_COLUMN_KINDS, c.kind, v => c.kind = v, "s" + i + "-c" + j + "-k")));
         if (c.kind === "bundle_key") {{
           const h = document.createElement("span"); h.className = "muted";
@@ -1014,7 +1047,10 @@ function renderFs() {{
       g.appendChild(textInput(r.key, "sk" + i, v => r.key = v,
         {{placeholder: "FeatureKey", size: 20, maxlength: 100,
           bad: !String(r.key || "").trim() || kdup(r.key) || String(r.key || "").length > 100,
-          title: "maximum 100 characters"}}));
+          title: firstBad([
+            [!String(r.key || "").trim(), "the setting key is required"],
+            [kdup(r.key), "duplicate setting key on this page"],
+          ], "maximum 100 characters")}}));
       g.insertAdjacentHTML("beforeend", "<span class=\"muted\">schema</span>");
       // Schema is a REFERENCE, not free text — pick from the schemas defined above
       // (kills dangling schema_name and shape redefinition by construction).
@@ -1100,12 +1136,20 @@ function renderResources() {{
         {{placeholder: "legendary_sword", size: 22, maxlength: 100,
           bad: !RESOURCE_KEY_RE.test(String(r.key || "")) || dup(r.key)
                || String(r.key || "").length > 100,
-          title: "letter first; letters, digits, _ and -; maximum 100 characters"}}));
+          title: firstBad([
+            [dup(r.key), "duplicate resource key on this page"],
+            [!RESOURCE_KEY_RE.test(String(r.key || "")),
+             "letter first; letters, digits, _ and - only"],
+          ], "maximum 100 characters")}}));
       g.insertAdjacentHTML("beforeend", "<span class=\"muted\">name</span>");
       g.appendChild(textInput(r.name, "r" + i + "-name", v => r.name = v,
         {{placeholder: "Legendary Sword", size: 22, maxlength: 100,
           bad: !String(r.name || "").trim() || ndup(r.name) || String(r.name || "").length > 100,
-          title: "unique on the server across ALL statuses (incl. DEPRECATED); maximum 100 characters"}}));
+          title: firstBad([
+            [!String(r.name || "").trim(), "the resource name is required"],
+            [ndup(r.name), "duplicate resource name on this page (the server also enforces "
+                           + "uniqueness across ALL statuses, incl. DEPRECATED)"],
+          ], "maximum 100 characters")}}));
       g.insertAdjacentHTML("beforeend", "<span class=\"muted\">description</span>");
       g.appendChild(textInput(r.description, "r" + i + "-desc", v => r.description = v,
         {{placeholder: "optional", size: 26, maxlength: 100,
@@ -1139,21 +1183,31 @@ function renderResources() {{
           {{placeholder: "field_name", size: 16, maxlength: 100,
             bad: !RES_FIELD_NAME_RE.test(String(f.name || "")) || fdup(f.name)
                  || String(f.name || "").length > 100,
-            title: "letter first; letters, digits, _ and - (the name is a JSON body key "
-                   + "and a code doc-block token); maximum 100 characters"}})));
+            title: firstBad([
+              [fdup(f.name), "duplicate field name on this resource"],
+              [!RES_FIELD_NAME_RE.test(String(f.name || "")),
+               "letter first; letters, digits, _ and - only (the name is a JSON body key "
+               + "and a code doc-block token)"],
+            ], "maximum 100 characters")}})));
         tr.appendChild(td(kindSelect(RESOURCE_FIELD_TYPES, f.field_type, v => f.field_type = v, "r" + i + "-f" + j + "-k")));
         tr.appendChild(td(textInput(f.default, "r" + i + "-f" + j + "-d", v => f.default = v,
           {{placeholder: "default", size: 10, bad: resDefaultBad(f),
-            title: "must match the field type (enumeration: one of the values); "
-                   + "':' is not representable in the code doc-block carrier"}})));
+            title: firstBad([
+              [String(f.default || "").includes(":"),
+               "':' is not representable in the code doc-block carrier"],
+              [f.field_type === "enumeration",
+               "the default must be one of the enumeration values"],
+            ], "must match the field type (number/boolean/date)")}})));
         if (f.field_type === "enumeration") {{
           const enumRaw = f._enumRaw !== undefined ? f._enumRaw : (f.enumeration_values || []).join(", ");
           tr.appendChild(td(textInput(enumRaw, "r" + i + "-f" + j + "-e",
             v => {{ f._enumRaw = v;
                    f.enumeration_values = v.split(",").map(x => x.trim()).filter(Boolean); }},
             {{placeholder: "a, b, c", size: 16, bad: resEnumBad(f),
-              title: "comma-separated; ':' and '=' are not representable in the code "
-                     + "doc-block carrier"}})));
+              title: firstBad([
+                [!(f.enumeration_values || []).length, "an enumeration needs at least one value"],
+              ], "comma-separated; ':' and '=' are not representable in the code "
+                 + "doc-block carrier")}})));
         }}
         tr.appendChild(td(textInput(f.description, "r" + i + "-f" + j + "-fd", v => f.description = v,
           {{placeholder: "field description", size: 16,
