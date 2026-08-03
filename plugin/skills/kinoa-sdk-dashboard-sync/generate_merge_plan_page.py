@@ -296,10 +296,14 @@ const state = {{
   feature_settings: normalizeFs(DATA.feature_settings),
   resources: (DATA.resources || []).map(x => ({{fields: [], ...x}})),
 }};
-state.events.forEach(r => (r.params || []).forEach(p => {{
+// System-kind coercion applies to PROPOSAL rows only: an existing row is a read-only
+// MEASUREMENT — its kind ships verbatim even when a system-named param was measured
+// with a non-canonical kind (the row shows a route warning instead; a live run had
+// silently retyped level string->number on Start/Finish, 2026-08-03).
+state.events.forEach(r => {{ if (r.existing) return; (r.params || []).forEach(p => {{
   const t = String(p.name || "").trim();
   if (SYSTEM_PARAM_KINDS[t] !== undefined) p.kind = SYSTEM_PARAM_KINDS[t];
-}}));
+}}); }});
 let nextId = 1 + Math.max(0, ...[...state.events, ...state.player_fields,
   ...state.feature_settings.schemas, ...state.feature_settings.settings,
   ...state.resources].map(r => r.id || 0));
@@ -714,7 +718,19 @@ function renderEvents() {{
         }}
       }}
       if (r.existing) {{
-        tr.innerHTML = "<td><code>" + esc(p.name) + "</code></td><td>" + esc(p.kind) + "</td><td>" + esc(p.extra || "") + "</td>";
+        const sysEx = SYSTEM_EVENT_PARAM_NAMES.includes(String(p.name || "").trim());
+        tr.innerHTML = "<td><code>" + esc(p.name) + "</code>" +
+          (sysEx ? ' <span class="badge b-system">system</span>' : "") +
+          "</td><td>" + esc(p.kind) + "</td><td>" +
+          (sysEx
+            ? '<span class="muted">reserved system name measured as a custom param — the '
+              + 'server refuses registering it; canonical kind '
+              + esc(SYSTEM_PARAM_KINDS[String(p.name || "").trim()] || "") + ', canonical route: '
+              + (SYSTEM_BASE_PROP_PARAM_NAMES.includes(String(p.name || "").trim())
+                 ? "the event's base-class field (SetLevel/SetPlace/Success)"
+                 : "composed by the SDK — remove the custom param")
+              + ". Fix code-first.</span>"
+            : esc(p.extra || "")) + "</td>";
       }} else {{
         // A reserved system name is a VALID candidate — the value just takes a different
         // ROUTE (base-class property or SDK-composed) and is never registered as a custom
@@ -1326,6 +1342,10 @@ function exportJson() {{
       if (r.existing) return r;  // echoed verbatim — the row is a measurement of code
       const out = stripLocal(r.kind === "enumeration" ? {{...r}} : {{...r, extra: ""}});
       const p = String(r.path || "").trim() || snake(String(r.name || "").trim());
+      // The path the developer SAW (derived or overridden) ships explicitly — the page
+      // is the approval gate; a hand-back without it made the consumer re-derive and
+      // hid the approved value (demo-b InitialDeviceOS, 2026-08-03).
+      out.path = p;
       // Append-only marker: the sync ACTIVATES the dashboard's predefined field —
       // implementation takes the module-02 SDK-state route, never a custom create.
       if (FR_PREDEF[p] !== undefined) out.predefined_field = true;

@@ -256,6 +256,8 @@ class MergePlanPageTests(unittest.TestCase):
         # effectiveKind never re-tags existing rows (measured kind wins over the
         # registry-name match — the level_up predefined+custom pair, 2026-08-03).
         self.assertIn('if (r.existing) return r.kind || "custom";', html)
+        # existing rows never get the system-kind retype; they warn instead (2026-08-03)
+        self.assertIn("reserved system name measured as a custom param", html)
         self.assertIn("✕ remove", html)
         self.assertNotIn('prev.textContent = "\u2192 path: "', html.replace("→", "\\u2192"))
         # FS column checkbox trial (2026-07-29): unticked columns dim + leave the plan

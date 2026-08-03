@@ -103,6 +103,14 @@ function testEvents(file) {
   const luEcho = before.events.filter(e => e.name === "level_up").map(e => e.kind).sort();
   check("events: both same-name existing rows ship in the hand-back",
         deepEq(luEcho, ["custom", "predefined"]), JSON.stringify(luEcho));
+  // ---- existing rows are measurements: a system-named param keeps its measured kind
+  const slRow = before.events.find(e => e.name === "start_level");
+  check("events: existing system-named param kind ships verbatim (no coercion)",
+        slRow && slRow.params[0].kind === "string", JSON.stringify(slRow));
+  check("events: existing system param shows the route warning",
+        [...w.document.querySelectorAll("#events .row")].some(d =>
+          d.textContent.includes("start_level")
+          && d.textContent.includes("reserved system name measured as a custom param")));
   w.document.getElementById("add-event").click();
   const luInp = [...w.document.querySelectorAll("#events input[type=text]")]
     .find(i => i.placeholder === "event_name" && i.value === "");
@@ -317,8 +325,8 @@ function testFields(file) {
   typeInto(w, lrInput.dataset.fid, "LastRaceTime");
   const planP = exportPlan(w);
   const lrOut = planP.player_fields.find(f => f.name === "LastRaceTime");
-  check("fields: rename clears the measured path (re-derived from the new name)",
-        lrOut && !("path" in lrOut), JSON.stringify(lrOut));
+  check("fields: rename re-derives the shipped path from the new name",
+        lrOut && lrOut.path === "last_race_time", JSON.stringify(lrOut));
   check("fields: path input follows the new name",
         [...w.document.querySelectorAll("#player_fields input[type=text]")]
           .some(i => i.value === "last_race_time"));
@@ -338,8 +346,8 @@ function testFields(file) {
   typeInto(w, nIn.dataset.fid, "LastRaceTime2");
   const planOv2 = exportPlan(w);
   const ov2 = planOv2.player_fields.find(f => f.name === "LastRaceTime2");
-  check("fields: editing the name resets the override to auto",
-        ov2 && !("path" in ov2), JSON.stringify(ov2));
+  check("fields: editing the name resets the override back to the auto-derived path",
+        ov2 && ov2.path === "last_race_time2", JSON.stringify(ov2));
   typeInto(w, [...w.document.querySelectorAll("#player_fields input[type=text]")]
     .find(i => i.value === "LastRaceTime2").dataset.fid, "LastRaceAt");
   typeInto(w, w.document.querySelector('#player_fields input[type=text][value=""]') ? lrInput.dataset.fid : lrInput.dataset.fid, "LastRaceAt");
@@ -366,6 +374,18 @@ function testFields(file) {
       .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === nm));
     row.querySelector("button.remove").click();
   }
+  // page-added row ships the DERIVED path explicitly (no manual override needed)
+  w.document.getElementById("add-field").click();
+  const dpInp = [...w.document.querySelectorAll("#player_fields input[type=text]")]
+    .find(i => i.placeholder === "Wallet.Gold" && i.value === "");
+  typeInto(w, dpInp.dataset.fid, "InitialDeviceOS");
+  const dpRow = exportPlan(w).player_fields.find(f => f.name === "InitialDeviceOS");
+  check("fields: page-added row exports its derived path",
+        dpRow && dpRow.path === "initial_device_os", JSON.stringify(dpRow));
+  [...w.document.querySelectorAll("#player_fields .row")]
+    .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "InitialDeviceOS"))
+    .querySelector("button.remove").click();
+
   check("fields: page-added probes fully removed via ✕",
         ![...w.document.querySelectorAll("#player_fields input[type=text]")]
           .some(i => ["Wallet.Gold", "Wallet.GoldPrice"].includes(i.value)));

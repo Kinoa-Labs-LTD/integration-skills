@@ -231,14 +231,35 @@ class BuildPlanTests(unittest.TestCase):
         self.assertEqual([p["name"] for p in create["params"]], ["position"])
         self.assertTrue(any("built-in system field" in w.get("reason", "")
                             for w in plan["events"]["warnings"]))
-        # an UNFLAGGED reserved name still warns and stays (byte-for-byte manifest)
+        # an UNFLAGGED reserved name is excluded too (the server refuses the call) and
+        # the warning names the SDK-composed route (user decision 2026-08-03)
         manifest2 = _manifest()
         manifest2["events"]["custom"] = [{"name": "e2", "params": [
             {"name": "time", "kind": "number"}]}]
         plan2 = self._plan(manifest2)
-        self.assertEqual([p["name"] for p in plan2["events"]["create"][0]["params"]], ["time"])
+        self.assertEqual(plan2["events"]["create"][0]["params"], [])
         self.assertTrue(any("RESERVED by system parameters" in w.get("reason", "")
+                            and "SDK composes it" in w.get("reason", "")
                             for w in plan2["events"]["warnings"]))
+
+    def test_reserved_param_routes_and_empty_addparams_row_dropped(self):
+        # level -> base-class route text; an add-params row left with zero params
+        # after exclusion is a no-op and disappears from the plan (2026-08-03).
+        manifest = _manifest()
+        manifest["events"]["custom"] = [{"name": "race_start", "params": [
+            {"name": "level", "kind": "number"}, {"name": "seed", "kind": "string"}]}]
+        manifest["events"]["predefined_in_use"] = [{"name": "payment",
+            "custom_params": [{"name": "wifi", "kind": "boolean"}]}]
+        predef = {"id": "e1", "name": "payment", "status": "ACTIVE",
+                  "game_event_parameters": []}
+        plan = self._plan(manifest, ev_predef=[predef])
+        create = plan["events"]["create"][0]
+        self.assertEqual([p["name"] for p in create["params"]], ["seed"])
+        self.assertTrue(any(w.get("param") == "level" and "base class" in w.get("reason", "")
+                            for w in plan["events"]["warnings"]))
+        self.assertTrue(any(w.get("param") == "wifi" and "SDK composes it" in w.get("reason", "")
+                            for w in plan["events"]["warnings"]))
+        self.assertEqual(plan["events"]["add_params"], [])
 
     def test_leaf_object_path_conflict_warns(self):
         manifest = _manifest()

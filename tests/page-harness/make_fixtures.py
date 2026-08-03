@@ -54,7 +54,12 @@ PAGES = {
             {"id": 3, "kind": "predefined", "name": "level_up", "existing": True,
              "source": "AnalyticsEventListener.cs:58", "params": []},
             {"id": 4, "kind": "custom", "name": "level_up", "existing": True,
-             "source": "AnalyticsEventListener.cs:352", "params": []}]},
+             "source": "AnalyticsEventListener.cs:352", "params": []},
+            # System-named param measured with a NON-canonical kind on a read-only row:
+            # the page must ship it verbatim (no retype) and show the route warning.
+            {"id": 5, "kind": "custom", "name": "start_level", "existing": True,
+             "source": "AnalyticsEventListener.cs:81",
+             "params": [{"name": "level", "kind": "string", "extra": ""}]}]},
     "e2e-fields.html": {
         "payload_version": 1, "generated_at": TS, "game_id": GAME,
         "dashboard_field_registry": {

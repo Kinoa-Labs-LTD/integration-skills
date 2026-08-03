@@ -78,6 +78,9 @@ RESOURCE_KEY_RE = r"^[a-zA-Z][a-zA-Z0-9_-]*$"
 # system param (the event loses its standard system column); editing a system param
 # via PUT fails with an unhandled 500 (system params are shared template rows).
 SYSTEM_EVENT_PARAM_NAMES = ("device_id", "level", "place", "success", "time", "time_ms", "wifi")
+# The three that ride the event's BASE CLASS (SetLevel/SetPlace/Success); the other
+# four are composed by the SDK itself — the route advice differs (user 2026-08-03).
+SYSTEM_BASE_PROP_PARAM_NAMES = ("level", "place", "success")
 
 # Entity surfaces this planner knows how to sync. The manifest is designed to grow
 # (feature settings, bundles, translations, ...) — any other top-level section is
@@ -557,16 +560,27 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                 })
                 continue
             if _norm(p.get("name")) in SYSTEM_EVENT_PARAM_NAMES:
+                # Excluded like the flagged case — the server refuses the whole call
+                # otherwise; the warning carries the per-group route (user 2026-08-03).
+                route = ("the value rides the event's base class — move it to "
+                         "SetLevel(...)/SetPlace(...)/Success in the builder"
+                         if _norm(p.get("name")) in SYSTEM_BASE_PROP_PARAM_NAMES
+                         else "the SDK composes it automatically — remove the custom param "
+                              "in game code")
                 plan["events"]["warnings"].append({
                     "name": item.get("name"), "param": p.get("name"),
                     "reason": f"system-param collision: '{p.get('name')}' is RESERVED by system "
                               "parameters — the server refuses the registration ('Parameter name(s) "
-                              "[...] are reserved by system parameters', backend-confirmed 2026-07-29). "
-                              "Route the value via the base class (level/place/success) or rename "
-                              "the param in game code if it means something else.",
+                              "[...] are reserved by system parameters', backend-confirmed 2026-07-29); "
+                              f"excluded from this action. Route: {route}; rename the param in "
+                              "game code if it means something else.",
                 })
+                continue
             kept.append(p)
         item["params"] = kept
+    # An add-params row whose params were ALL excluded is a no-op — drop it (the
+    # warnings above still tell the story). Creates stay: the event itself is the action.
+    plan["events"]["add_params"] = [i for i in plan["events"]["add_params"] if i.get("params")]
 
     # --- Informational: dashboard ACTIVE entities the manifest doesn't mention. Never deleted. ---
     for name, record in ev_custom_by_name.items():
