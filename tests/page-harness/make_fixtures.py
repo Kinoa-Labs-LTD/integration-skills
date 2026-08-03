@@ -48,7 +48,13 @@ PAGES = {
              "source": "KinoaGameController.cs:41", "params": []},
             {"id": 2, "kind": "custom", "name": "race_finished", "existing": False,
              "source": "GameStateService.cs:130",
-             "params": [{"name": "position", "kind": "number", "extra": ""}]}]},
+             "params": [{"name": "position", "kind": "number", "extra": ""}]},
+            # Same-name existing pair — a custom mirror colliding with the predefined
+            # wire name is legal code reality (demo-a EventName_FakeLevelUpCustom).
+            {"id": 3, "kind": "predefined", "name": "level_up", "existing": True,
+             "source": "AnalyticsEventListener.cs:58", "params": []},
+            {"id": 4, "kind": "custom", "name": "level_up", "existing": True,
+             "source": "AnalyticsEventListener.cs:352", "params": []}]},
     "e2e-fields.html": {
         "payload_version": 1, "generated_at": TS, "game_id": GAME,
         "dashboard_field_registry": {

@@ -90,6 +90,29 @@ function testEvents(file) {
   check("events: existing row echoed verbatim", deepEq(echoed, exEv),
         JSON.stringify({ echoed, exEv }));
 
+  // ---- same-name existing pair (predefined + custom level_up) is legal code reality:
+  // both render, neither reds, both ship; a NEW row taking the name still reds.
+  const luRows = [...w.document.querySelectorAll("#events .row")]
+    .filter(d => d.textContent.includes("level_up"));
+  check("events: both same-name existing rows render", luRows.length >= 2, luRows.length);
+  check("events: same-name existing pair does not block the export", !gateBlocked(w));
+  const luEcho = before.events.filter(e => e.name === "level_up").map(e => e.kind).sort();
+  check("events: both same-name existing rows ship in the hand-back",
+        deepEq(luEcho, ["custom", "predefined"]), JSON.stringify(luEcho));
+  w.document.getElementById("add-event").click();
+  const luInp = [...w.document.querySelectorAll("#events input[type=text]")]
+    .find(i => i.placeholder === "event_name" && i.value === "");
+  typeInto(w, luInp.dataset.fid, "level_up");
+  check("events: new row duplicating an existing name blocks the export", gateBlocked(w));
+  check("events: duplicate-vs-existing tooltip names the duplicate",
+        [...w.document.querySelectorAll("#events input.bad")]
+          .some(i => i.value === "level_up" && (i.title || "").includes("duplicate event name")));
+  const luProbe = [...w.document.querySelectorAll("#events .row")]
+    .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "level_up")
+               && d.querySelector("button.pencil"));
+  const luCb = luProbe.querySelector("input.inc");
+  luCb.checked = false; luCb.dispatchEvent(new w.Event("change", { bubbles: true }));
+
   // add event, leave name empty -> gate blocks
   w.document.getElementById("add-event").click();
   check("events: empty new-name blocks export", gateBlocked(w));
