@@ -273,6 +273,7 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("RESERVED_FIELD_PATHS", html)
         self.assertIn("session_data", html)
         self.assertIn("RESERVED by the platform", html)
+        self.assertIn("UNDO = [], REDO = []", html)   # ⌘Z whole-state history (2026-08-04)
         self.assertIn("measured part is read-only", html)
         self.assertNotIn('prev.textContent = "\u2192 path: "', html.replace("→", "\\u2192"))
         # FS column checkbox trial (2026-07-29): unticked columns dim + leave the plan

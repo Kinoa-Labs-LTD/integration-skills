@@ -336,6 +336,27 @@ function testEvents(file) {
   const mi = plan6.events.find(e => e.name === "my_install_report");
   check("events: renamed off-registry row exports kind custom", mi && mi.kind === "custom",
         JSON.stringify(mi));
+
+
+  // ---- ⌘Z / Ctrl+Z: whole-state undo survives re-renders (native stacks die)
+  const zKey = extra => new w.KeyboardEvent("keydown",
+    Object.assign({ key: "z", metaKey: true, bubbles: true, cancelable: true }, extra));
+  const evRowCount = () => w.document.querySelectorAll("#events .row").length;
+  const zBase = evRowCount();
+  w.document.getElementById("add-event").click();
+  const zInp = [...w.document.querySelectorAll("#events input[type=text]")]
+    .find(i2 => i2.placeholder === "event_name" && i2.value === "");
+  typeInto(w, zInp.dataset.fid, "zz");
+  w.document.dispatchEvent(zKey({}));
+  check("undo: last keystroke reverted",
+        [...w.document.querySelectorAll("#events input[type=text]")].some(i2 => i2.value === "z"));
+  w.document.dispatchEvent(zKey({}));
+  w.document.dispatchEvent(zKey({}));
+  check("undo: row-add undone", evRowCount() === zBase);
+  w.document.dispatchEvent(zKey({ shiftKey: true }));
+  check("redo: row-add restored", evRowCount() === zBase + 1);
+  w.document.dispatchEvent(zKey({}));
+  check("undo: clean baseline restored", evRowCount() === zBase);
   return w;
 }
 
@@ -459,6 +480,22 @@ function testFields(file) {
         dpRow && dpRow.path === "initial_device_os", JSON.stringify(dpRow));
   [...w.document.querySelectorAll("#player_fields .row")]
     .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "InitialDeviceOS"))
+    .querySelector("button.remove").click();
+
+  // spaced display name: property derives PascalCase, path snake, all three ship
+  w.document.getElementById("add-field").click();
+  const spInp = [...w.document.querySelectorAll("#player_fields input[type=text]")]
+    .find(i => i.placeholder === "Wallet.Gold" && i.value === "");
+  typeInto(w, spInp.dataset.fid, "Skin color");
+  check("fields: spaced name is valid and shows the C# preview",
+        valErrs(w) === 0 && [...w.document.querySelectorAll("#player_fields code")]
+          .some(c => c.textContent === "SkinColor"));
+  const spRow = exportPlan(w).player_fields.find(f => f.name === "Skin color");
+  check("fields: spaced name ships name + property + path",
+        spRow && spRow.property === "SkinColor" && spRow.path === "skin_color",
+        JSON.stringify(spRow));
+  [...w.document.querySelectorAll("#player_fields .row")]
+    .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "Skin color"))
     .querySelector("button.remove").click();
 
   // platform-reserved path (static plugin list): red offline-proof, ✕ cleans up

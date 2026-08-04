@@ -529,7 +529,8 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
         # default_value is deliberately NOT forwarded: the live API 422-rejects it
         # for non-calculated fields, and manifest fields are code-backed, never calculated.
         item = {
-            "name": entry.get("name") or entry.get("property") or path,
+            "name": entry.get("dashboard_name") or entry.get("name")
+                    or entry.get("property") or path,
             "path": path,
             "kind": kind,
             "extra": entry.get("extra") or "",

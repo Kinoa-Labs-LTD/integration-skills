@@ -291,6 +291,17 @@ class BuildPlanTests(unittest.TestCase):
                                 if "RESERVED by the platform" in w.get("reason", "")),
                          ["session_data.my_field", "time_zone"])
 
+    def test_dashboard_name_preferred_for_create(self):
+        # /// Dashboard name: carrier (written only when name != property) wins the
+        # create --name; absent -> property default (2026-08-04).
+        manifest = _manifest()
+        manifest["player_fields"]["custom"] = [
+            {"path": "skin_color", "property": "SkinColor",
+             "dashboard_name": "Skin color", "kind": "string"},
+            {"path": "win_streak", "property": "WinStreak", "kind": "number"}]
+        creates = self._plan(manifest)["player_fields"]["create"]
+        self.assertEqual([c["name"] for c in creates], ["Skin color", "WinStreak"])
+
     def test_leaf_object_path_conflict_warns(self):
         manifest = _manifest()
         manifest["player_fields"]["custom"] = [

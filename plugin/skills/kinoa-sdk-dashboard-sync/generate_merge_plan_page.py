@@ -232,6 +232,7 @@ footer .grow {{ flex: 1; }}
   <div class="grow" id="counter"></div>
   <button id="download" class="primary">⬇ Download plan</button>
   <button id="copy">Copy plan</button>
+  <span class="muted" style="margin-left:0.6rem">⌘Z / Ctrl+Z undo · ⇧⌘Z / Ctrl+Y redo</span>
   <span id="flash"></span>
 </footer>
 <script>
@@ -373,9 +374,41 @@ function snake(s) {{ return String(s || "").replace(/([A-Z]+)([A-Z][a-z])/g, "$1
   .replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase(); }}
 // Field NAME must be a dot-separated C# property chain — it ships byte-for-byte
 // into code as identifiers (resource keys already get the same class of rule).
-const FIELD_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/;
+// Display name: spaces allowed between tokens (user 2026-08-04) — the C# property
+// derives PascalCase per token, the path derives snake from the property; a spaced
+// name ships to the dashboard as-is (11 of 16 live predefined names carry spaces).
+const FIELD_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*(?: [A-Za-z0-9_]+)*(?:\.[A-Za-z_][A-Za-z0-9_]*(?: [A-Za-z0-9_]+)*)*$/;
+function propOf(r) {{
+  const n = String(r.name || "").trim();
+  if (!n.includes(" ")) return n;   // identity for space-free names (incl. measured rows)
+  return n.split(".").map(seg => seg.trim().split(/ +/)
+    .map(t => t.charAt(0).toUpperCase() + t.slice(1)).join("")).join(".");
+}}
 // Registered-path charset (server rule): letter first; letters, digits, _, -, dots.
 const FIELD_PATH_RE = /^[A-Za-z][A-Za-z0-9_\-]*(\.[A-Za-z0-9_\-]+)*$/;
+
+// Re-renders destroy the browser's native per-input undo stack — the page keeps a
+// whole-state history instead (user request 2026-08-04): snapshot per render
+// (char-level), cap 200; ⌘Z/Ctrl+Z undo, ⇧⌘Z/Ctrl+Y redo. nextId is deliberately
+// NOT restored — ids stay monotonic so an undone row can't collide with a new one.
+let UNDO = [], REDO = [], RESTORING = false;
+function restoreSnap(snap) {{
+  const d = JSON.parse(snap);
+  state.events = d.events; state.player_fields = d.player_fields;
+  state.feature_settings = d.feature_settings; state.resources = d.resources;
+  RESTORING = true; render(); RESTORING = false;
+}}
+document.addEventListener("keydown", e => {{
+  const k = String(e.key || "").toLowerCase();
+  if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+  if (k === "z" && !e.shiftKey) {{
+    e.preventDefault();
+    if (UNDO.length > 1) {{ REDO.push(UNDO.pop()); restoreSnap(UNDO[UNDO.length - 1]); }}
+  }} else if ((k === "z" && e.shiftKey) || k === "y") {{
+    e.preventDefault();
+    if (REDO.length) {{ const snap = REDO.pop(); UNDO.push(snap); restoreSnap(snap); }}
+  }}
+}});
 
 // Re-render destroys every node — remember the focused input and caret so
 // live-validated typing doesn't drop focus.
@@ -394,6 +427,14 @@ function render() {{
       const b = document.getElementById(id); if (b) b.disabled = true;
     }});
     return;
+  }}
+  if (!RESTORING) {{
+    const snap = JSON.stringify(state);
+    if (!UNDO.length || UNDO[UNDO.length - 1] !== snap) {{
+      UNDO.push(snap);
+      if (UNDO.length > 200) UNDO.shift();
+      REDO.length = 0;
+    }}
   }}
   const active = document.activeElement;
   const focusId = active && active.dataset ? active.dataset.fid : null;
@@ -562,7 +603,7 @@ function pathNodeConflict(path, allPaths) {{
 function pathSegMismatch(r, pathOf) {{
   // A dotted override maps PER-SEGMENT onto the property chain ([JsonPropertyName]
   // per segment) — nesting depth comes from nested properties, never from the string.
-  return pathOf(r).split(".").length !== String(r.name || "").trim().split(".").length;
+  return pathOf(r).split(".").length !== propOf(r).split(".").length;
 }}
 function fieldRowInvalid(r, dup, pathDup, pathOf, nodeConf) {{
   if (FR_PREDEF[pathOf(r)] !== undefined) {{
@@ -898,7 +939,7 @@ function renderFields() {{
   const shipped = state.player_fields.filter(r => r.existing || inc(r));
   const dup = dupNames(shipped, "name");
   const pathCount = new Map();
-  const pathOf = r => String(r.path || "").trim() || snake(String(r.name || "").trim());
+  const pathOf = r => String(r.path || "").trim() || snake(propOf(r));
   shipped.forEach(r => {{
     const p = pathOf(r);
     if (p) pathCount.set(p, (pathCount.get(p) || 0) + 1);
@@ -952,7 +993,8 @@ function renderFields() {{
             [!frPredef && pathDup(r), "another field registers the SAME path — rename one "
                                       + "(the registered snake path must be unique)"],
             [!FIELD_NAME_RE.test(String(r.name || "").trim()),
-             "must be a dot-separated C# property chain (letters, digits, _)"],
+             "letters, digits, _ and single spaces between tokens; dot-separated segments "
+             + "(spaces stay in the dashboard Name — the C# property derives PascalCase)"],
             [String(r.name || "").length > 30, "maximum 30 characters"],
           ], "the registered snake path must be unique and 100 characters or less")}}));
       if (frCalc) {{
@@ -985,10 +1027,14 @@ function renderFields() {{
       // Path is a first-class input: auto-derived from the name (editing the name
       // resets it); a manual edit stores an override — the implementation carries it
       // as [JsonPropertyName] on the property. Checked against the registry too.
+      if (!r.existing && propOf(r) !== String(r.name || "").trim() && propOf(r)) {{
+        g.insertAdjacentHTML("beforeend",
+          "<span class=\"muted\">\u2192 C# <code>" + esc(propOf(r)) + "</code></span>");
+      }}
       g.insertAdjacentHTML("beforeend", "<span class=\"muted\">\u2192 path</span>");
       g.appendChild(textInput(pathOf(r), "f" + i + "-p",
         v => {{ const t = String(v || "").trim();
-               if (!t || t === snake(String(r.name || "").trim())) delete r.path;
+               if (!t || t === snake(propOf(r))) delete r.path;
                else r.path = t; }},
         {{placeholder: "wallet.gold", size: 18,
           bad: !frPredef && (!FIELD_PATH_RE.test(pathOf(r)) || pathOf(r).length > 100
@@ -1464,11 +1510,14 @@ function exportJson() {{
     player_fields: state.player_fields.filter(keep).map(r => {{
       if (r.existing) return r;  // echoed verbatim — the row is a measurement of code
       const out = stripLocal(r.kind === "enumeration" ? {{...r}} : {{...r, extra: ""}});
-      const p = String(r.path || "").trim() || snake(String(r.name || "").trim());
+      const p = String(r.path || "").trim() || snake(propOf(r));
       // The path the developer SAW (derived or overridden) ships explicitly — the page
       // is the approval gate; a hand-back without it made the consumer re-derive and
       // hid the approved value (demo-b InitialDeviceOS, 2026-08-03).
       out.path = p;
+      // Explicit derivation (2026-08-04): name may carry spaces (dashboard display
+      // name); the C# property ships alongside — identity for space-free names.
+      out.property = propOf(r);
       // Append-only marker: the sync ACTIVATES the dashboard's predefined field —
       // implementation takes the module-02 SDK-state route, never a custom create.
       if (FR_PREDEF[p] !== undefined) out.predefined_field = true;
