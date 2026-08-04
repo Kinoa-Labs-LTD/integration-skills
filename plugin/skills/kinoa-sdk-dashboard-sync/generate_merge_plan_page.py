@@ -1057,7 +1057,10 @@ function renderFields() {{
                      + "must match (nesting depth comes from nested properties: name "
                      + "Wallet.Gold can map to wallet.gold_amount, not to a deeper path)"
                    : "letter first; letters, digits, _, - and dot separators; unique "
-                     + "across existing fields; maximum 100 characters")}}));
+                     + "across existing fields; maximum 100 characters. An override is "
+                     + "implemented as [JsonPropertyName] on the property (per segment) — "
+                     + "the serialized key follows the attribute, so the wire data and the "
+                     + "registration stay identical")}}));
       if (!frPredef && FR_CUSTOM_PATHS.has(pathOf(r))) {{
         const ex = document.createElement("span"); ex.className = "muted";
         ex.textContent = "already registered on the dashboard — the sync will activate/skip, not create";
