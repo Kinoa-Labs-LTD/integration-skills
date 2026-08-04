@@ -269,6 +269,10 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("proposed_params", html)
         self.assertIn('<span class="badge b-new">addition</span>', html)
         self.assertIn("delete this param", html)   # ✕ on hand-added params (2026-08-04)
+        # static reserved-path list baked into the page (backend snapshot 2026-08-04)
+        self.assertIn("RESERVED_FIELD_PATHS", html)
+        self.assertIn("session_data", html)
+        self.assertIn("RESERVED by the platform", html)
         self.assertIn("measured part is read-only", html)
         self.assertNotIn('prev.textContent = "\u2192 path: "', html.replace("→", "\\u2192"))
         # FS column checkbox trial (2026-07-29): unticked columns dim + leave the plan

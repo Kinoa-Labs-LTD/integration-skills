@@ -278,6 +278,19 @@ class BuildPlanTests(unittest.TestCase):
                             and w.get("path") == "initial_device_os"
                             for w in pf["warnings"]))
 
+    def test_reserved_platform_path_warns_and_skips_create(self):
+        # Static plugin-shipped list (prefix semantics): exact hit + namespace child.
+        manifest = _manifest()
+        manifest["player_fields"]["custom"] = [
+            {"path": "time_zone", "kind": "string"},
+            {"path": "session_data.my_field", "kind": "number"},
+            {"path": "safe_field", "kind": "number"}]
+        pf = self._plan(manifest)["player_fields"]
+        self.assertEqual([c["path"] for c in pf["create"]], ["safe_field"])
+        self.assertEqual(sorted(w["path"] for w in pf["warnings"]
+                                if "RESERVED by the platform" in w.get("reason", "")),
+                         ["session_data.my_field", "time_zone"])
+
     def test_leaf_object_path_conflict_warns(self):
         manifest = _manifest()
         manifest["player_fields"]["custom"] = [

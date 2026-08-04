@@ -123,6 +123,11 @@ import webbrowser
 # RESOURCE_KEY_RE); tests enforce the parity.
 EVENT_PARAM_KINDS = ["number", "boolean", "string", "date", "enumeration", "string_array", "number_array"]
 FIELD_KINDS = ["number", "boolean", "string", "date", "long_string", "enumeration", "version"]
+# Platform-reserved player-field paths — plugin-shipped backend snapshot (2026-08-04);
+# see reserved-player-field-paths.json for semantics (prefix rule, server backstop).
+RESERVED_PLAYER_FIELD_PATHS = json.loads(
+    (pathlib.Path(__file__).resolve().parent / "reserved-player-field-paths.json")
+    .read_text(encoding="utf-8"))["reserved"]
 FS_COLUMN_KINDS = ["integer", "number", "string", "boolean", "bundle_key"]
 RESOURCE_FIELD_TYPES = ["number", "string", "boolean", "date", "enumeration"]
 RESOURCE_KEY_RE = r"^[a-zA-Z][a-zA-Z0-9_-]*$"
@@ -240,6 +245,13 @@ const SYSTEM_EVENT_PARAM_NAMES = {system_event_param_names};
 const SYSTEM_BASE_PROP_PARAM_NAMES = {system_base_prop_param_names};
 const SYSTEM_AUTO_PARAM_NAMES = {system_auto_param_names};
 const SYSTEM_PARAM_KINDS = {system_param_kinds};
+// Platform-reserved player-field paths (backend snapshot; server backstop: "path is
+// reserved"). PREFIX semantics; the predefined route takes precedence — level etc.
+// legally ACTIVATE, so the check applies only when FR_PREDEF has no match.
+const RESERVED_FIELD_PATHS = {reserved_field_paths};
+function reservedFieldPath(p) {{
+  return RESERVED_FIELD_PATHS.some(e => p === e || String(p).startsWith(e + "."));
+}}
 // Registries travel IN THE PAYLOAD (optional keys, contract clause 1) — sourced live from
 // the server taxonomy (type=PREDEFINED / type=DEBUG listings) with the /kinoa module-13
 // tables as offline fallback. Absent keys -> no live tagging (the sync planner's
@@ -559,7 +571,8 @@ function fieldRowInvalid(r, dup, pathDup, pathOf, nodeConf) {{
       || !FIELD_NAME_RE.test(String(r.name || "").trim()) || String(r.name || "").length > 30;
   }}
   return !String(r.name || "").trim() || dup(r.name) || pathDup(r)
-    || FR_CALC[pathOf(r)] !== undefined || fieldTakenName(r, pathOf)
+    || FR_CALC[pathOf(r)] !== undefined || reservedFieldPath(pathOf(r))
+    || fieldTakenName(r, pathOf)
     || !FIELD_NAME_RE.test(String(r.name || "").trim())
     || !FIELD_PATH_RE.test(pathOf(r)) || pathSegMismatch(r, pathOf)
     || (nodeConf && nodeConf(r))
@@ -918,15 +931,20 @@ function renderFields() {{
       const frPredef = FR_PREDEF[pathOf(r)] !== undefined;
       const frCalc = FR_CALC[pathOf(r)] !== undefined;
       const frTaken = fieldTakenName(r, pathOf);
+      const frReserved = !frPredef && reservedFieldPath(pathOf(r));
       g.appendChild(textInput(r.name, "f" + i, v => {{ r.name = v; delete r.path; }},
         {{placeholder: "Wallet.Gold", size: 26, maxlength: 30,
           bad: !String(r.name || "").trim() || dup(r.name) || (!frPredef && pathDup(r))
-               || frCalc || frTaken
+               || frCalc || frReserved || frTaken
                || !FIELD_NAME_RE.test(String(r.name || "").trim())
                || String(r.name || "").length > 30 || (!frPredef && pathOf(r).length > 100),
           title: firstBad([
             [frCalc, "this path is a CALCULATED dashboard field — computed server-side, "
                      + "the game cannot write it; rename if you meant a different value"],
+            [frReserved, "this path is RESERVED by the platform (base player-state "
+                         + "namespace) — the server refuses the create ('path is reserved'). "
+                         + "If the dashboard lists it as a PREDEFINED field, a live registry "
+                         + "routes it to ACTIVATE instead; otherwise rename"],
             [frTaken, "this name is already taken on the dashboard (names are unique "
                       + "across ALL statuses); rename"],
             [!String(r.name || "").trim(), "the field name is required"],
@@ -965,10 +983,13 @@ function renderFields() {{
                else r.path = t; }},
         {{placeholder: "wallet.gold", size: 18,
           bad: !frPredef && (!FIELD_PATH_RE.test(pathOf(r)) || pathOf(r).length > 100
-               || pathDup(r) || frCalc || pathSegMismatch(r, pathOf) || nodeConf(r)),
+               || pathDup(r) || frCalc || frReserved || pathSegMismatch(r, pathOf) || nodeConf(r)),
           title: firstBad([
             [frCalc, "this path is a CALCULATED dashboard field — computed server-side; "
                      + "pick another path or rename"],
+            [frReserved, "this path is RESERVED by the platform — the server refuses the "
+                         + "create. If the dashboard lists it as a PREDEFINED field, a live "
+                         + "registry routes it to ACTIVATE instead; otherwise rename"],
             [!frPredef && pathDup(r), "duplicate registered path — another field (incl. "
                                       + "existing ones) already uses it"],
           ], frCalc ? "" : nodeConf(r)
@@ -1503,6 +1524,7 @@ def build_page(payload):
         resource_field_types=json.dumps(RESOURCE_FIELD_TYPES),
         resource_key_re=json.dumps(RESOURCE_KEY_RE),
         system_event_param_names=json.dumps(SYSTEM_EVENT_PARAM_NAMES),
+        reserved_field_paths=json.dumps(RESERVED_PLAYER_FIELD_PATHS),
         system_base_prop_param_names=json.dumps(SYSTEM_BASE_PROP_PARAM_NAMES),
         system_auto_param_names=json.dumps(SYSTEM_AUTO_PARAM_NAMES),
         system_param_kinds=json.dumps(SYSTEM_PARAM_KINDS),

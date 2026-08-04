@@ -51,6 +51,7 @@ single JSON object on stdout. Exit codes: 0 plan produced, 2 invalid input.
 
 import argparse
 import json
+import pathlib
 import re
 import sys
 
@@ -81,6 +82,15 @@ SYSTEM_EVENT_PARAM_NAMES = ("device_id", "level", "place", "success", "time", "t
 # The three that ride the event's BASE CLASS (SetLevel/SetPlace/Success); the other
 # four are composed by the SDK itself — the route advice differs (user 2026-08-03).
 SYSTEM_BASE_PROP_PARAM_NAMES = ("level", "place", "success")
+# Platform-reserved player-field paths (plugin-shipped backend snapshot 2026-08-04;
+# prefix semantics — see reserved-player-field-paths.json).
+RESERVED_PLAYER_FIELD_PATHS = tuple(json.loads(
+    (pathlib.Path(__file__).resolve().parent / "reserved-player-field-paths.json")
+    .read_text(encoding="utf-8"))["reserved"])
+
+
+def _reserved_field_path(path):
+    return any(path == e or path.startswith(e + ".") for e in RESERVED_PLAYER_FIELD_PATHS)
 
 # Entity surfaces this planner knows how to sync. The manifest is designed to grow
 # (feature settings, bundles, translations, ...) — any other top-level section is
@@ -507,6 +517,15 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                           "this manifest entry is classified custom; creating it would duplicate the "
                           "predefined record. Re-check the producer's predefined/custom classification.",
             })
+        if _reserved_field_path(path):
+            plan["player_fields"]["warnings"].append({
+                "path": path, "name": entry.get("name") or entry.get("property") or path,
+                "reason": "path is RESERVED by the platform (base player-state namespace, "
+                          "plugin-shipped backend snapshot) — the server refuses the create "
+                          "('path is reserved'); rename the property in code. No create is "
+                          "planned.",
+            })
+            continue
         # default_value is deliberately NOT forwarded: the live API 422-rejects it
         # for non-calculated fields, and manifest fields are code-backed, never calculated.
         item = {

@@ -461,6 +461,19 @@ function testFields(file) {
     .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "InitialDeviceOS"))
     .querySelector("button.remove").click();
 
+  // platform-reserved path (static plugin list): red offline-proof, ✕ cleans up
+  w.document.getElementById("add-field").click();
+  const rsInp = [...w.document.querySelectorAll("#player_fields input[type=text]")]
+    .find(i => i.placeholder === "Wallet.Gold" && i.value === "");
+  typeInto(w, rsInp.dataset.fid, "TimeZone");
+  check("fields: platform-reserved path turns red",
+        [...w.document.querySelectorAll("#player_fields input.bad")]
+          .some(i => (i.title || "").includes("RESERVED by the platform")));
+  check("fields: platform-reserved path blocks via validation", valErrs(w) > 0);
+  [...w.document.querySelectorAll("#player_fields .row")]
+    .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "TimeZone"))
+    .querySelector("button.remove").click();
+
   check("fields: page-added probes fully removed via ✕",
         ![...w.document.querySelectorAll("#player_fields input[type=text]")]
           .some(i => ["Wallet.Gold", "Wallet.GoldPrice"].includes(i.value)));
