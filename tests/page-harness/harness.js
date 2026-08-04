@@ -160,6 +160,10 @@ function testEvents(file) {
   check("events: the counter names the open-editor reason",
         w.document.getElementById("counter").textContent.includes("open for editing"));
   check("events: proposals header rendered", ssRow.textContent.includes("proposed additions"));
+  check("events: live-registry header line rendered",
+        w.document.getElementById("events").textContent
+          .includes("checked against the live dashboard: " + payload.predefined_wire_names.length
+            + " predefined / " + payload.debug_wire_names.length + " debug event names"));
   const ppCb = ssRow.querySelector("input.inc");
   check("events: discovered addition born ticked", !!ppCb && ppCb.checked);
   const ppRow = before.events.find(e => e.name === "session_start");

@@ -725,6 +725,13 @@ function isReservedFsColumn(n) {{
 
 function renderEvents() {{
   const host = document.getElementById("events"); host.innerHTML = "";
+  if (REGISTRIES_SOURCE === "live"
+      && ((DATA.predefined_wire_names || []).length || (DATA.debug_wire_names || []).length)) {{
+    host.insertAdjacentHTML("beforeend",
+      '<div class="muted" style="margin:0.2rem 0 0.4rem">checked against the live dashboard: '
+      + (DATA.predefined_wire_names || []).length + " predefined / "
+      + (DATA.debug_wire_names || []).length + " debug event names</div>");
+  }}
   if (REGISTRIES_SOURCE === "fallback") {{
     host.insertAdjacentHTML("beforeend",
       '<div class="muted" style="margin:0.2rem 0 0.4rem">\u26a0 event registries come from the ' +

@@ -41,6 +41,7 @@ TS = "2026-07-28T22:00:00Z"
 PAGES = {
     "e2e-events.html": {
         "payload_version": 1, "generated_at": TS, "game_id": GAME,
+        "registries_source": "live",
         "integration_type": "SDK", "predefined_wire_names": PREDEFINED,
         "debug_wire_names": DEBUG, "sdk_automatic_wire_names": SDK_AUTOMATIC,
         "events": [
