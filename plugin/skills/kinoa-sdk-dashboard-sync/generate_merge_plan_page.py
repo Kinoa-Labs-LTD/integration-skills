@@ -517,14 +517,15 @@ function head(row, label, opts = {{}}) {{
   }}
   const badge = document.createElement("span");
   badge.className = "badge " + (row.existing ? "b-existing" : (opts.labelClass || "b-new"));
-  // Events existing rows carry a proposals section — the flat "edit code-first"
-  // wording would contradict it (user question 2026-08-04).
-  badge.textContent = row.existing
-    ? (row.params !== undefined ? "already in code" : "already in code — edit code-first")
-    : label;
-  if (row.existing && row.params !== undefined) {{
-    badge.title = "measured part is read-only (edit code-first); ✎ opens the additions "
-                + "editor — ticked additions ship via a builder extension";
+  // One short status lamp everywhere (user 2026-08-04): the badge is a STATE, not an
+  // instruction — "edit code-first" lives in the hover, where each surface explains
+  // its own nuance (events rows additionally take additions via ✎).
+  badge.textContent = row.existing ? "already in code" : label;
+  if (row.existing) {{
+    badge.title = row.params !== undefined
+      ? "measured part is read-only (edit code-first); ✎ opens the additions editor — "
+        + "ticked additions ship via a builder extension"
+      : "measurement of code — edit code-first; the page cannot change it";
   }}
   div.appendChild(badge);
   (opts.extraBadges || []).forEach(b => {{
