@@ -177,7 +177,7 @@ input.bad, select.bad {{ border-color: #cf222e; background: #fff5f5; }}
 input.warnp {{ border-color: #bf8700; }}
 .badge {{ display: inline-block; font-size: 0.72rem; padding: 0.1rem 0.5rem; border-radius: 999px;
          border: 1px solid currentColor; white-space: nowrap; }}
-.b-existing {{ color: #57606a; }} .b-new {{ color: #1a7f37; }} .b-predef {{ color: #0969da; }} .b-debug {{ color: #bf8700; }} .b-user {{ color: #8250df; }} .b-system {{ color: #0e7490; }} .b-calc {{ color: #cf222e; }} .b-dash {{ color: #9a6700; }}
+.b-existing {{ color: #57606a; }} .b-new {{ color: #1a7f37; }} .b-predef {{ color: #0969da; }} .b-debug {{ color: #bf8700; }} .b-user {{ color: #8250df; }} .b-system {{ color: #0e7490; }} .b-calc {{ color: #cf222e; }} .b-dash {{ color: #9a6700; }} .b-pending {{ color: #57606a; }} .b-ext {{ color: #bf3989; }}
 button {{ font: inherit; padding: 0.35rem 0.8rem; border-radius: 6px; cursor: pointer;
          border: 1px solid #d0d7de; background: #fff; color: #1f2328; }}
 button.ghost {{ border-style: dashed; }}
@@ -516,7 +516,7 @@ function head(row, label, opts = {{}}) {{
     div.appendChild(cb);
   }}
   const badge = document.createElement("span");
-  badge.className = "badge " + (row.existing ? "b-existing" : "b-new");
+  badge.className = "badge " + (row.existing ? "b-existing" : (opts.labelClass || "b-new"));
   // Events existing rows carry a proposals section — the flat "edit code-first"
   // wording would contradict it (user question 2026-08-04).
   badge.textContent = row.existing
@@ -527,6 +527,11 @@ function head(row, label, opts = {{}}) {{
                 + "editor — ticked additions ship via a builder extension";
   }}
   div.appendChild(badge);
+  (opts.extraBadges || []).forEach(b => {{
+    const eb = document.createElement("span"); eb.className = "badge " + (b.cls || "");
+    eb.textContent = b.text; if (b.title) eb.title = b.title;
+    div.appendChild(eb);
+  }});
   const ek = row.params !== undefined ? effectiveKind(row) : row.kind;
   if (ek === "predefined") {{
     const b = document.createElement("span"); b.className = "badge b-predef"; b.textContent = "predefined";
@@ -981,17 +986,36 @@ function renderFields() {{
   const nodeConf = r => pathNodeConflict(pathOf(r), allPaths);
   state.player_fields.forEach((r, i) => {{
     const expanded = expandedRow(r, () => fieldRowInvalid(r, dup, pathDup, pathOf, nodeConf));
+    // The four field types (user 2026-08-04): user / predefined / calculated /
+    // external (bucket-fed namespace calculated_fields.* — historic name clash with
+    // the calculated listing is deliberate backend legacy). The TYPE badge replaces
+    // "new field" for non-user rows; status badges sit beside it in one row.
+    const pathNow0 = pathOf(r);
+    const tPredef = FR_PREDEF[pathNow0] !== undefined;
+    const tCalc = !tPredef && FR_CALC[pathNow0] !== undefined;
+    const tExt = !tPredef && !tCalc && String(pathNow0).startsWith("calculated_fields.");
+    const tDash = !tPredef && FR_CUSTOM[pathNow0] !== undefined;
+    const fLabel = tPredef ? "predefined" : tCalc ? "calculated" : tExt ? "external" : "new field";
+    const fCls = tPredef ? "b-predef" : tCalc ? "b-calc" : tExt ? "b-ext" : "b-new";
+    const extras = [];
+    if (!r.existing && (tPredef || tDash)) extras.push({{text: "on dashboard", cls: "b-dash",
+      title: tDash
+        ? "registered on the dashboard but nothing in code writes it — this row wires a "
+          + "code carrier; the dashboard field itself is never renamed"
+        : "built-in dashboard player field — the sync ACTIVATES it (never creates)"}});
+    if (r.existing && REGISTRIES_SOURCE === "live"
+        && !tPredef && !tCalc && !FR_CUSTOM_PATHS.has(pathNow0)) {{
+      extras.push({{text: "not on dashboard yet", cls: "b-pending",
+        title: "code carrier exists, no dashboard registration — the scoped sync at the "
+             + "end of this run will CREATE it (see the checklist)"}});
+    }}
     const div = document.createElement("div");
     div.className = "row" + (r.existing ? " locked" : "") + (!r.existing && !inc(r) ? " excluded" : "");
-    div.appendChild(head(r, "new field", {{collapsible: true, expanded: expanded,
+    div.appendChild(head(r, fLabel, {{collapsible: true, expanded: expanded,
+      labelClass: fCls, extraBadges: extras,
       onRemove: () => {{ state.player_fields.splice(state.player_fields.indexOf(r), 1); render(); }}}}));
     if (!r.existing && !expanded) {{
       const cg = document.createElement("div"); cg.className = "grid";
-      if (FR_CUSTOM[pathOf(r)] !== undefined && FR_PREDEF[pathOf(r)] === undefined) {{
-        // The adopt marker must survive collapsing (run-3 audit: 9 adopt rows were
-        // indistinguishable from genuinely-new proposals in the select-first view).
-        cg.insertAdjacentHTML("beforeend", '<span class="badge b-dash">on dashboard</span> ');
-      }}
       cg.innerHTML += "<code>" + esc(r.name || "(unnamed)") + "</code> <span class=\"muted\">" +
         esc(r.kind) + (r.kind === "enumeration" && r.extra ? " (" + esc(r.extra) + ")" : "") +
         " · → path: " + esc(pathOf(r)) +
@@ -1020,6 +1044,9 @@ function renderFields() {{
           title: firstBad([
             [frCalc, "this path is a CALCULATED dashboard field — computed server-side, "
                      + "the game cannot write it; rename if you meant a different value"],
+            [String(pathOf(r)).startsWith("calculated_fields."),
+             "external field namespace (calculated_fields.*) — values arrive from the "
+             + "data bucket; the game cannot register fields here; pick another path"],
             [frReserved, "this path is RESERVED by the platform (base player-state "
                          + "namespace) — the server refuses the create ('path is reserved'). "
                          + "If the dashboard lists it as a PREDEFINED field, a live registry "
@@ -1035,21 +1062,7 @@ function renderFields() {{
              + "(spaces stay in the dashboard Name — the C# property derives PascalCase)"],
             [String(r.name || "").length > 30, "maximum 30 characters"],
           ], "the registered snake path must be unique and 100 characters or less")}}));
-      if (frCalc) {{
-        // LIVE-known type shows its tag next to the error; a static-reserved-only hit
-        // deliberately has no tag — the constant doesn't know the kind (user 2026-08-04).
-        const b = document.createElement("span"); b.className = "badge b-calc";
-        b.textContent = "calculated";
-        b.title = "CALCULATED dashboard field — computed server-side; the game cannot "
-                + "write this path";
-        g.appendChild(b);
-      }}
       if (frPredef) {{
-        const b = document.createElement("span"); b.className = "badge b-predef";
-        b.textContent = "predefined";
-        b.title = "built-in dashboard player field — the sync ACTIVATES it (never creates); "
-                  + "the value is set via the SDK's own state route (module 02)";
-        g.appendChild(b);
         if (FR_PREDEF[pathOf(r)]) {{
           r.kind = FR_PREDEF[pathOf(r)];
           const kk = document.createElement("span"); kk.className = "muted";
@@ -1060,11 +1073,6 @@ function renderFields() {{
           g.appendChild(kindSelect(FIELD_KINDS, r.kind, v => r.kind = v, "f" + i + "-k"));
         }}
       }} else if (frDash) {{
-        const b = document.createElement("span"); b.className = "badge b-dash";
-        b.textContent = "on dashboard";
-        b.title = "registered on the dashboard but nothing in code writes it — this row "
-                + "wires a code carrier; the dashboard field itself is never renamed";
-        g.appendChild(b);
         if (frDash.kind) {{
           r.kind = frDash.kind;
           const kk = document.createElement("span"); kk.className = "muted";
@@ -1099,6 +1107,9 @@ function renderFields() {{
           title: firstBad([
             [frCalc, "this path is a CALCULATED dashboard field — computed server-side; "
                      + "pick another path or rename"],
+            [String(pathOf(r)).startsWith("calculated_fields."),
+             "external field namespace (calculated_fields.*) — values arrive from the "
+             + "data bucket; the game cannot register fields here; pick another path"],
             [frReserved, "this path is RESERVED by the platform — the server refuses the "
                          + "create. If the dashboard lists it as a PREDEFINED field, a live "
                          + "registry routes it to ACTIVATE instead; otherwise rename"],

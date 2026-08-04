@@ -492,6 +492,29 @@ function testFields(file) {
   const adInp = [...w.document.querySelectorAll("#player_fields input[type=text]")]
     .find(i => i.placeholder === "Wallet.Gold" && i.value === "");
   typeInto(w, adInp.dataset.fid, "TransactionCount");
+  // existing row absent from all live listings -> pending badge (will be created)
+  check("fields: not-on-dashboard-yet badge on the unregistered existing row",
+        [...rowByText(w, "player_fields", "EpisodeNumber").querySelectorAll(".badge")]
+          .some(b => b.textContent === "not on dashboard yet"));
+  // external namespace: type badge replaces "new field", red with its own message
+  w.document.getElementById("add-field").click();
+  const exInp = [...w.document.querySelectorAll("#player_fields input[type=text]")]
+    .find(i => i.placeholder === "Wallet.Gold" && i.value === "");
+  typeInto(w, exInp.dataset.fid, "BucketFoo");
+  const exRow = [...w.document.querySelectorAll("#player_fields .row")]
+    .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "BucketFoo"));
+  const exPath = [...exRow.querySelectorAll("input[type=text]")].find(i => i.value === "bucket_foo");
+  // one-shot set: clearing first would snap the override back to the derived path
+  exPath.value = "calculated_fields.foo";
+  exPath.dispatchEvent(new w.Event("input", { bubbles: true }));
+  check("fields: external namespace shows the external type badge and reds",
+        [...w.document.querySelectorAll("#player_fields .badge")]
+          .some(b => b.textContent === "external")
+        && [...w.document.querySelectorAll("#player_fields input.bad")]
+          .some(i => (i.title || "").includes("external field namespace")));
+  [...w.document.querySelectorAll("#player_fields .row")]
+    .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "BucketFoo"))
+    .querySelector("button.remove").click();
   check("fields: live-registry header line rendered",
         w.document.getElementById("player_fields").textContent
           .includes("checked against the live dashboard: 1 predefined / 1 calculated / 1 custom"));
@@ -501,6 +524,14 @@ function testFields(file) {
         [...rowByText(w, "player_fields", "transaction_count").querySelectorAll(".badge")]
           .some(b => b.textContent === "on dashboard"));
   clickPencil(w, "player_fields", "transaction_count");
+  check("fields: adopt head carries the badge pair in one row",
+        (() => {
+          const adRow2 = [...w.document.querySelectorAll("#player_fields .row")]
+            .find(d => [...d.querySelectorAll("input[type=text]")]
+              .some(i => i.value === "TransactionCount"));
+          const hs = [...adRow2.querySelectorAll(".badge")].map(b => b.textContent);
+          return hs.includes("on dashboard") && hs.includes("new field");
+        })());
   check("fields: adopt row shows the on-dashboard badge + pinned kind",
         [...w.document.querySelectorAll("#player_fields .badge")]
           .some(b => b.textContent === "on dashboard")
