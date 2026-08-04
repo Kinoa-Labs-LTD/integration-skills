@@ -177,7 +177,7 @@ input.bad, select.bad {{ border-color: #cf222e; background: #fff5f5; }}
 input.warnp {{ border-color: #bf8700; }}
 .badge {{ display: inline-block; font-size: 0.72rem; padding: 0.1rem 0.5rem; border-radius: 999px;
          border: 1px solid currentColor; white-space: nowrap; }}
-.b-existing {{ color: #57606a; }} .b-new {{ color: #1a7f37; }} .b-predef {{ color: #0969da; }} .b-debug {{ color: #bf8700; }} .b-user {{ color: #8250df; }} .b-system {{ color: #0e7490; }} .b-calc {{ color: #cf222e; }} .b-dash {{ color: #9a6700; }} .b-pending {{ color: #57606a; }} .b-ext {{ color: #bf3989; }}
+.b-existing {{ color: #57606a; }} .b-new {{ color: #1a7f37; }} .b-predef {{ color: #0969da; }} .b-debug {{ color: #bf8700; }} .b-user {{ color: #8250df; }} .b-system {{ color: #0e7490; }} .b-calc {{ color: #cf222e; }} .b-dash {{ color: #9a6700; }} .b-ext {{ color: #bf3989; }}
 button {{ font: inherit; padding: 0.35rem 0.8rem; border-radius: 6px; cursor: pointer;
          border: 1px solid #d0d7de; background: #fff; color: #1f2328; }}
 button.ghost {{ border-style: dashed; }}
@@ -1003,12 +1003,6 @@ function renderFields() {{
         ? "registered on the dashboard but nothing in code writes it — this row wires a "
           + "code carrier; the dashboard field itself is never renamed"
         : "built-in dashboard player field — the sync ACTIVATES it (never creates)"}});
-    if (r.existing && REGISTRIES_SOURCE === "live"
-        && !tPredef && !tCalc && !FR_CUSTOM_PATHS.has(pathNow0)) {{
-      extras.push({{text: "not on dashboard yet", cls: "b-pending",
-        title: "code carrier exists, no dashboard registration — the scoped sync at the "
-             + "end of this run will CREATE it (see the checklist)"}});
-    }}
     const div = document.createElement("div");
     div.className = "row" + (r.existing ? " locked" : "") + (!r.existing && !inc(r) ? " excluded" : "");
     div.appendChild(head(r, fLabel, {{collapsible: true, expanded: expanded,

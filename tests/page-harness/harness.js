@@ -492,10 +492,6 @@ function testFields(file) {
   const adInp = [...w.document.querySelectorAll("#player_fields input[type=text]")]
     .find(i => i.placeholder === "Wallet.Gold" && i.value === "");
   typeInto(w, adInp.dataset.fid, "TransactionCount");
-  // existing row absent from all live listings -> pending badge (will be created)
-  check("fields: not-on-dashboard-yet badge on the unregistered existing row",
-        [...rowByText(w, "player_fields", "EpisodeNumber").querySelectorAll(".badge")]
-          .some(b => b.textContent === "not on dashboard yet"));
   // external namespace: type badge replaces "new field", red with its own message
   w.document.getElementById("add-field").click();
   const exInp = [...w.document.querySelectorAll("#player_fields input[type=text]")]
