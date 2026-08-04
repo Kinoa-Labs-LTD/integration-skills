@@ -482,6 +482,46 @@ function testFields(file) {
     .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "InitialDeviceOS"))
     .querySelector("button.remove").click();
 
+  // "on dashboard" ADOPT route: badge + pinned kind + read-only description; the
+  // hand-back carries dashboard_field: true and the dashboard's description.
+  w.document.getElementById("add-field").click();
+  const adInp = [...w.document.querySelectorAll("#player_fields input[type=text]")]
+    .find(i => i.placeholder === "Wallet.Gold" && i.value === "");
+  typeInto(w, adInp.dataset.fid, "TransactionCount");
+  check("fields: live-registry header line rendered",
+        w.document.getElementById("player_fields").textContent
+          .includes("checked against the live dashboard: 1 predefined / 1 calculated / 1 custom"));
+  // collapse the adopt probe: the badge must survive the select-first view
+  rowByText(w, "player_fields", "wires a code carrier").querySelector("button.pencil").click();
+  check("fields: adopt badge visible on the COLLAPSED row",
+        [...rowByText(w, "player_fields", "transaction_count").querySelectorAll(".badge")]
+          .some(b => b.textContent === "on dashboard"));
+  clickPencil(w, "player_fields", "transaction_count");
+  check("fields: adopt row shows the on-dashboard badge + pinned kind",
+        [...w.document.querySelectorAll("#player_fields .badge")]
+          .some(b => b.textContent === "on dashboard")
+        && w.document.getElementById("player_fields").textContent.includes("number (fixed)"));
+  check("fields: adopt row shows the dashboard description read-only",
+        w.document.getElementById("player_fields").textContent
+          .includes("description (dashboard): Total number of IAP transactions."));
+  check("fields: adopt row is valid (name taken-check exempted by the path match)",
+        valErrs(w) === 0);
+  const adRow = exportPlan(w).player_fields.find(f => f.name === "TransactionCount");
+  check("fields: adopt row ships dashboard_field + pinned kind + dashboard description",
+        adRow && adRow.dashboard_field === true && adRow.kind === "number"
+        && adRow.description === "Total number of IAP transactions.",
+        JSON.stringify(adRow));
+  // editing the path opts OUT of adoption (dashboard field is never renamed)
+  const adPath = [...rowByText(w, "player_fields", "wires a code carrier")
+    .querySelectorAll("input[type=text]")].find(i => i.value === "transaction_count");
+  typeInto(w, adPath.dataset.fid, "transaction_count_v2");
+  check("fields: editing the path opts out of adoption",
+        ![...w.document.querySelectorAll("#player_fields .badge")]
+          .some(b => b.textContent === "on dashboard"));
+  [...w.document.querySelectorAll("#player_fields .row")]
+    .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "TransactionCount"))
+    .querySelector("button.remove").click();
+
   // spaced display name: property derives PascalCase, path snake, all three ship
   w.document.getElementById("add-field").click();
   const spInp = [...w.document.querySelectorAll("#player_fields input[type=text]")]

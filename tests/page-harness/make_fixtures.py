@@ -63,10 +63,14 @@ PAGES = {
              "params": [{"name": "level", "kind": "string", "extra": ""}]}]},
     "e2e-fields.html": {
         "payload_version": 1, "generated_at": TS, "game_id": GAME,
+        "registries_source": "live",
         "dashboard_field_registry": {
             "predefined": [{"path": "level", "kind": "number"}],
             "calculated": [{"path": "days_since_install", "kind": "number"}],
             "custom_paths": ["transaction_count"],
+            "custom_fields": [{"path": "transaction_count", "kind": "number",
+                               "name": "TransactionCount",
+                               "description": "Total number of IAP transactions."}],
             "names": ["Level", "Days since install", "TransactionCount"]},
         "player_fields": [
             # String ids on purpose: producers mint "pf-ex-1"-style ids; the page's

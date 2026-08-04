@@ -177,7 +177,7 @@ input.bad, select.bad {{ border-color: #cf222e; background: #fff5f5; }}
 input.warnp {{ border-color: #bf8700; }}
 .badge {{ display: inline-block; font-size: 0.72rem; padding: 0.1rem 0.5rem; border-radius: 999px;
          border: 1px solid currentColor; white-space: nowrap; }}
-.b-existing {{ color: #57606a; }} .b-new {{ color: #1a7f37; }} .b-predef {{ color: #0969da; }} .b-debug {{ color: #bf8700; }} .b-user {{ color: #8250df; }} .b-system {{ color: #0e7490; }} .b-calc {{ color: #cf222e; }}
+.b-existing {{ color: #57606a; }} .b-new {{ color: #1a7f37; }} .b-predef {{ color: #0969da; }} .b-debug {{ color: #bf8700; }} .b-user {{ color: #8250df; }} .b-system {{ color: #0e7490; }} .b-calc {{ color: #cf222e; }} .b-dash {{ color: #9a6700; }}
 button {{ font: inherit; padding: 0.35rem 0.8rem; border-radius: 6px; cursor: pointer;
          border: 1px solid #d0d7de; background: #fff; color: #1f2328; }}
 button.ghost {{ border-style: dashed; }}
@@ -277,6 +277,13 @@ const FR_PREDEF = {{}};
 const FR_CALC = {{}};
 (FIELD_REGISTRY.calculated || []).forEach(e => {{ if (e && e.path) FR_CALC[e.path] = e.kind || ""; }});
 const FR_CUSTOM_PATHS = new Set(FIELD_REGISTRY.custom_paths || []);
+// Rich custom-field records (append-only key custom_fields, 2026-08-04): power the
+// "on dashboard" ADOPT route — a field registered on the dashboard with no code
+// carrier gets kind pinned + read-only description; the row wires the carrier.
+const FR_CUSTOM = {{}};
+(FIELD_REGISTRY.custom_fields || []).forEach(e => {{
+  if (e && e.path) {{ FR_CUSTOM[e.path] = e; FR_CUSTOM_PATHS.add(e.path); }}
+}});
 const FR_NAMES = new Set((FIELD_REGISTRY.names || []).map(n => String(n).trim().toLowerCase()));
 const PAYLOAD_VERSION = {payload_version};
 const DATA_VERSION = DATA.payload_version || 1;
@@ -606,6 +613,12 @@ function pathSegMismatch(r, pathOf) {{
   return pathOf(r).split(".").length !== propOf(r).split(".").length;
 }}
 function fieldRowInvalid(r, dup, pathDup, pathOf, nodeConf) {{
+  if (FR_CUSTOM[pathOf(r)] !== undefined && FR_PREDEF[pathOf(r)] === undefined) {{
+    // ADOPT route: kind/description are pinned by the dashboard record — only the
+    // C# name shape is the developer's to get right.
+    return !String(r.name || "").trim() || dup(r.name)
+      || !FIELD_NAME_RE.test(String(r.name || "").trim()) || String(r.name || "").length > 30;
+  }}
   if (FR_PREDEF[pathOf(r)] !== undefined) {{
     // predefined dashboard field: valid candidate; only name-shape rules apply
     return !String(r.name || "").trim() || dup(r.name)
@@ -936,6 +949,18 @@ function renderEvents() {{
 
 function renderFields() {{
   const host = document.getElementById("player_fields"); host.innerHTML = "";
+  // A LIVE registry announces itself (run-3 audit UX: on a silent page a non-hit read
+  // as "nothing was checked" — now the absence of badges is informative).
+  if (REGISTRIES_SOURCE === "live" && ((FIELD_REGISTRY.predefined || []).length
+      || (FIELD_REGISTRY.calculated || []).length)) {{
+    host.insertAdjacentHTML("beforeend",
+      '<div class="muted" style="margin:0.2rem 0 0.4rem">checked against the live dashboard: '
+      + (FIELD_REGISTRY.predefined || []).length + " predefined / "
+      + (FIELD_REGISTRY.calculated || []).length + " calculated / "
+      + ((FIELD_REGISTRY.custom_fields && FIELD_REGISTRY.custom_fields.length)
+         || (FIELD_REGISTRY.custom_paths || []).length)
+      + " custom fields</div>");
+  }}
   const shipped = state.player_fields.filter(r => r.existing || inc(r));
   const dup = dupNames(shipped, "name");
   const pathCount = new Map();
@@ -955,7 +980,12 @@ function renderFields() {{
       onRemove: () => {{ state.player_fields.splice(state.player_fields.indexOf(r), 1); render(); }}}}));
     if (!r.existing && !expanded) {{
       const cg = document.createElement("div"); cg.className = "grid";
-      cg.innerHTML = "<code>" + esc(r.name || "(unnamed)") + "</code> <span class=\"muted\">" +
+      if (FR_CUSTOM[pathOf(r)] !== undefined && FR_PREDEF[pathOf(r)] === undefined) {{
+        // The adopt marker must survive collapsing (run-3 audit: 9 adopt rows were
+        // indistinguishable from genuinely-new proposals in the select-first view).
+        cg.insertAdjacentHTML("beforeend", '<span class="badge b-dash">on dashboard</span> ');
+      }}
+      cg.innerHTML += "<code>" + esc(r.name || "(unnamed)") + "</code> <span class=\"muted\">" +
         esc(r.kind) + (r.kind === "enumeration" && r.extra ? " (" + esc(r.extra) + ")" : "") +
         " · → path: " + esc(pathOf(r)) +
         (r.description ? " · " + esc(r.description) : "") + "</span>";
@@ -973,6 +1003,7 @@ function renderFields() {{
       const frCalc = FR_CALC[pathOf(r)] !== undefined;
       const frTaken = fieldTakenName(r, pathOf);
       const frReserved = !frPredef && reservedFieldPath(pathOf(r));
+      const frDash = !frPredef ? FR_CUSTOM[pathOf(r)] : undefined;
       g.appendChild(textInput(r.name, "f" + i, v => {{ r.name = v; delete r.path; }},
         {{placeholder: "Wallet.Gold", size: 26, maxlength: 30,
           bad: !String(r.name || "").trim() || dup(r.name) || (!frPredef && pathDup(r))
@@ -1021,6 +1052,21 @@ function renderFields() {{
         }} else {{
           g.appendChild(kindSelect(FIELD_KINDS, r.kind, v => r.kind = v, "f" + i + "-k"));
         }}
+      }} else if (frDash) {{
+        const b = document.createElement("span"); b.className = "badge b-dash";
+        b.textContent = "on dashboard";
+        b.title = "registered on the dashboard but nothing in code writes it — this row "
+                + "wires a code carrier; the dashboard field itself is never renamed";
+        g.appendChild(b);
+        if (frDash.kind) {{
+          r.kind = frDash.kind;
+          const kk = document.createElement("span"); kk.className = "muted";
+          kk.textContent = r.kind + " (fixed)";
+          kk.title = "the kind is pinned by the existing dashboard field";
+          g.appendChild(kk);
+        }} else {{
+          g.appendChild(kindSelect(FIELD_KINDS, r.kind, v => r.kind = v, "f" + i + "-k"));
+        }}
       }} else {{
         g.appendChild(kindSelect(FIELD_KINDS, r.kind, v => r.kind = v, "f" + i + "-k"));
       }}
@@ -1062,7 +1108,20 @@ function renderFields() {{
                      + "Wallet.Gold can map to wallet.gold_amount, not to a deeper path)"
                    : "letter first; letters, digits, _, - and dot separators; unique "
                      + "across existing fields; maximum 100 characters")}}));
-      if (!frPredef && FR_CUSTOM_PATHS.has(pathOf(r))) {{
+      if (frDash) {{
+        const ex = document.createElement("span"); ex.className = "muted";
+        ex.textContent = "wires a code carrier for the existing dashboard field — no create; "
+          + "editing the path opts OUT of adoption (the dashboard field is never renamed)";
+        g.appendChild(ex);
+        if (frDash.description) {{
+          r.description = frDash.description;
+          const dx = document.createElement("span"); dx.className = "muted";
+          dx.textContent = "description (dashboard): " + frDash.description;
+          dx.title = "lives on the dashboard — page edits would not propagate (the sync "
+                   + "never rewrites an existing field's description), so it is read-only";
+          g.appendChild(dx);
+        }}
+      }} else if (!frPredef && FR_CUSTOM_PATHS.has(pathOf(r))) {{
         const ex = document.createElement("span"); ex.className = "muted";
         ex.textContent = "already registered on the dashboard — the sync will activate/skip, not create";
         g.appendChild(ex);
@@ -1075,7 +1134,7 @@ function renderFields() {{
               [!String(r.extra || "").trim(), "an enumeration needs at least one value"],
             ], "each value must be 50 characters or less")}}));
       }}
-      if (!frPredef && !frCalc) {{
+      if (!frPredef && !frCalc && !frDash) {{
         g.appendChild(textInput(r.description, "f" + i + "-d", v => r.description = v,
           {{placeholder: "description (optional)", size: 24}}));
       }}
@@ -1525,6 +1584,13 @@ function exportJson() {{
       // Append-only marker: the sync ACTIVATES the dashboard's predefined field —
       // implementation takes the module-02 SDK-state route, never a custom create.
       if (FR_PREDEF[p] !== undefined) out.predefined_field = true;
+      else if (FR_CUSTOM[p] !== undefined) {{
+        // ADOPT marker (append-only, 2026-08-04): wire a code carrier for the existing
+        // dashboard field — the sync sees already_ok, never a create.
+        out.dashboard_field = true;
+        if (FR_CUSTOM[p].kind) out.kind = FR_CUSTOM[p].kind;
+        if (FR_CUSTOM[p].description) out.description = FR_CUSTOM[p].description;
+      }}
       return out;
     }}),
     feature_settings: {{schemas: state.feature_settings.schemas.filter(keep)

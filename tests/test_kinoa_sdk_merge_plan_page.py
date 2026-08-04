@@ -247,7 +247,7 @@ class MergePlanPageTests(unittest.TestCase):
         # the path input carries the live derived value; its placeholder was dropped —
         # "auto (snake...)" read as "auto and snake are mandatory" (user 2026-08-04)
         self.assertNotIn("auto (snake of the name)", html)
-        self.assertIn("if (!frPredef && !frCalc) {", html)
+        self.assertIn("if (!frPredef && !frCalc && !frDash) {", html)
         self.assertIn("pathNodeConflict", html)                        # leaf/object conflict red
         # Context-aware validation tooltips (2026-08-03): the first failing condition
         # names itself — a duplicate no longer shows "maximum 30 characters".
@@ -274,6 +274,9 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn("session_data", html)
         self.assertIn("RESERVED by the platform", html)
         self.assertIn("UNDO = [], REDO = []", html)   # ⌘Z whole-state history (2026-08-04)
+        # "on dashboard" adopt route (2026-08-04): rich custom_fields registry
+        self.assertIn("dashboard_field = true", html.replace("out.dashboard_field = true", "dashboard_field = true"))
+        self.assertIn('"on dashboard"', html)
         self.assertIn("measured part is read-only", html)
         self.assertNotIn('prev.textContent = "\u2192 path: "', html.replace("→", "\\u2192"))
         # FS column checkbox trial (2026-07-29): unticked columns dim + leave the plan
