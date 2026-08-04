@@ -80,7 +80,11 @@ PAGES = {
              "source": "CustomPlayerState.cs:18", "path": "episode_number",
              "description": "current episode"},
             {"id": "pf-new-1", "name": "LastRaceAt", "kind": "date", "extra": "", "existing": False,
-             "source": "GameStateService.cs:77", "path": "last_race_at"}]},
+             "source": "GameStateService.cs:77", "path": "last_race_at"},
+            # predefined_in_use base write: read-only visibility row (2026-08-04)
+            {"id": "pf-piu-1", "name": "PersonalInfo.CountryCode", "kind": "string", "extra": "",
+             "existing": True, "predefined_in_use": True, "path": "personal_info.country_code",
+             "source": "KinoaGameEventBuildingService.cs:125"}]},
     "e2e-fs.html": {
         "payload_version": 1, "generated_at": TS, "game_id": GAME,
         "feature_settings": {

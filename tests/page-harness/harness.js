@@ -511,6 +511,20 @@ function testFields(file) {
   [...w.document.querySelectorAll("#player_fields .row")]
     .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "BucketFoo"))
     .querySelector("button.remove").click();
+  // existing rows carry the type lamp: user customs vs predefined_in_use base writes
+  check("fields: existing custom row shows already-in-code + user",
+        (() => {
+          const bs = [...rowByText(w, "player_fields", "EpisodeNumber").querySelectorAll(".badge")]
+            .map(b => b.textContent);
+          return bs.includes("already in code") && bs.includes("user");
+        })());
+  check("fields: predefined_in_use row shows already-in-code + predefined",
+        (() => {
+          const row = [...w.document.querySelectorAll("#player_fields .row")]
+            .find(d => d.textContent.includes("KinoaGameEventBuildingService.cs:125"));
+          const bs = row ? [...row.querySelectorAll(".badge")].map(b => b.textContent) : [];
+          return bs.includes("already in code") && bs.includes("predefined");
+        })());
   check("fields: live-registry header line rendered",
         w.document.getElementById("player_fields").textContent
           .includes("checked against the live dashboard: 1 predefined / 1 calculated / 1 custom"));

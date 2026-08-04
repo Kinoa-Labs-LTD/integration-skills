@@ -999,6 +999,17 @@ function renderFields() {{
     const fLabel = tPredef ? "predefined" : tCalc ? "calculated" : tExt ? "external" : "new field";
     const fCls = tPredef ? "b-predef" : tCalc ? "b-calc" : tExt ? "b-ext" : "b-new";
     const extras = [];
+    if (r.existing) {{
+      // Type badge for existing rows (2026-08-04): predefined_in_use base writes now
+      // render as read-only rows, so the type became a VARIABLE worth a lamp.
+      const exPredef = r.predefined_in_use === true || tPredef;
+      extras.push({{text: exPredef ? "predefined" : "user",
+        cls: exPredef ? "b-predef" : "b-user",
+        title: exPredef
+          ? "base-class dashboard field the game already writes (module 02 route) — "
+            + "shown for visibility; the sync ACTIVATES it, the page takes no action"
+          : "custom player field carried by CustomPlayerState"}});
+    }}
     if (!r.existing && (tPredef || tDash)) extras.push({{text: "on dashboard", cls: "b-dash",
       title: tDash
         ? "registered on the dashboard but nothing in code writes it — this row wires a "
