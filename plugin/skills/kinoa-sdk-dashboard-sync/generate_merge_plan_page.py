@@ -177,7 +177,7 @@ input.bad, select.bad {{ border-color: #cf222e; background: #fff5f5; }}
 input.warnp {{ border-color: #bf8700; }}
 .badge {{ display: inline-block; font-size: 0.72rem; padding: 0.1rem 0.5rem; border-radius: 999px;
          border: 1px solid currentColor; white-space: nowrap; }}
-.b-existing {{ color: #57606a; }} .b-new {{ color: #1a7f37; }} .b-predef {{ color: #0969da; }} .b-debug {{ color: #bf8700; }} .b-user {{ color: #8250df; }} .b-system {{ color: #0e7490; }}
+.b-existing {{ color: #57606a; }} .b-new {{ color: #1a7f37; }} .b-predef {{ color: #0969da; }} .b-debug {{ color: #bf8700; }} .b-user {{ color: #8250df; }} .b-system {{ color: #0e7490; }} .b-calc {{ color: #cf222e; }}
 button {{ font: inherit; padding: 0.35rem 0.8rem; border-radius: 6px; cursor: pointer;
          border: 1px solid #d0d7de; background: #fff; color: #1f2328; }}
 button.ghost {{ border-style: dashed; }}
@@ -955,6 +955,15 @@ function renderFields() {{
              "must be a dot-separated C# property chain (letters, digits, _)"],
             [String(r.name || "").length > 30, "maximum 30 characters"],
           ], "the registered snake path must be unique and 100 characters or less")}}));
+      if (frCalc) {{
+        // LIVE-known type shows its tag next to the error; a static-reserved-only hit
+        // deliberately has no tag — the constant doesn't know the kind (user 2026-08-04).
+        const b = document.createElement("span"); b.className = "badge b-calc";
+        b.textContent = "calculated";
+        b.title = "CALCULATED dashboard field — computed server-side; the game cannot "
+                + "write this path";
+        g.appendChild(b);
+      }}
       if (frPredef) {{
         const b = document.createElement("span"); b.className = "badge b-predef";
         b.textContent = "predefined";

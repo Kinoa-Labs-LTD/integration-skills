@@ -470,6 +470,12 @@ function testFields(file) {
         [...w.document.querySelectorAll("#player_fields input.bad")]
           .some(i => (i.title || "").includes("RESERVED by the platform")));
   check("fields: platform-reserved path blocks via validation", valErrs(w) > 0);
+  check("fields: static-reserved-only hit has NO type tag (kind unknown)", (() => {
+    const probe = [...w.document.querySelectorAll("#player_fields .row")]
+      .find(d => [...d.querySelectorAll("input[type=text]")].some(i2 => i2.value === "TimeZone"));
+    return !!probe && ![...probe.querySelectorAll(".badge")]
+      .some(b => ["calculated", "predefined"].includes(b.textContent));
+  })());
   [...w.document.querySelectorAll("#player_fields .row")]
     .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "TimeZone"))
     .querySelector("button.remove").click();
@@ -499,6 +505,10 @@ function testFields(file) {
   typeInto(w, [...w.document.querySelectorAll("#player_fields input[type=text]")]
     .find(i => i.value === "Level").dataset.fid, "DaysSinceInstall");
   check("fields: calculated dashboard path blocks the export", gateBlocked(w));
+  check("fields: calculated match shows its type tag next to the error",
+        [...w.document.querySelectorAll("#player_fields .badge")]
+          .some(b => b.textContent === "calculated"));
+
   // taken name (different path) = red
   typeInto(w, [...w.document.querySelectorAll("#player_fields input[type=text]")]
     .find(i => i.value === "DaysSinceInstall").dataset.fid, "Level2");
