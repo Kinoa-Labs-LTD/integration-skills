@@ -1031,7 +1031,11 @@ function renderFields() {{
         g.insertAdjacentHTML("beforeend",
           "<span class=\"muted\">\u2192 C# <code>" + esc(propOf(r)) + "</code></span>");
       }}
-      g.insertAdjacentHTML("beforeend", "<span class=\"muted\">\u2192 path</span>");
+      g.insertAdjacentHTML("beforeend", "<span class=\"muted\" title=\"auto-derived "
+        + "as snake_case of the C# property; editing it stores an override, implemented as "
+        + "[JsonPropertyName] on the property (per segment) — the serialized key follows "
+        + "the attribute, so the wire data and the registration stay identical\">"
+        + "\u2192 path</span>");
       g.appendChild(textInput(pathOf(r), "f" + i + "-p",
         v => {{ const t = String(v || "").trim();
                if (!t || t === snake(propOf(r))) delete r.path;
@@ -1057,10 +1061,7 @@ function renderFields() {{
                      + "must match (nesting depth comes from nested properties: name "
                      + "Wallet.Gold can map to wallet.gold_amount, not to a deeper path)"
                    : "letter first; letters, digits, _, - and dot separators; unique "
-                     + "across existing fields; maximum 100 characters. An override is "
-                     + "implemented as [JsonPropertyName] on the property (per segment) — "
-                     + "the serialized key follows the attribute, so the wire data and the "
-                     + "registration stay identical")}}));
+                     + "across existing fields; maximum 100 characters")}}));
       if (!frPredef && FR_CUSTOM_PATHS.has(pathOf(r))) {{
         const ex = document.createElement("span"); ex.className = "muted";
         ex.textContent = "already registered on the dashboard — the sync will activate/skip, not create";
