@@ -190,7 +190,10 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertNotIn('req.title = "required"', html)
         self.assertNotIn("\u00b7 required", html)
         self.assertNotIn("· required", html)
-        self.assertGreaterEqual(html.count("// echoed verbatim"), 4)   # all four surfaces
+        # events' existing branch has its own wording since proposed-additions (2026-08-04)
+        self.assertGreaterEqual(html.count("// echoed verbatim"), 3)   # fields/fs/resources
+        self.assertIn("Measured part echoes verbatim", html)           # events
+
         # Resources audit round 2 (2026-07-28): carrier guards + raw enum editing
         self.assertIn("RES_FIELD_NAME_RE", html)                       # field-name charset
         self.assertIn("resEnumBad", html)                              # enum ':'/'=' guard
@@ -241,7 +244,9 @@ class MergePlanPageTests(unittest.TestCase):
         # Separate Name/Path inputs (2026-07-30): path auto-derives, override-able,
         # registry-checked; description hidden for predefined/calculated matches.
         self.assertIn("FIELD_PATH_RE", html)
-        self.assertIn('placeholder: "auto (snake of the name)"', html)
+        # the path input carries the live derived value; its placeholder was dropped —
+        # "auto (snake...)" read as "auto and snake are mandatory" (user 2026-08-04)
+        self.assertNotIn("auto (snake of the name)", html)
         self.assertIn("if (!frPredef && !frCalc) {", html)
         self.assertIn("pathNodeConflict", html)                        # leaf/object conflict red
         # Context-aware validation tooltips (2026-08-03): the first failing condition
@@ -259,6 +264,12 @@ class MergePlanPageTests(unittest.TestCase):
         # existing rows never get the system-kind retype; they warn instead (2026-08-03)
         self.assertIn("reserved system name measured as a custom param", html)
         self.assertIn("✕ remove", html)
+        # proposed additions on existing event rows (2026-08-04): editable, unticked,
+        # ship via the append-only proposed_params key; badge wording adjusted.
+        self.assertIn("proposed_params", html)
+        self.assertIn('<span class="badge b-new">addition</span>', html)
+        self.assertIn("delete this param", html)   # ✕ on hand-added params (2026-08-04)
+        self.assertIn("measured part is read-only", html)
         self.assertNotIn('prev.textContent = "\u2192 path: "', html.replace("→", "\\u2192"))
         # FS column checkbox trial (2026-07-29): unticked columns dim + leave the plan
         self.assertIn('ccb.title = "include this column"', html)

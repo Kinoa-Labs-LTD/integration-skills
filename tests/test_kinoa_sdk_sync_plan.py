@@ -84,10 +84,12 @@ class BuildPlanTests(unittest.TestCase):
         self.mod = _load_module()
 
     def _plan(self, manifest, ev_predef=(), ev_custom=(), ev_deleted=(),
-              pf_predef=(), pf_custom=(), pf_deleted=(), fs_schemas=(), fs_settings=()):
+              pf_predef=(), pf_custom=(), pf_deleted=(), fs_schemas=(), fs_settings=(),
+              pf_calculated=()):
         return self.mod.build_plan(manifest, list(ev_predef), list(ev_custom), list(ev_deleted),
                                    list(pf_predef), list(pf_custom), list(pf_deleted),
-                                   list(fs_schemas), list(fs_settings))
+                                   list(fs_schemas), list(fs_settings),
+                                   pf_calculated=list(pf_calculated))
 
     # ---- events: predefined ----
 
@@ -260,6 +262,21 @@ class BuildPlanTests(unittest.TestCase):
         self.assertTrue(any(w.get("param") == "wifi" and "SDK composes it" in w.get("reason", "")
                             for w in plan["events"]["warnings"]))
         self.assertEqual(plan["events"]["add_params"], [])
+
+    def test_calculated_path_collision_warns_and_skips_create(self):
+        # types=CALCULATED listing (the per-record flag is dead — always false);
+        # a manifest path colliding with a calculated path must never plan a create.
+        manifest = _manifest()
+        manifest["player_fields"]["custom"] = [
+            {"path": "initial_device_os", "kind": "string"},
+            {"path": "win_streak_custom", "kind": "number"}]
+        pf = self._plan(manifest, pf_calculated=[
+            {"id": "c1", "name": "Initial Device OS", "path": "initial_device_os",
+             "kind": "string", "type": "CALCULATED", "calculated": False}])["player_fields"]
+        self.assertEqual([c["path"] for c in pf["create"]], ["win_streak_custom"])
+        self.assertTrue(any("reserved by a CALCULATED" in w.get("reason", "")
+                            and w.get("path") == "initial_device_os"
+                            for w in pf["warnings"]))
 
     def test_leaf_object_path_conflict_warns(self):
         manifest = _manifest()

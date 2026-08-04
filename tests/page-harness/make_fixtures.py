@@ -45,7 +45,8 @@ PAGES = {
         "debug_wire_names": DEBUG, "sdk_automatic_wire_names": SDK_AUTOMATIC,
         "events": [
             {"id": 1, "kind": "predefined", "name": "session_start", "existing": True,
-             "source": "KinoaGameController.cs:41", "params": []},
+             "source": "KinoaGameController.cs:41", "params": [],
+             "proposed_params": [{"name": "session_source", "kind": "string", "extra": ""}]},
             {"id": 2, "kind": "custom", "name": "race_finished", "existing": False,
              "source": "GameStateService.cs:130",
              "params": [{"name": "position", "kind": "number", "extra": ""}]},
@@ -68,10 +69,12 @@ PAGES = {
             "custom_paths": ["transaction_count"],
             "names": ["Level", "Days since install", "TransactionCount"]},
         "player_fields": [
-            {"id": 1, "name": "EpisodeNumber", "kind": "number", "extra": "", "existing": True,
+            # String ids on purpose: producers mint "pf-ex-1"-style ids; the page's
+            # add-row counter must stay numeric-robust (id: null regression, demo-b).
+            {"id": "pf-ex-1", "name": "EpisodeNumber", "kind": "number", "extra": "", "existing": True,
              "source": "CustomPlayerState.cs:18", "path": "episode_number",
              "description": "current episode"},
-            {"id": 2, "name": "LastRaceAt", "kind": "date", "extra": "", "existing": False,
+            {"id": "pf-new-1", "name": "LastRaceAt", "kind": "date", "extra": "", "existing": False,
              "source": "GameStateService.cs:77", "path": "last_race_at"}]},
     "e2e-fs.html": {
         "payload_version": 1, "generated_at": TS, "game_id": GAME,

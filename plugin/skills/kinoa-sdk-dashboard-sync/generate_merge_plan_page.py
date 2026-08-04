@@ -186,6 +186,7 @@ table.sub tr.removedp code {{ text-decoration: line-through; }}
 input.inc {{ width: 1.05rem; height: 1.05rem; accent-color: #1f883d; }}
 .grid > button.pencil {{ margin-left: auto; padding: 0.15rem 0.6rem; font-size: 0.85rem; }}
 .grid > button.remove {{ margin-left: 0.35rem; padding: 0.15rem 0.6rem; font-size: 0.85rem; color: #c0392b; }}
+table.sub button.remove {{ color: #c0392b; padding: 0 0.45rem; font-size: 0.85rem; }}
 table.sub {{ width: 100%; border-collapse: collapse; margin-top: 0.4rem; }}
 table.sub td {{ padding: 0.15rem 0.3rem; }}
 footer {{ position: fixed; bottom: 0; left: 0; right: 0; background: #1f2328; color: #fff;
@@ -304,9 +305,26 @@ state.events.forEach(r => {{ if (r.existing) return; (r.params || []).forEach(p 
   const t = String(p.name || "").trim();
   if (SYSTEM_PARAM_KINDS[t] !== undefined) p.kind = SYSTEM_PARAM_KINDS[t];
 }}); }});
+// Proposed additions (user decision 2026-08-04): an existing EVENT row may carry
+// evidence-backed NEW-param proposals. Unlike the measured part they are editable,
+// born UNTICKED, and ship only when ticked (append-only key proposed_params) — the
+// implementation routes them through module 04's State-2 builder extension.
+state.events.forEach(r => {{
+  if (!(r.proposed_params || []).length) return;
+  r.editing = true;  // discovered additions open the row in edit mode (user 2026-08-04)
+  r.proposed_params.forEach(p => {{
+    p._proposed = true;
+    p.included = p.included !== false;  // born ticked; ✓ done confirms, untick drops
+    const t = String(p.name || "").trim();
+    if (SYSTEM_PARAM_KINDS[t] !== undefined) p.kind = SYSTEM_PARAM_KINDS[t];
+  }});
+}});
+// Producers may mint STRING row ids ("pf-ex-1") — the contract requires unique
+// non-null, not numeric. Count the max over NUMERIC ids only; string ids once drove
+// this to NaN and a page-added row shipped id: null (demo-b, 2026-08-03).
 let nextId = 1 + Math.max(0, ...[...state.events, ...state.player_fields,
   ...state.feature_settings.schemas, ...state.feature_settings.settings,
-  ...state.resources].map(r => r.id || 0));
+  ...state.resources].map(r => (typeof r.id === "number" && isFinite(r.id)) ? r.id : 0));
 
 // A section exists on this page ONLY if its key is PRESENT in the payload — a scoped/module
 // run (e.g. /kinoa resources) sends just its own section, and the page must not show (or
@@ -372,11 +390,21 @@ function render() {{
   // ANY visible validation error blocks the export — an invalid plan must never
   // become a hand-back (user rule 2026-07-28).
   const errs = document.querySelectorAll("input.bad, select.bad").length;
-  document.getElementById("download").disabled = errs > 0;
-  document.getElementById("copy").disabled = errs > 0;
+  // ✓ done is the COMPLETENESS signal: a half-typed name is often perfectly valid
+  // (race_fin mid-typing), so validity alone can't see an unfinished edit. Any open
+  // editor on any surface blocks the export until confirmed (user decision 2026-08-04).
+  const openRows = [...state.events, ...state.player_fields,
+    ...state.feature_settings.schemas, ...state.feature_settings.settings,
+    ...state.resources].filter(r => r.editing === true && inc(r)).length;
+  document.getElementById("download").disabled = errs > 0 || openRows > 0;
+  document.getElementById("copy").disabled = errs > 0 || openRows > 0;
   if (errs > 0) {{
     document.getElementById("counter").textContent +=
       "  \u00b7  " + errs + " validation error(s) — fix to enable export";
+  }}
+  if (openRows > 0) {{
+    document.getElementById("counter").textContent +=
+      "  \u00b7  " + openRows + " row(s) open for editing — tap \u2713 done to confirm";
   }}
   if (focusId) {{
     const el = document.querySelector('[data-fid="' + focusId + '"]');
@@ -429,7 +457,15 @@ function head(row, label, opts = {{}}) {{
   }}
   const badge = document.createElement("span");
   badge.className = "badge " + (row.existing ? "b-existing" : "b-new");
-  badge.textContent = row.existing ? "already in code — edit code-first" : label;
+  // Events existing rows carry a proposals section — the flat "edit code-first"
+  // wording would contradict it (user question 2026-08-04).
+  badge.textContent = row.existing
+    ? (row.params !== undefined ? "already in code" : "already in code — edit code-first")
+    : label;
+  if (row.existing && row.params !== undefined) {{
+    badge.title = "measured part is read-only (edit code-first); ✎ opens the additions "
+                + "editor — ticked additions ship via a builder extension";
+  }}
   div.appendChild(badge);
   const ek = row.params !== undefined ? effectiveKind(row) : row.kind;
   if (ek === "predefined") {{
@@ -452,7 +488,8 @@ function head(row, label, opts = {{}}) {{
     const s = document.createElement("span"); s.className = "muted"; s.textContent = row.source;
     div.appendChild(s);
   }}
-  const pencilShown = !row.existing && opts.collapsible && inc(row);
+  const pencilShown = opts.collapsible && inc(row)
+    && (!row.existing || opts.existingEditable === true);
   if (pencilShown) {{
     const ed = document.createElement("button"); ed.className = "ghost pencil";
     ed.dataset.fid = "ed-" + (row.id || "");
@@ -489,7 +526,8 @@ function eventRowInvalid(r, dup) {{
       && (!String(r.name || "").trim() || dup(r.name) || String(r.name || "").length > 30)) return true;
   const ek = effectiveKind(r);
   if (ek === "debug" || (ek === "predefined" && isSdkAutomatic(r.name) && INTEGRATION_TYPE === "SDK")) return false;
-  const live = (r.params || []).filter(p => p.included !== false);
+  const live = ((r.params || []).concat(r.proposed_params || []))
+    .filter(p => p.included !== false);
   const pdup = dupIn(live, "name");
   return live.some(p =>
     !String(p.name || "").trim() || pdup(p.name) || String(p.name || "").length > 30
@@ -561,8 +599,9 @@ function fsSettingRowInvalid(r, kdup, schemaNames) {{
 // STICKY: an auto-expanded (invalid) row is stamped editing=true, so fixing the last
 // error never collapses it mid-typing (focus theft / truncated input); only the
 // explicit "done" collapses — and an invalid row just re-expands.
-function expandedRow(r, invalidFn) {{
-  const open = !r.existing && inc(r) && (r.editing === true || invalidFn());
+function expandedRow(r, invalidFn, allowExisting) {{
+  const open = (allowExisting === true || !r.existing) && inc(r)
+    && (r.editing === true || invalidFn());
   if (open) r.editing = true;
   return open;
 }}
@@ -627,10 +666,14 @@ function renderEvents() {{
   }}
   const dup = dupNames(state.events.filter(r => r.existing || inc(r)), "name");
   state.events.forEach((r, i) => {{
-    const expanded = expandedRow(r, () => eventRowInvalid(r, dup));
+    const expanded = expandedRow(r, () => eventRowInvalid(r, dup), true);
     const div = document.createElement("div");
-    div.className = "row" + (r.existing ? " locked" : "") + (!r.existing && !inc(r) ? " excluded" : "");
+    // The locked tint dims the additions editor too — an existing row in ✎ edit mode
+    // renders untinted (user 2026-08-04); collapsed keeps the dim.
+    div.className = "row" + (r.existing && !expanded ? " locked" : "")
+      + (!r.existing && !inc(r) ? " excluded" : "");
     div.appendChild(head(r, "new event", {{collapsible: true, expanded: expanded,
+      existingEditable: true,
       onRemove: () => {{ state.events.splice(state.events.indexOf(r), 1); render(); }}}}));
     if (!r.existing && !expanded) {{
       const cg = document.createElement("div"); cg.className = "grid";
@@ -700,11 +743,23 @@ function renderEvents() {{
       return;
     }}
     const tbl = document.createElement("table"); tbl.className = "sub";
-    const pdup = dupIn((r.params || []).filter(p => p.included !== false), "name");
-    (r.params || []).forEach((p, j) => {{
+    const allParams = (r.params || [])
+      .concat(r.existing ? (r.proposed_params = r.proposed_params || []) : []);
+    const pdup = dupIn(allParams.filter(p => p.included !== false), "name");
+    let propHeaderDone = false;
+    allParams.forEach((p, j) => {{
+      if (p._proposed && !expanded && p.included === false) return;
+      if (p._proposed && !propHeaderDone) {{
+        propHeaderDone = true;
+        const hr = document.createElement("tr");
+        hr.innerHTML = '<td colspan="4" class="muted">＋ proposed additions — found near the '
+          + 'call sites but NOT wired in code; unticked = not implemented, ticked ships via '
+          + 'a builder extension</td>';
+        tbl.appendChild(hr);
+      }}
       const tr = document.createElement("tr");
       const td = t => {{ const c = document.createElement("td"); c.appendChild(t); return c; }};
-      if (!r.existing) {{
+      if (!r.existing || (p._proposed && expanded)) {{
         const pcb = document.createElement("input"); pcb.type = "checkbox"; pcb.className = "inc";
         pcb.checked = p.included !== false; pcb.title = "include this param";
         pcb.addEventListener("change", e => {{ p.included = e.target.checked; render(); }});
@@ -717,7 +772,15 @@ function renderEvents() {{
           return;
         }}
       }}
-      if (r.existing) {{
+      if (r.existing && p._proposed && !expanded) {{
+        // ✓ done view: the confirmed addition reads like a measured param, marked.
+        tr.innerHTML = "<td><code>" + esc(p.name)
+          + '</code> <span class="badge b-new">addition</span></td><td>' + esc(p.kind)
+          + "</td><td>" + esc(p.kind === "enumeration" ? (p.extra || "") : "") + "</td>";
+        tbl.appendChild(tr);
+        return;
+      }}
+      if (r.existing && !p._proposed) {{
         const sysEx = SYSTEM_EVENT_PARAM_NAMES.includes(String(p.name || "").trim());
         tr.innerHTML = "<td><code>" + esc(p.name) + "</code>" +
           (sysEx ? ' <span class="badge b-system">system</span>' : "") +
@@ -785,13 +848,32 @@ function renderEvents() {{
                 [!String(p.extra || "").trim(), "an enumeration needs at least one value"],
               ], "each value must be 50 characters or less")}})));
         }}
+        if (p._pNew) {{
+          const rm = document.createElement("button"); rm.className = "ghost remove";
+          rm.textContent = "✕";
+          rm.title = "delete this param — available only for params just added on this page "
+                   + "(discovered params use the checkbox instead)";
+          rm.addEventListener("click", () => {{
+            const list = p._proposed ? r.proposed_params : r.params;
+            list.splice(list.indexOf(p), 1); render();
+          }});
+          tr.appendChild(td(rm));
+        }}
       }}
       tbl.appendChild(tr);
     }});
     div.appendChild(tbl);
     if (!r.existing) {{
       const add = document.createElement("button"); add.className = "ghost"; add.textContent = "＋ param";
-      add.addEventListener("click", () => {{ r.params.push({{name: "", kind: "string", extra: ""}}); render(); }});
+      add.addEventListener("click", () => {{ r.params.push({{name: "", kind: "string", extra: "", _pNew: true}}); render(); }});
+      div.appendChild(add);
+    }} else if (expanded) {{
+      const add = document.createElement("button"); add.className = "ghost";
+      add.textContent = "＋ param";
+      add.title = "add a NEW param to this already-wired event — implemented as a builder "
+                + "extension; the value source is confirmed at a wiring gate";
+      add.addEventListener("click", () => {{ (r.proposed_params = r.proposed_params || [])
+        .push({{name: "", kind: "string", extra: "", included: true, _proposed: true, _pNew: true}}); render(); }});
       div.appendChild(add);
     }}
     host.appendChild(div);
@@ -881,7 +963,7 @@ function renderFields() {{
         v => {{ const t = String(v || "").trim();
                if (!t || t === snake(String(r.name || "").trim())) delete r.path;
                else r.path = t; }},
-        {{placeholder: "auto (snake of the name)", size: 18,
+        {{placeholder: "wallet.gold", size: 18,
           bad: !frPredef && (!FIELD_PATH_RE.test(pathOf(r)) || pathOf(r).length > 100
                || pathDup(r) || frCalc || pathSegMismatch(r, pathOf) || nodeConf(r)),
           title: firstBad([
@@ -1309,7 +1391,7 @@ function exportJson() {{
   // Enum values live in state across kind toggles (so switching back restores them),
   // but the EXPORT carries them only for enumeration kinds — a stale list never ships.
   const cleanParam = p => {{
-    const {{included, ...rest}} = p;
+    const {{included, _pNew, ...rest}} = p;
     return rest.kind === "enumeration" ? rest : {{...rest, extra: ""}};
   }};
   const cleanField = f => {{
@@ -1325,7 +1407,18 @@ function exportJson() {{
     page_generated_at: DATA.generated_at,
     payload_version: DATA_VERSION,
     events: state.events.filter(keep).map(r => {{
-      if (r.existing) return r;  // echoed verbatim — the row is a measurement of code
+      if (r.existing) {{
+        // Measured part echoes verbatim; ticked proposals ship under proposed_params
+        // (append-only key — older consumers ignore it). No ticked proposals -> key absent.
+        const {{proposed_params, ...rest}} = r;
+        const ticked = (proposed_params || []).filter(p => p.included === true).map(p => {{
+          const {{_proposed, ...c}} = cleanParam(p);
+          return SYSTEM_EVENT_PARAM_NAMES.includes(String(c.name || "").trim())
+            ? {{...c, system_field: true}} : c;
+        }});
+        // stripLocal here too: auto edit-mode stamps editing:true on these rows.
+        return stripLocal(ticked.length ? {{...rest, proposed_params: ticked}} : rest);
+      }}
       const ek = effectiveKind(r);
       const collapsed = ek === "debug" ||
         (ek === "predefined" && isSdkAutomatic(r.name) && INTEGRATION_TYPE === "SDK");

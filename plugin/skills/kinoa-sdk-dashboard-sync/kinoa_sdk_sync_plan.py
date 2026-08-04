@@ -40,7 +40,7 @@ Usage:
       --events-predefined ep.json --events-custom ec.json \
       [--events-custom-deleted ecd.json] \
       --fields-predefined fp.json --fields-custom fc.json \
-      [--fields-custom-deleted fcd.json] \
+      [--fields-custom-deleted fcd.json] [--fields-calculated fcalc.json] \
       [--fs-schemas fss.json --fs-settings fst.json] \
       [--resources rt.json]
 
@@ -259,7 +259,8 @@ def _rt_fields_map(record):
 
 
 def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_custom, pf_custom_deleted,
-               fs_schemas=None, fs_settings=None, resource_templates=None, ev_debug=None):
+               fs_schemas=None, fs_settings=None, resource_templates=None, ev_debug=None,
+               pf_calculated=None):
     plan = {
         "schema_version": PLAN_SCHEMA_VERSION,
         "manifest_schema_version": manifest.get("schema_version"),
@@ -284,6 +285,9 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
     pf_predef_by_path = _index_by(pf_predef, "path")
     pf_custom_by_path = _index_by(pf_custom, "path")
     pf_deleted_by_path = _index_by(pf_custom_deleted, "path")
+    # CALCULATED fields come from their own listing (types=CALCULATED) — the
+    # per-record `calculated` flag is dead (always false, live-verified 2026-08-04).
+    pf_calc_by_path = _index_by(pf_calculated or [], "path")
 
     events = manifest.get("events") or {}
     fields = manifest.get("player_fields") or {}
@@ -484,6 +488,16 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                           "paths are byte-for-byte; a hand-normalized manifest would register a dead "
                           "duplicate that never receives state",
             })
+        calc_hit = pf_calc_by_path.get(path) or next(
+            (pf_calc_by_path[k] for k in pf_calc_by_path if k.lower() == path.lower()), None)
+        if calc_hit is not None:
+            plan["player_fields"]["warnings"].append({
+                "path": path, "dashboard_path": calc_hit.get("path"),
+                "reason": "path is reserved by a CALCULATED dashboard field (server-computed — the "
+                          "game cannot write it); the create would be rejected ('path is reserved'). "
+                          "Rename the property in code; no create is planned.",
+            })
+            continue
         predef_hit = pf_predef_by_path.get(path) or next(
             (pf_predef_by_path[k] for k in pf_predef_by_path if k.lower() == path.lower()), None)
         if predef_hit is not None:
@@ -999,6 +1013,8 @@ def main(argv):
     parser.add_argument("--fields-predefined", default=None)
     parser.add_argument("--fields-custom", default=None)
     parser.add_argument("--fields-custom-deleted", default=None)
+    parser.add_argument("--fields-calculated", default=None,
+                        help="list-calculated output — reserved server-computed paths.")
     parser.add_argument("--fs-schemas", default=None,
                         help="Live feature schemas (list-schemas, ideally enriched with get-schema "
                              "records so versions[].tableFields are present for the column diff).")
@@ -1064,6 +1080,8 @@ def main(argv):
         if args.fields_custom else [],
         "fields-custom-deleted": _extract_items(_load_json(args.fields_custom_deleted, "fields-custom-deleted"), "fields-custom-deleted")
         if args.fields_custom_deleted else [],
+        "fields-calculated": _extract_items(_load_json(args.fields_calculated, "fields-calculated"), "fields-calculated")
+        if args.fields_calculated else [],
         "fs-schemas": _extract_items(_load_json(args.fs_schemas, "fs-schemas"), "fs-schemas") if args.fs_schemas else [],
         "fs-settings": _extract_items(_load_json(args.fs_settings, "fs-settings"), "fs-settings") if args.fs_settings else [],
         "resources": _extract_items(_load_json(args.resources, "resources"), "resources") if args.resources else [],
@@ -1096,6 +1114,7 @@ def main(argv):
         listings["fs-settings"],
         listings["resources"],
         listings["events-debug"],
+        pf_calculated=listings["fields-calculated"],
     )
     print(json.dumps(plan, indent=2))
     return 0

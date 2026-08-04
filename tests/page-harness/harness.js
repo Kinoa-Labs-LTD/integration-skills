@@ -73,6 +73,9 @@ function setCheckbox(w, sectionId, matchText, val) {
   cb.dispatchEvent(new w.Event("change", { bubbles: true }));
 }
 function gateBlocked(w) { return w.document.getElementById("download").disabled; }
+// Open editors block the export by design (2026-08-04) — mid-edit checks assert the
+// absence of VALIDATION errors instead; gate asserts belong to collapsed states.
+function valErrs(w) { return w.document.querySelectorAll("input.bad, select.bad").length; }
 function findRowInput(w, sectionId, placeholder, nth = 0) {
   const hits = [...w.document.querySelectorAll(`#${sectionId} input[type=text]`)]
     .filter(i => i.placeholder === placeholder);
@@ -87,8 +90,10 @@ function testEvents(file) {
   const payload = JSON.parse(fs.readFileSync(file, "utf-8").match(/const DATA = (\{[\s\S]*?\});\n/)[1]);
   const exEv = payload.events.find(e => e.existing);
   const echoed = before.events.find(e => e.id === exEv.id);
-  check("events: existing row echoed verbatim", deepEq(echoed, exEv),
-        JSON.stringify({ echoed, exEv }));
+  const { proposed_params: _pp, ...exCore } = exEv;
+  const { proposed_params: _pe, ...echoedCore } = echoed;
+  check("events: existing row measured part echoed verbatim", deepEq(echoedCore, exCore),
+        JSON.stringify({ echoedCore, exCore }));
 
   // ---- same-name existing pair (predefined + custom level_up) is legal code reality:
   // both render, neither reds, both ship; a NEW row taking the name still reds.
@@ -99,7 +104,7 @@ function testEvents(file) {
   check("events: existing custom keeps its measured kind badge (user, not predefined)",
         luBadges.some(t => t.includes("user")) && luBadges.some(t => t.includes("predefined")),
         JSON.stringify(luBadges));
-  check("events: same-name existing pair does not block the export", !gateBlocked(w));
+  check("events: same-name existing pair adds no validation error", valErrs(w) === 0);
   const luEcho = before.events.filter(e => e.name === "level_up").map(e => e.kind).sort();
   check("events: both same-name existing rows ship in the hand-back",
         deepEq(luEcho, ["custom", "predefined"]), JSON.stringify(luEcho));
@@ -129,7 +134,7 @@ function testEvents(file) {
   check("events: existing row has no remove button",
         !rowByText(w, "events", "session_start").querySelector("button.remove"));
   luProbe.querySelector("button.remove").click();
-  check("events: removing the page-added row reopens the gate", !gateBlocked(w));
+  check("events: removing the page-added row clears its errors", valErrs(w) === 0);
   check("events: removed row is gone from the DOM",
         ![...w.document.querySelectorAll("#events input[type=text]")].some(i => i.value === "level_up"));
   // _pageNew never ships in the hand-back
@@ -145,6 +150,63 @@ function testEvents(file) {
     .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "probe_strip"))
     .querySelector("button.remove").click();
 
+  // ---- proposed additions (2026-08-04, ✎/done mechanic): discovered additions open
+  // the row in edit mode with params born TICKED; done collapses (ticked stay visible,
+  // marked); untick drops the key; dup vs the measured part still reds.
+  let ssRow = rowByText(w, "events", "session_start");
+  check("events: row with discovered additions opens in edit mode",
+        (ssRow.querySelector("button.pencil") || {}).textContent === "✓ done");
+  check("events: an open editor blocks the export", gateBlocked(w));
+  check("events: the counter names the open-editor reason",
+        w.document.getElementById("counter").textContent.includes("open for editing"));
+  check("events: proposals header rendered", ssRow.textContent.includes("proposed additions"));
+  const ppCb = ssRow.querySelector("input.inc");
+  check("events: discovered addition born ticked", !!ppCb && ppCb.checked);
+  const ppRow = before.events.find(e => e.name === "session_start");
+  check("events: ticked addition ships clean under proposed_params",
+        ppRow && deepEq(ppRow.proposed_params,
+                        [{ name: "session_source", kind: "string", extra: "" }]),
+        JSON.stringify(ppRow && ppRow.proposed_params));
+  ssRow.querySelector("button.pencil").click();
+  ssRow = rowByText(w, "events", "session_start");
+  check("events: done collapses the additions editor", !ssRow.querySelector("input.inc"));
+  check("events: collapsed row keeps the ticked addition visible, marked",
+        ssRow.textContent.includes("session_source") && ssRow.textContent.includes("addition"));
+  clickPencil(w, "events", "session_start");
+  const ppCb2 = rowByText(w, "events", "session_start").querySelector("input.inc");
+  ppCb2.checked = false; ppCb2.dispatchEvent(new w.Event("change", { bubbles: true }));
+  check("events: unticked addition leaves no proposed_params key",
+        !("proposed_params" in exportPlan(w).events.find(e => e.name === "session_start")));
+  // manual ＋ param on an existing row (edit mode only): dup vs measured reds
+  check("events: no additions editor on a collapsed clean row",
+        ![...rowByText(w, "events", "start_level").querySelectorAll("button")]
+          .some(b => b.textContent === "＋ param"));
+  clickPencil(w, "events", "start_level");
+  [...rowByText(w, "events", "start_level").querySelectorAll("button")]
+    .find(b => b.textContent === "＋ param").click();
+  const npInp = [...w.document.querySelectorAll("#events input[type=text]")]
+    .find(i2 => i2.placeholder === "param_name" && i2.value === "");
+  typeInto(w, npInp.dataset.fid, "level");
+  check("events: addition duplicating a measured param blocks the export", gateBlocked(w));
+  const slCb2 = [...rowByText(w, "events", "start_level").querySelectorAll("input.inc")].pop();
+  slCb2.checked = false; slCb2.dispatchEvent(new w.Event("change", { bubbles: true }));
+  check("events: unticking the dup addition clears its error", valErrs(w) === 0);
+  rowByText(w, "events", "start_level").querySelector("button.pencil").click();
+  rowByText(w, "events", "session_start").querySelector("button.pencil").click();
+  check("events: confirming every editor with done unblocks the export", !gateBlocked(w));
+  // hand-added params are deletable (✕); discovery params keep checkbox-only
+  clickPencil(w, "events", "race_finished");
+  let rfRow = rowByText(w, "events", "GameStateService.cs:130");
+  check("events: discovery param has no ✕", rfRow.querySelectorAll("button.remove").length === 0);
+  [...rfRow.querySelectorAll("button")].find(b => b.textContent === "＋ param").click();
+  rfRow = rowByText(w, "events", "GameStateService.cs:130");
+  check("events: hand-added param renders ✕", rfRow.querySelectorAll("button.remove").length === 1);
+  rfRow.querySelector("button.remove").click();
+  rfRow = rowByText(w, "events", "GameStateService.cs:130");
+  check("events: deleted hand-added param is gone and its error with it",
+        rfRow.querySelectorAll('input[placeholder="param_name"]').length === 1 && valErrs(w) === 0);
+  rfRow.querySelector("button.pencil").click();
+
   // add event, leave name empty -> gate blocks
   w.document.getElementById("add-event").click();
   check("events: empty new-name blocks export", gateBlocked(w));
@@ -159,7 +221,7 @@ function testEvents(file) {
   const counter = w.document.getElementById("counter").textContent;
   const nNew = payload.events.filter(e => !e.existing).length; // page-added row is debug -> excluded
   check("events: counter excludes debug rows", counter.includes(`${nNew} events`), counter);
-  check("events: gate reopens once name valid", !gateBlocked(w), counter);
+  check("events: no validation errors once the name is valid", valErrs(w) === 0, counter);
   const plan1 = exportPlan(w);
   const dbg = plan1.events.find(e => e.name === "feature_settings_download");
   check("events: debug row exports kind debug with params stripped",
@@ -200,8 +262,8 @@ function testEvents(file) {
 
   // ---- param include-checkbox (unified mechanic): untick leaves a dim line; never ships
   clickPencil(w, "events", "race_finished");
-  const pcb = [...w.document.querySelectorAll("#events input.inc")]
-    .find(c => c.title === "include this param");
+  const pcb = [...rowByText(w, "events", "GameStateService.cs:130")
+    .querySelectorAll("input.inc")].find(c => c.title === "include this param");
   pcb.checked = false; pcb.dispatchEvent(new w.Event("change", { bubbles: true }));
   check("events: unticked param renders a dim left-out line",
         !!rowByText(w, "events", "left out of the plan"));
@@ -209,9 +271,9 @@ function testEvents(file) {
   const rfr = planR.events.find(e => e.name === "race_finished");
   check("events: unticked param absent from hand-back", rfr && rfr.params.length === 0,
         JSON.stringify(rfr));
-  check("events: unticked param never blocks the gate", !gateBlocked(w));
-  const pcb2 = [...w.document.querySelectorAll("#events input.inc")]
-    .find(c => c.title === "include this param");
+  check("events: unticked param carries no validation error", valErrs(w) === 0);
+  const pcb2 = [...rowByText(w, "events", "GameStateService.cs:130")
+    .querySelectorAll("input.inc")].find(c => c.title === "include this param");
   pcb2.checked = true; pcb2.dispatchEvent(new w.Event("change", { bubbles: true }));
   const planR2 = exportPlan(w);
   const rfr2 = planR2.events.find(e => e.name === "race_finished");
@@ -219,29 +281,30 @@ function testEvents(file) {
         rfr2 && rfr2.params.length === 1 && !("included" in rfr2.params[0]), JSON.stringify(rfr2));
 
   // ---- system-named param = VALID candidate, different route (never blocks)
-  const pn = [...w.document.querySelectorAll("#events input[type=text]")]
-    .find(i2 => i2.placeholder === "param_name");
+  const pn = [...rowByText(w, "events", "GameStateService.cs:130")
+    .querySelectorAll("input[type=text]")].find(i2 => i2.placeholder === "param_name");
   const oldName = pn.value;
   // level is settable on EVERY event (CustomEventData : ExtendedGameEventData, SDK fix
   // 2026-07-31) — the system route is universal
   typeInto(w, pn.dataset.fid, "level");
-  check("events: system-named param does NOT block the export", !gateBlocked(w));
+  check("events: system-named param is NOT a validation error", valErrs(w) === 0);
   check("events: system badge + base-class route note shown",
         [...w.document.querySelectorAll("#events .badge")].some(b => b.textContent === "system")
         && w.document.body.textContent.includes("rides the base class"));
   check("events: system param kind is a fixed label, not a select",
         w.document.body.textContent.includes("number (fixed)"));
   const planS = exportPlan(w);
-  const evS = planS.events.find(e => (e.params || []).some(p2 => p2.name === "level"));
+  const evS = planS.events.find(e => !e.existing && (e.params || []).some(p2 => p2.name === "level"));
   check("events: system param exports system_field: true",
         evS && evS.params.find(p2 => p2.name === "level").system_field === true,
         JSON.stringify(evS));
   check("events: system param kind coerced to the canonical type",
         evS && evS.params.find(p2 => p2.name === "level").kind === "number",
         JSON.stringify(evS));
-  typeInto(w, w.document.querySelector('#events input[placeholder="param_name"]').dataset.fid, oldName);
+  typeInto(w, [...rowByText(w, "events", "GameStateService.cs:130")
+    .querySelectorAll('input[placeholder="param_name"]')][0].dataset.fid, oldName);
   const planS2 = exportPlan(w);
-  const evS2 = planS2.events.find(e => (e.params || []).some(p2 => p2.name === oldName));
+  const evS2 = planS2.events.find(e => !e.existing && (e.params || []).some(p2 => p2.name === oldName));
   check("events: renaming off the reserved list drops the marker",
         evS2 && !("system_field" in evS2.params.find(p2 => p2.name === oldName)),
         JSON.stringify(evS2));
@@ -303,7 +366,7 @@ function testFields(file) {
   const second = [...w.document.querySelectorAll("#player_fields input[type=text]")]
     .find(i => i.value === "Wallet_Gold");
   typeInto(w, second.dataset.fid, "WalletGems");
-  check("fields: gate reopens after resolving path dup", !gateBlocked(w));
+  check("fields: resolving the path dup clears the errors", valErrs(w) === 0);
 
   // charset: space+punct is red
   typeInto(w, second.dataset.fid, "My Field!");
@@ -367,13 +430,25 @@ function testFields(file) {
           .some(i => (i.title || "").includes("leaf/object conflict")));
   typeInto(w, [...w.document.querySelectorAll("#player_fields input[type=text]")]
     .find(i => i.value === "Wallet.Gold.Price").dataset.fid, "Wallet.GoldPrice");
-  check("fields: restructuring resolves the conflict", !gateBlocked(w));
+  check("fields: restructuring resolves the conflict", valErrs(w) === 0);
   // clean up the two probe rows via ✕ (page-added rows are deletable)
   for (const nm of ["Wallet.Gold", "Wallet.GoldPrice"]) {
     const row = [...w.document.querySelectorAll("#player_fields .row")]
       .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === nm));
     row.querySelector("button.remove").click();
   }
+  // string producer ids must not break the add-row counter (id: null regression)
+  w.document.getElementById("add-field").click();
+  const sidRow = exportPlan(w).player_fields.find(f => f.source === "added on page" && !f.name);
+  check("fields: page-added row gets a numeric non-null id despite string payload ids",
+        sidRow && typeof sidRow.id === "number" && isFinite(sidRow.id), JSON.stringify(sidRow));
+  [...w.document.querySelectorAll("#player_fields .row")]
+    .filter(d => d.querySelector("button.remove"))
+    .forEach(d => {
+      const inp = [...d.querySelectorAll("input[type=text]")];
+      if (inp.length && inp.every(i => !i.value)) d.querySelector("button.remove").click();
+    });
+
   // page-added row ships the DERIVED path explicitly (no manual override needed)
   w.document.getElementById("add-field").click();
   const dpInp = [...w.document.querySelectorAll("#player_fields input[type=text]")]
@@ -395,7 +470,7 @@ function testFields(file) {
   let regInp = [...w.document.querySelectorAll("#player_fields input[type=text]")]
     .find(i => i.placeholder === "Wallet.Gold" && i.value === "");
   typeInto(w, regInp.dataset.fid, "Level");
-  check("fields: predefined dashboard path does NOT block", !gateBlocked(w));
+  check("fields: predefined dashboard path is NOT an error", valErrs(w) === 0);
   check("fields: description input hidden for a predefined match",
         ![...w.document.querySelectorAll("#player_fields input[type=text]")]
           .some(i => i.placeholder === "description (optional)" &&
@@ -414,7 +489,7 @@ function testFields(file) {
   // taken name (different path) = red
   typeInto(w, [...w.document.querySelectorAll("#player_fields input[type=text]")]
     .find(i => i.value === "DaysSinceInstall").dataset.fid, "Level2");
-  check("fields: recovery to a free name reopens the gate", !gateBlocked(w));
+  check("fields: recovery to a free name clears the error", valErrs(w) === 0);
   // the textual path preview is gone (path lives in an input) — find the row by its input
   const l2row = [...w.document.querySelectorAll("#player_fields .row")]
     .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "Level2"));
@@ -463,7 +538,7 @@ function testFs(file) {
   const sel = [...w.document.querySelectorAll("#feature_settings select")]
     .find(s => [...s.options].some(o => o.textContent.includes("missing")));
   setSelect(w, sel, "RaceRewardsV2");
-  check("fs: explicit re-pick reopens the gate", !gateBlocked(w));
+  check("fs: explicit re-pick clears the dangling error", valErrs(w) === 0);
 
   // ---- select-first: unticking a schema pulls it from the plan; bound settings go red
   clickPencil(w, "feature_settings", "new schema");  // "done" -> collapse (single new schema in fixture)
@@ -475,7 +550,7 @@ function testFs(file) {
   check("fs: unticked schema absent from hand-back",
         !planX.feature_settings.schemas.some(x => x.name === "RaceRewardsV2"));
   setCheckbox(w, "feature_settings", ["new setting", "(missing: RaceRewardsV2)"], false);
-  check("fs: unticking the dangling setting too reopens the gate", !gateBlocked(w));
+  check("fs: unticking the dangling setting too clears the error", valErrs(w) === 0);
   const planY = exportPlan(w);
   check("fs: unticked setting absent from hand-back",
         !planY.feature_settings.settings.some(x => x.key === "RaceRewards"));
@@ -532,14 +607,14 @@ function testResources(file) {
   typeInto(w, defInp.dataset.fid, "epic");
   check("resources: default outside enum values blocks export", gateBlocked(w));
   typeInto(w, w.document.querySelector('#resources input[placeholder="default"]').dataset.fid, "rare");
-  check("resources: enum-member default passes", !gateBlocked(w));
+  check("resources: enum-member default passes", valErrs(w) === 0);
 
   // number default validation
   const kindSel2 = [...w.document.querySelectorAll("#resources select")].pop();
   setSelect(w, kindSel2, "number");
   check("resources: stale enum default on number turns red (kind toggle)", gateBlocked(w));
   typeInto(w, w.document.querySelector('#resources input[placeholder="default"]').dataset.fid, "42");
-  check("resources: numeric default passes", !gateBlocked(w));
+  check("resources: numeric default passes", valErrs(w) === 0);
   const plan2 = exportPlan(w);
   const shield2 = plan2.resources.find(r => r.key === "magic_shield");
   check("resources: enum values stripped for non-enum kind at export",
