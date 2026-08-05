@@ -1149,8 +1149,10 @@ function renderFields() {{
     const tCalc = !tPredef && FR_CALC[pathNow0] !== undefined;
     const tExt = !tPredef && !tCalc && String(pathNow0).startsWith("calculated_fields.");
     const tDash = !tPredef && FR_CUSTOM[pathNow0] !== undefined;
-    const fLabel = tPredef ? "predefined" : tCalc ? "calculated" : tExt ? "external" : "new field";
-    const fCls = tPredef ? "b-predef" : tCalc ? "b-calc" : tExt ? "b-ext" : "b-new";
+    const fLabel = tPredef ? "predefined" : tCalc ? "calculated" : tExt ? "external"
+      : (!r.existing && tDash) ? "user" : "new field";
+    const fCls = tPredef ? "b-predef" : tCalc ? "b-calc" : tExt ? "b-ext"
+      : (!r.existing && tDash) ? "b-user" : "b-new";
     const extras = [];
     if (r.existing) {{
       // Type badge for existing rows (2026-08-04): predefined_in_use base writes now

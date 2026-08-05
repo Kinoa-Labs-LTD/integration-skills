@@ -621,7 +621,7 @@ function testFields(file) {
             .find(d => [...d.querySelectorAll("input[type=text]")]
               .some(i => i.value === "TransactionCount"));
           const hs = [...adRow2.querySelectorAll(".badge")].map(b => b.textContent);
-          return hs.includes("on dashboard") && hs.includes("new field");
+          return hs.includes("on dashboard") && hs.includes("user") && !hs.includes("new field");
         })());
   check("fields: adopt row shows the on-dashboard badge + pinned kind",
         [...w.document.querySelectorAll("#player_fields .badge")]
