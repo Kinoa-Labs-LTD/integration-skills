@@ -537,6 +537,8 @@ function head(row, label, opts = {{}}) {{
       ? "measured part is read-only (edit code-first); ✎ opens the additions editor — "
         + "ticked additions ship via a builder extension"
       : "measurement of code — edit code-first; the page cannot change it";
+  }} else if (opts.labelTitle) {{
+    badge.title = opts.labelTitle;
   }}
   div.appendChild(badge);
   (opts.extraBadges || []).forEach(b => {{
@@ -817,18 +819,22 @@ function renderEvents() {{
     const ekHead = r.existing ? "" : effectiveKind(r);
     const evLabel = ekHead === "predefined" ? "predefined"
       : ekHead === "debug" ? "debug"
-      : evDash ? "user" : "new event";
+      : evDash ? "on dashboard" : "new event";
     const evCls = ekHead === "predefined" ? "b-predef"
       : ekHead === "debug" ? "b-debug"
-      : evDash ? "b-user" : "b-new";
+      : evDash ? "b-dash" : "b-new";
     div.appendChild(head(r, evLabel, {{collapsible: true, expanded: expanded,
       existingEditable: true, labelClass: evCls,
       // predefined/debug live dashboard-side by definition — the kind label alone
-      // says it (user 2026-08-05); the status lamp is reserved for ADOPTed customs.
-      extraBadges: evDash ? [{{text: "on dashboard", cls: "b-dash",
-        title: "a custom event with this name is already registered on the dashboard — "
-             + "this row wires into it: the sync adds only NEW params (add-params), never "
-             + "a create; renaming opts out of adoption"}}] : [],
+      // says it (user 2026-08-05); the status lamp is reserved for ADOPTed customs
+      // and leads the pair (user 2026-08-05): on dashboard | user.
+      labelTitle: evDash
+        ? "a custom event with this name is already registered on the dashboard — "
+          + "this row wires into it: the sync adds only NEW params (add-params), never "
+          + "a create; renaming opts out of adoption"
+        : undefined,
+      extraBadges: evDash ? [{{text: "user", cls: "b-user",
+        title: "user event — the game's own custom event, sent from app code"}}] : [],
       onRemove: () => {{ state.events.splice(state.events.indexOf(r), 1); render(); }}}}));
     if (!r.existing && !expanded) {{
       const cg = document.createElement("div"); cg.className = "grid";
@@ -1150,9 +1156,9 @@ function renderFields() {{
     const tExt = !tPredef && !tCalc && String(pathNow0).startsWith("calculated_fields.");
     const tDash = !tPredef && FR_CUSTOM[pathNow0] !== undefined;
     const fLabel = tPredef ? "predefined" : tCalc ? "calculated" : tExt ? "external"
-      : (!r.existing && tDash) ? "user" : "new field";
+      : (!r.existing && tDash) ? "on dashboard" : "new field";
     const fCls = tPredef ? "b-predef" : tCalc ? "b-calc" : tExt ? "b-ext"
-      : (!r.existing && tDash) ? "b-user" : "b-new";
+      : (!r.existing && tDash) ? "b-dash" : "b-new";
     const extras = [];
     if (r.existing) {{
       // Type badge for existing rows (2026-08-04): predefined_in_use base writes now
@@ -1166,14 +1172,18 @@ function renderFields() {{
           : "custom player field carried by CustomPlayerState"}});
     }}
     // predefined lives dashboard-side by definition — the kind label alone says it
-    // (user 2026-08-05, events symmetry); the status lamp is reserved for ADOPTs.
-    if (!r.existing && tDash && !tPredef) extras.push({{text: "on dashboard", cls: "b-dash",
-      title: "registered on the dashboard but nothing in code writes it — this row wires a "
-           + "code carrier; the dashboard field itself is never renamed"}});
+    // (user 2026-08-05, events symmetry); the status lamp is reserved for ADOPTs and
+    // leads the pair (user 2026-08-05): on dashboard | user.
+    if (!r.existing && tDash && !tPredef) extras.push({{text: "user", cls: "b-user",
+      title: "custom player field carried by CustomPlayerState"}});
     const div = document.createElement("div");
     div.className = "row" + (r.existing ? " locked" : "") + (!r.existing && !inc(r) ? " excluded" : "");
     div.appendChild(head(r, fLabel, {{collapsible: true, expanded: expanded,
       labelClass: fCls, extraBadges: extras,
+      labelTitle: (!r.existing && tDash && !tPredef)
+        ? "registered on the dashboard but nothing in code writes it — this row wires a "
+          + "code carrier; the dashboard field itself is never renamed"
+        : undefined,
       onRemove: () => {{ state.player_fields.splice(state.player_fields.indexOf(r), 1); render(); }}}}));
     if (!r.existing && !expanded) {{
       const cg = document.createElement("div"); cg.className = "grid";
