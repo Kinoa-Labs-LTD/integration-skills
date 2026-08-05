@@ -755,7 +755,7 @@ function renderOrphanSection(host, title, typeBadge, items) {{
   box.style.cssText = "border:1px dashed #a9b1ba;background:#fafbfc;border-radius:8px;"
     + "padding:0.8rem 1rem;margin-top:1rem";
   const colKey = typeBadge.text;
-  const collapsed = !!ORPHANS_COLLAPSED[colKey];
+  const collapsed = ORPHANS_COLLAPSED[colKey] !== false;  // collapsed by default
   const hdr = document.createElement("div");
   hdr.style.cssText = "margin-bottom:0.45rem;cursor:pointer";
   hdr.title = collapsed ? "expand the list" : "collapse the list";

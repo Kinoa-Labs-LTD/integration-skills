@@ -370,6 +370,10 @@ function testEvents(file) {
         && w.document.getElementById("events-card").textContent.includes("no code carrier"));
   check("events: orphan is not exported while unticked",
         !exportPlan(w).events.some(e => e.name === "push_opt_in"));
+  check("events: orphan card starts collapsed with the count visible",
+        w.document.getElementById("events-card").textContent.includes("no code carrier (1)")
+        && ![...w.document.querySelectorAll("#events-card .orphans input.inc")].length);
+  w.document.querySelector("#events-card .orphans strong").parentElement.click();
   const orCb = [...w.document.querySelectorAll("#events-card .orphans input.inc")]
     .find(c => (c.title || "").includes("generate the code carrier"));
   orCb.checked = true; orCb.dispatchEvent(new w.Event("change", { bubbles: true }));
@@ -381,14 +385,10 @@ function testEvents(file) {
   const orCb2 = [...w.document.querySelectorAll("#events-card .orphans input.inc")]
     .find(c => (c.title || "").includes("generate the code carrier"));
   orCb2.checked = false; orCb2.dispatchEvent(new w.Event("change", { bubbles: true }));
-  // the list collapses on header click (count stays visible) and expands back
+  // collapse back after the probe
   w.document.querySelector("#events-card .orphans strong").parentElement.click();
-  check("events: orphan card collapses to its header",
-        w.document.getElementById("events-card").textContent.includes("no code carrier (1)")
-        && ![...w.document.querySelectorAll("#events-card .orphans input.inc")].length);
-  w.document.querySelector("#events-card .orphans strong").parentElement.click();
-  check("events: orphan card expands back",
-        [...w.document.querySelectorAll("#events-card .orphans input.inc")].length === 1);
+  check("events: orphan card collapses back to its header",
+        ![...w.document.querySelectorAll("#events-card .orphans input.inc")].length);
 
   // ---- ⌘Z / Ctrl+Z: whole-state undo survives re-renders (native stacks die)
   const zKey = extra => new w.KeyboardEvent("keydown",
@@ -537,6 +537,7 @@ function testFields(file) {
   // ---- Dashboard->Code orphan (fields): VIP tier -> property derivation on tick
   check("fields: orphan section lists the dashboard-only field",
         w.document.getElementById("fields-card").textContent.includes("VIP tier"));
+  w.document.querySelector("#fields-card .orphans strong").parentElement.click();
   const pfOr = [...w.document.querySelectorAll("#fields-card .orphans .grid")]
     .find(g2 => g2.textContent.includes("VIP tier")).querySelector("input.inc");
   pfOr.checked = true; pfOr.dispatchEvent(new w.Event("change", { bubbles: true }));
@@ -547,6 +548,7 @@ function testFields(file) {
   const pfOr2 = [...w.document.querySelectorAll("#fields-card .orphans .grid")]
     .find(g2 => g2.textContent.includes("VIP tier")).querySelector("input.inc");
   pfOr2.checked = false; pfOr2.dispatchEvent(new w.Event("change", { bubbles: true }));
+  w.document.querySelector("#fields-card .orphans strong").parentElement.click();
 
   // "on dashboard" ADOPT route: badge + pinned kind + read-only description; the
   // hand-back carries dashboard_field: true and the dashboard's description.
