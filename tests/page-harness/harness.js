@@ -348,17 +348,32 @@ function testEvents(file) {
   check("events: adopt candidate shows the on-dashboard badge",
         [...rowByText(w, "events", "DailyBonus.cs:41").querySelectorAll(".badge")]
           .some(b => b.textContent === "on dashboard"));
+  check("events: collapsed adopt row hints at uncovered dashboard params",
+        rowByText(w, "events", "DailyBonus.cs:41").textContent
+          .includes("+1 dashboard param not sent by your code"));
   clickPencil(w, "events", "DailyBonus.cs:41");
   const dbRow2 = rowByText(w, "events", "DailyBonus.cs:41");
   check("events: uncovered dashboard params render read-only, covered ones only once",
         dbRow2.textContent.includes("also on the dashboard")
         && dbRow2.textContent.includes("bonus_day")
-        && dbRow2.textContent.includes("wires into the existing dashboard event")
+        && !dbRow2.textContent.includes("wires into the existing dashboard event")
         && !dbRow2.textContent.includes("streak")   // covered param lives in the input only
         && [...dbRow2.querySelectorAll("input[type=text]")].some(i2 => i2.value === "streak"));
   check("events: local param matching a dashboard param carries the registered chip",
         [...dbRow2.querySelectorAll("span")].some(s2 => (s2.title || "").includes("will NOT re-add")));
-  const dbName = [...dbRow2.querySelectorAll("input[type=text]")].find(i2 => i2.value === "daily_bonus");
+  check("events: registered param kind pinned — select only for new params",
+        dbRow2.textContent.includes("(fixed)")
+        && [...dbRow2.querySelectorAll("select")].length === 1);
+  typeInto(w, [...dbRow2.querySelectorAll("input[type=text]")]
+    .find(i2 => i2.value === "streak").dataset.fid, "streak_x");
+  const dbRow2b = rowByText(w, "events", "DailyBonus.cs:41");
+  check("events: renaming a registered param unpins its type",
+        !dbRow2b.textContent.includes("(fixed)")
+        && [...dbRow2b.querySelectorAll("select")].length === 2);
+  typeInto(w, [...dbRow2b.querySelectorAll("input[type=text]")]
+    .find(i2 => i2.value === "streak_x").dataset.fid, "streak");
+  const dbRow2c = rowByText(w, "events", "DailyBonus.cs:41");
+  const dbName = [...dbRow2c.querySelectorAll("input[type=text]")].find(i2 => i2.value === "daily_bonus");
   typeInto(w, dbName.dataset.fid, "daily_bonus_v2");
   check("events: renaming opts out of adoption",
         ![...rowByText(w, "events", "DailyBonus.cs:41").querySelectorAll(".badge")]

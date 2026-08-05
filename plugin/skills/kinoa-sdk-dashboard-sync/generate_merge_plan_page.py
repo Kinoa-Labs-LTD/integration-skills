@@ -860,6 +860,22 @@ function renderEvents() {{
         }});
         div.appendChild(ct);
       }}
+      if (evDash) {{
+        const sent = new Set((r.params || [])
+          .map(p => String(p.name || "").trim()).filter(Boolean));
+        const unc = (evDash.params || [])
+          .filter(p => !sent.has(String(p.name || "").trim())).length;
+        if (unc) {{
+          // Uncovered dashboard params were invisible until expand, so expanding
+          // LOOKED like it changed the event's composition (user 2026-08-05).
+          const h = document.createElement("div"); h.className = "muted";
+          h.textContent = "+" + unc + " dashboard param" + (unc === 1 ? "" : "s")
+            + " not sent by your code — expand for details";
+          h.title = "registered on the dashboard event but absent from this row — the "
+                  + "dashboard column stays empty unless you add a matching param";
+          div.appendChild(h);
+        }}
+      }}
       host.appendChild(div); return;
     }}
     const g = document.createElement("div"); g.className = "grid";
@@ -881,10 +897,6 @@ function renderEvents() {{
     if (r.note) {{ const n = document.createElement("span"); n.className = "muted"; n.textContent = r.note; g.appendChild(n); }}
     div.appendChild(g);
     if (evDash) {{
-      const dn = document.createElement("div"); dn.className = "muted";
-      dn.textContent = "wires into the existing dashboard event — the sync adds only NEW "
-        + "params (add-params), never a create; renaming opts out of adoption";
-      div.appendChild(dn);
       // Only the dashboard params the local code does NOT cover — covered ones show
       // once, in the editable table below, with the "registered" chip (a run drew
       // episode_number twice, user 2026-08-05).
@@ -892,6 +904,14 @@ function renderEvents() {{
         .map(p => String(p.name || "").trim()).filter(Boolean));
       const uncovered = (evDash.params || [])
         .filter(p => !localNames.has(String(p.name || "").trim()));
+      if (!uncovered.length) {{
+        // No table to tell the story — keep one line of adopt semantics (otherwise
+        // it lives only in the badge hover).
+        const dn = document.createElement("div"); dn.className = "muted";
+        dn.textContent = "wires into the existing dashboard event — the sync adds only NEW "
+          + "params (add-params), never a create; renaming opts out of adoption";
+        div.appendChild(dn);
+      }}
       if (uncovered.length) {{
         const dt = document.createElement("table"); dt.className = "sub";
         const hr2 = document.createElement("tr");
@@ -1023,11 +1043,23 @@ function renderEvents() {{
           sysCell.appendChild(sn);
           tr.appendChild(td(sysCell));
         }}
+        const dashHit = (!sysHit && evDash)
+          ? (evDash.params || []).find(dp =>
+              String(dp.name || "").trim() === String(p.name || "").trim())
+          : undefined;
+        if (dashHit && dashHit.kind) p.kind = dashHit.kind;
         // Enum-values input shows ONLY while kind === enumeration, but the VALUE is
         // preserved on kind changes (discovery-found candidates must survive a toggle);
         // the EXPORT strips it for non-enumeration kinds instead.
-        if (!sysHit) tr.appendChild(td(kindSelect(EVENT_PARAM_KINDS, p.kind, v => p.kind = v, "e" + i + "-p" + j + "-k")));
-        if (!sysHit && p.kind === "enumeration") {{
+        if (!sysHit && !dashHit) tr.appendChild(td(kindSelect(EVENT_PARAM_KINDS, p.kind, v => p.kind = v, "e" + i + "-p" + j + "-k")));
+        if (dashHit) {{
+          const kk = document.createElement("span"); kk.className = "muted";
+          kk.textContent = p.kind + " (fixed)";
+          kk.title = "the type is pinned by the dashboard param — the sync never mutates "
+                   + "existing params; rename if you mean a NEW param with its own type";
+          tr.appendChild(td(kk));
+        }}
+        if (!sysHit && !dashHit && p.kind === "enumeration") {{
           tr.appendChild(td(textInput(p.extra, "e" + i + "-p" + j + "-x", v => p.extra = v,
             {{placeholder: "a, b, c", size: 18,
               bad: !String(p.extra || "").trim() || enumValuesTooLong(p.extra),
@@ -1035,8 +1067,7 @@ function renderEvents() {{
                 [!String(p.extra || "").trim(), "an enumeration needs at least one value"],
               ], "each value must be 50 characters or less")}})));
         }}
-        if (!sysHit && evDash && (evDash.params || [])
-            .some(dp => String(dp.name || "").trim() === String(p.name || "").trim())) {{
+        if (dashHit) {{
           const rg = document.createElement("span"); rg.className = "muted";
           rg.textContent = "registered";
           rg.title = "this param already exists on the dashboard event — runtime sends the "
