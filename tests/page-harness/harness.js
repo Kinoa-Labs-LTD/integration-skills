@@ -365,15 +365,14 @@ function testEvents(file) {
   rowByText(w, "events", "DailyBonus.cs:41").querySelector("button.pencil").click();
 
   // ---- Dashboard->Code orphans (2026-08-05): registry entity with no page row
-  check("events: orphan section lists the dashboard-only event",
-        w.document.getElementById("events-card").textContent.includes("push_opt_in")
-        && w.document.getElementById("events-card").textContent.includes("no code carrier"));
   check("events: orphan is not exported while unticked",
         !exportPlan(w).events.some(e => e.name === "push_opt_in"));
   check("events: orphan card starts collapsed with the count visible",
         w.document.getElementById("events-card").textContent.includes("no code carrier (1)")
         && ![...w.document.querySelectorAll("#events-card .orphans input.inc")].length);
   w.document.querySelector("#events-card .orphans strong").parentElement.click();
+  check("events: expanded orphan card lists the dashboard-only event",
+        w.document.getElementById("events-card").textContent.includes("push_opt_in"));
   const orCb = [...w.document.querySelectorAll("#events-card .orphans input.inc")]
     .find(c => (c.title || "").includes("generate the code carrier"));
   orCb.checked = true; orCb.dispatchEvent(new w.Event("change", { bubbles: true }));
@@ -535,9 +534,9 @@ function testFields(file) {
     .querySelector("button.remove").click();
 
   // ---- Dashboard->Code orphan (fields): VIP tier -> property derivation on tick
-  check("fields: orphan section lists the dashboard-only field",
-        w.document.getElementById("fields-card").textContent.includes("VIP tier"));
   w.document.querySelector("#fields-card .orphans strong").parentElement.click();
+  check("fields: expanded orphan card lists the dashboard-only field",
+        w.document.getElementById("fields-card").textContent.includes("VIP tier"));
   const pfOr = [...w.document.querySelectorAll("#fields-card .orphans .grid")]
     .find(g2 => g2.textContent.includes("VIP tier")).querySelector("input.inc");
   pfOr.checked = true; pfOr.dispatchEvent(new w.Event("change", { bubbles: true }));
