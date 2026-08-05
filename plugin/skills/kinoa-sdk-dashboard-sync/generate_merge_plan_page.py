@@ -742,13 +742,19 @@ function isReservedFsColumn(n) {{
 
 // Dashboard->Code orphans: registry entities with NO page row (an operator created
 // them on the dashboard; code has no carrier). Read-only + a tick = take the task.
-function renderOrphanSection(host, title, items) {{
+function renderOrphanSection(host, title, typeBadge, items) {{
   if (!items.length) return;
-  const box = document.createElement("div"); box.className = "row";
+  // A card of its own: the dashed border reads as "not yet materialized in code".
+  const box = document.createElement("div");
+  box.className = "orphans";
+  box.style.cssText = "border:1px dashed #a9b1ba;background:#fafbfc;border-radius:8px;"
+    + "padding:0.8rem 1rem;margin-top:1rem";
   box.insertAdjacentHTML("beforeend",
-    '<div class="muted" style="margin-bottom:0.3rem">' + title
-    + " — registered on the dashboard, nothing in code; tick to GENERATE the code "
-    + "carrier (value sources are confirmed at the wiring gates)</div>");
+    '<div style="margin-bottom:0.45rem"><strong>' + title + "</strong> "
+    + '<span class="badge ' + typeBadge.cls + '">' + typeBadge.text + "</span>"
+    + '<div class="muted">registered on the dashboard, nothing in code — tick to '
+    + "GENERATE the code carrier (value sources are confirmed at the wiring "
+    + "gates)</div></div>");
   items.forEach(it => {{
     const line = document.createElement("div"); line.className = "grid";
     const cb = document.createElement("input"); cb.type = "checkbox"; cb.className = "inc";
@@ -773,7 +779,8 @@ function renderEvents() {{
     host.insertAdjacentHTML("beforeend",
       '<div class="muted" style="margin:0.2rem 0 0.4rem">checked against the live dashboard: '
       + (DATA.predefined_wire_names || []).length + " predefined / "
-      + (DATA.debug_wire_names || []).length + " debug event names</div>");
+      + (DATA.debug_wire_names || []).length + " debug / "
+      + (DATA.custom_event_registry || []).length + " custom event names</div>");
   }}
   if (REGISTRIES_SOURCE === "fallback") {{
     host.insertAdjacentHTML("beforeend",
@@ -1030,6 +1037,7 @@ function renderEvents() {{
   }});
   const evNames = new Set(state.events.map(r => String(r.name || "").trim()));
   renderOrphanSection(host, "On dashboard — no code carrier",
+    {{text: "custom", cls: "b-user"}},
     Object.values(CUSTOM_EVENT_REGISTRY)
       .filter(e => !evNames.has(String(e.name).trim()))
       .map(e => ({{key: "ev:" + e.name,
@@ -1249,6 +1257,7 @@ function renderFields() {{
   }});
   const pfPaths = new Set(state.player_fields.map(r => String(r.path || "").trim() || snake(propOf(r))));
   renderOrphanSection(host, "On dashboard — no code carrier",
+    {{text: "user", cls: "b-user"}},
     Object.values(FR_CUSTOM)
       .filter(e => !pfPaths.has(String(e.path).trim()))
       .map(e => ({{key: "pf:" + e.path,
