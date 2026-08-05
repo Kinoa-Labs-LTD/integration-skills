@@ -5,7 +5,7 @@ Snapshot 2026-08-05 (audit of `generate_merge_plan_page.py`). Classification:
 - **page-mechanics** — needed for the page/export contract itself (keep),
 - **INVENTED** — a constraint the dashboard does NOT enforce (candidates for removal; over-forbidding legal data is the harm).
 
-Status of invented rules: resources default-value `:` ban REMOVED 2026-08-05 (user order).
+Status of invented rules: resources default-value `:` ban (#4) and field-description `:` ban (#6) REMOVED 2026-08-05 (user order).
 The rest are pending user decision — see the notes column.
 
 
@@ -107,7 +107,7 @@ The rest are pending user decision — see the notes column.
 | 3 | resources: field name charset `RES_FIELD_NAME_RE` | RELAX candidate — JSON body keys are unrestricted server-side; the charset came from the doc-block grammar + key-charset analogy. Needs backend confirmation before relaxing. |
 | 4 | resources: `:` in DEFAULT value | REMOVED 2026-08-05 — dashboard stores plain values; `ratio 1:2` is legal. |
 | 5 | resources: `:`/`=` in enum values | REMOVE candidate — same doc-block rationale; dashboard does not restrict. Blocked on module-14 carrier hardening (grammar splits tokens on `:`/`=`). |
-| 6 | resources: `:` in field description | REMOVE candidate — same rationale; dashboard does not restrict. Same carrier dependency. |
+| 6 | resources: `:` in field description | REMOVED 2026-08-05 (user order). |
 
 Follow-up: rules 4–6 shift the burden onto the module-14 `KinoaResources.cs` doc-block
 carrier (its grammar splits on `:`) — the carrier grammar must be hardened (escaping or

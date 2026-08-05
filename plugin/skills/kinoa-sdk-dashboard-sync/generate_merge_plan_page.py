@@ -689,8 +689,7 @@ function resRowInvalid(r, dup, ndup) {{
     || String(f.name || "").length > 100
     || !RESOURCE_FIELD_TYPES.includes(f.field_type)
     || (f.field_type === "enumeration" && resEnumBad(f))
-    || resDefaultBad(f)
-    || String(f.description || "").includes(":"));
+    || resDefaultBad(f));
 }}
 function fsSettingRowInvalid(r, kdup, schemaNames) {{
   return !String(r.key || "").trim() || kdup(r.key) || String(r.key || "").length > 100
@@ -1678,9 +1677,7 @@ function renderResources() {{
                  + "doc-block carrier")}})));
         }}
         tr.appendChild(td(textInput(f.description, "r" + i + "-f" + j + "-fd", v => f.description = v,
-          {{placeholder: "field description", size: 16,
-            bad: String(f.description || "").includes(":"),
-            title: "':' is not representable in the code doc-block carrier"}})));
+          {{placeholder: "field description", size: 16}})));
       }}
       tbl.appendChild(tr);
     }});
