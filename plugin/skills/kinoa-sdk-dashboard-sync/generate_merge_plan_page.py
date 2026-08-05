@@ -1109,17 +1109,9 @@ function renderFields() {{
     const tCalc = !tPredef && FR_CALC[pathNow0] !== undefined;
     const tExt = !tPredef && !tCalc && String(pathNow0).startsWith("calculated_fields.");
     const tDash = !tPredef && FR_CUSTOM[pathNow0] !== undefined;
-    const fLabel = "new field";
-    const fCls = "b-new";
+    const fLabel = tPredef ? "predefined" : tCalc ? "calculated" : tExt ? "external" : "new field";
+    const fCls = tPredef ? "b-predef" : tCalc ? "b-calc" : tExt ? "b-ext" : "b-new";
     const extras = [];
-    if (!r.existing) {{
-      // Type lamp beside the label (events symmetry, user 2026-08-05):
-      // new field | on dashboard | user.
-      extras.push(tPredef ? {{text: "predefined", cls: "b-predef"}}
-        : tCalc ? {{text: "calculated", cls: "b-calc"}}
-        : tExt ? {{text: "external", cls: "b-ext"}}
-        : {{text: "user", cls: "b-user"}});
-    }}
     if (r.existing) {{
       // Type badge for existing rows (2026-08-04): predefined_in_use base writes now
       // render as read-only rows, so the type became a VARIABLE worth a lamp.
