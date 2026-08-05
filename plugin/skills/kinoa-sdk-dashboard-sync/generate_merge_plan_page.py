@@ -743,6 +743,10 @@ function isReservedFsColumn(n) {{
 // Dashboard->Code orphans: registry entities with NO page row (an operator created
 // them on the dashboard; code has no carrier). Read-only + a tick = take the task.
 function renderOrphanSection(host, title, typeBadge, items) {{
+  // The box lives on the CARD, after the ＋Add button — rows and the add action stay
+  // together, the dashboard-orphans card sits below them (user 2026-08-05).
+  const card = host.parentElement;
+  [...card.querySelectorAll(":scope > .orphans")].forEach(n => n.remove());
   if (!items.length) return;
   // A card of its own: the dashed border reads as "not yet materialized in code".
   const box = document.createElement("div");
@@ -769,7 +773,7 @@ function renderOrphanSection(host, title, typeBadge, items) {{
     line.insertAdjacentHTML("beforeend", it.html);
     box.appendChild(line);
   }});
-  host.appendChild(box);
+  card.appendChild(box);
 }}
 
 function renderEvents() {{
