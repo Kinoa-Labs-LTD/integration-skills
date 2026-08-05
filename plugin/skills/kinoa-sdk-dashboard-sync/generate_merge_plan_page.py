@@ -1075,7 +1075,7 @@ function renderEvents() {{
   }});
   const evNames = new Set(state.events.map(r => String(r.name || "").trim()));
   renderOrphanSection(host, "On dashboard — no code carrier",
-    {{text: "custom", cls: "b-user"}},
+    {{text: "user", cls: "b-user"}},
     Object.values(CUSTOM_EVENT_REGISTRY)
       .filter(e => !evNames.has(String(e.name).trim()))
       .map(e => ({{key: "ev:" + e.name,
