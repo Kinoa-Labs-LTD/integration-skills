@@ -323,6 +323,9 @@ const state = {{
   player_fields: (DATA.player_fields || []).slice(),
   feature_settings: normalizeFs(DATA.feature_settings),
   resources: (DATA.resources || []).map(x => ({{fields: [], ...x}})),
+  // Dashboard->Code (2026-08-05): ticks of "on dashboard — no code carrier" orphans,
+  // keyed "ev:<name>" / "pf:<path>". A tick asks the run to GENERATE the carrier.
+  orphan_ticks: {{}},
 }};
 // System-kind coercion applies to PROPOSAL rows only: an existing row is a read-only
 // MEASUREMENT — its kind ships verbatim even when a system-named param was measured
@@ -410,6 +413,7 @@ function restoreSnap(snap) {{
   const d = JSON.parse(snap);
   state.events = d.events; state.player_fields = d.player_fields;
   state.feature_settings = d.feature_settings; state.resources = d.resources;
+  state.orphan_ticks = d.orphan_ticks || {{}};
   RESTORING = true; render(); RESTORING = false;
 }}
 document.addEventListener("keydown", e => {{
@@ -736,6 +740,32 @@ function isReservedFsColumn(n) {{
   return t.startsWith("filter:") || String(n || "").includes("<");
 }}
 
+// Dashboard->Code orphans: registry entities with NO page row (an operator created
+// them on the dashboard; code has no carrier). Read-only + a tick = take the task.
+function renderOrphanSection(host, title, items) {{
+  if (!items.length) return;
+  const box = document.createElement("div"); box.className = "row";
+  box.insertAdjacentHTML("beforeend",
+    '<div class="muted" style="margin-bottom:0.3rem">' + title
+    + " — registered on the dashboard, nothing in code; tick to GENERATE the code "
+    + "carrier (value sources are confirmed at the wiring gates)</div>");
+  items.forEach(it => {{
+    const line = document.createElement("div"); line.className = "grid";
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.className = "inc";
+    cb.checked = !!state.orphan_ticks[it.key];
+    cb.title = "generate the code carrier for this dashboard entity";
+    cb.addEventListener("change", e => {{
+      if (e.target.checked) state.orphan_ticks[it.key] = true;
+      else delete state.orphan_ticks[it.key];
+      render();
+    }});
+    line.appendChild(cb);
+    line.insertAdjacentHTML("beforeend", it.html);
+    box.appendChild(line);
+  }});
+  host.appendChild(box);
+}}
+
 function renderEvents() {{
   const host = document.getElementById("events"); host.innerHTML = "";
   if (REGISTRIES_SOURCE === "live"
@@ -998,7 +1028,17 @@ function renderEvents() {{
     }}
     host.appendChild(div);
   }});
+  const evNames = new Set(state.events.map(r => String(r.name || "").trim()));
+  renderOrphanSection(host, "On dashboard — no code carrier",
+    Object.values(CUSTOM_EVENT_REGISTRY)
+      .filter(e => !evNames.has(String(e.name).trim()))
+      .map(e => ({{key: "ev:" + e.name,
+        html: "<code>" + esc(e.name) + "</code> <span class=\"muted\">"
+          + ((e.params || []).map(p => esc(p.name) + " (" + esc(p.kind || "") + ")").join(", ")
+             || "no params") + "</span>"}})));
 }}
+
+
 
 function renderFields() {{
   const host = document.getElementById("player_fields"); host.innerHTML = "";
@@ -1207,6 +1247,14 @@ function renderFields() {{
     div.appendChild(g);
     host.appendChild(div);
   }});
+  const pfPaths = new Set(state.player_fields.map(r => String(r.path || "").trim() || snake(propOf(r))));
+  renderOrphanSection(host, "On dashboard — no code carrier",
+    Object.values(FR_CUSTOM)
+      .filter(e => !pfPaths.has(String(e.path).trim()))
+      .map(e => ({{key: "pf:" + e.path,
+        html: "<code>" + esc(e.name || e.path) + "</code> <span class=\"muted\">→ "
+          + esc(e.path) + " · " + esc(e.kind || "")
+          + (e.description ? " · " + esc(e.description) : "") + "</span>"}})));
 }}
 
 function renderFs() {{
@@ -1609,7 +1657,12 @@ function exportJson() {{
     confirmed_at: new Date().toISOString(),
     page_generated_at: DATA.generated_at,
     payload_version: DATA_VERSION,
-    events: state.events.filter(keep).map(r => {{
+    events: Object.values(CUSTOM_EVENT_REGISTRY)
+      .filter(e => state.orphan_ticks["ev:" + e.name])
+      .map(e => ({{id: "orph-" + e.name, name: e.name, kind: "custom", existing: false,
+        dashboard_orphan: true,
+        params: (e.params || []).map(p => ({{name: p.name, kind: p.kind || "string", extra: ""}}))}}))
+      .concat(state.events.filter(keep).map(r => {{
       if (r.existing) {{
         // Measured part echoes verbatim; ticked proposals ship under proposed_params
         // (append-only key — older consumers ignore it). No ticked proposals -> key absent.
@@ -1633,8 +1686,14 @@ function exportJson() {{
           return SYSTEM_EVENT_PARAM_NAMES.includes(String(p.name || "").trim())
             ? {{...c, system_field: true}} : c;
         }})}});
-    }}),
-    player_fields: state.player_fields.filter(keep).map(r => {{
+    }})),
+    player_fields: Object.values(FR_CUSTOM)
+      .filter(e => state.orphan_ticks["pf:" + e.path])
+      .map(e => ({{id: "orph-" + e.path, name: e.name || e.path,
+        property: propOf({{name: e.name || e.path}}), path: e.path,
+        kind: e.kind || "string", description: e.description || "",
+        existing: false, dashboard_orphan: true}}))
+      .concat(state.player_fields.filter(keep).map(r => {{
       if (r.existing) return r;  // echoed verbatim — the row is a measurement of code
       const out = stripLocal(r.kind === "enumeration" ? {{...r}} : {{...r, extra: ""}});
       const p = String(r.path || "").trim() || snake(propOf(r));
@@ -1648,7 +1707,7 @@ function exportJson() {{
       // Append-only marker: the sync ACTIVATES the dashboard's predefined field —
       // implementation takes the module-02 SDK-state route, never a custom create.
       if (FR_PREDEF[p] !== undefined) out.predefined_field = true;
-      else if (FR_CUSTOM[p] !== undefined) {{
+      else if (FR_CUSTOM[p] !== undefined) {{  // adopt marker (candidate rows)
         // ADOPT marker (append-only, 2026-08-04): wire a code carrier for the existing
         // dashboard field — the sync sees already_ok, never a create.
         out.dashboard_field = true;
@@ -1656,7 +1715,7 @@ function exportJson() {{
         if (FR_CUSTOM[p].description) out.description = FR_CUSTOM[p].description;
       }}
       return out;
-    }}),
+    }})),
     feature_settings: {{schemas: state.feature_settings.schemas.filter(keep)
         .map(r => r.existing ? r : stripLocal({{...r,
           columns: (r.columns || []).filter(c => c.included !== false)

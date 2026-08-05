@@ -127,6 +127,7 @@ function testEvents(file) {
   const luProbe = [...w.document.querySelectorAll("#events .row")]
     .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "level_up")
                && d.querySelector("button.pencil"));
+
   // ---- ✕ remove: only page-added rows are deletable (measured/existing keep checkboxes)
   check("events: page-added row renders a remove button", !!luProbe.querySelector("button.remove"));
   check("events: measured candidate has no remove button",
@@ -362,6 +363,24 @@ function testEvents(file) {
     .find(i2 => i2.value === "daily_bonus_v2").dataset.fid, "daily_bonus");
   rowByText(w, "events", "DailyBonus.cs:41").querySelector("button.pencil").click();
 
+  // ---- Dashboard->Code orphans (2026-08-05): registry entity with no page row
+  check("events: orphan section lists the dashboard-only event",
+        w.document.getElementById("events").textContent.includes("push_opt_in")
+        && w.document.getElementById("events").textContent.includes("no code carrier"));
+  check("events: orphan is not exported while unticked",
+        !exportPlan(w).events.some(e => e.name === "push_opt_in"));
+  const orCb = [...w.document.querySelectorAll("#events .row input.inc")]
+    .find(c => (c.title || "").includes("generate the code carrier"));
+  orCb.checked = true; orCb.dispatchEvent(new w.Event("change", { bubbles: true }));
+  const orRow = exportPlan(w).events.find(e => e.name === "push_opt_in");
+  check("events: ticked orphan ships with the marker and dashboard params",
+        orRow && orRow.dashboard_orphan === true && orRow.existing === false
+        && deepEq(orRow.params, [{ name: "channel", kind: "string", extra: "" }]),
+        JSON.stringify(orRow));
+  const orCb2 = [...w.document.querySelectorAll("#events .row input.inc")]
+    .find(c => (c.title || "").includes("generate the code carrier"));
+  orCb2.checked = false; orCb2.dispatchEvent(new w.Event("change", { bubbles: true }));
+
   // ---- ⌘Z / Ctrl+Z: whole-state undo survives re-renders (native stacks die)
   const zKey = extra => new w.KeyboardEvent("keydown",
     Object.assign({ key: "z", metaKey: true, bubbles: true, cancelable: true }, extra));
@@ -506,6 +525,20 @@ function testFields(file) {
     .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "InitialDeviceOS"))
     .querySelector("button.remove").click();
 
+  // ---- Dashboard->Code orphan (fields): VIP tier -> property derivation on tick
+  check("fields: orphan section lists the dashboard-only field",
+        w.document.getElementById("player_fields").textContent.includes("VIP tier"));
+  const pfOr = [...w.document.querySelectorAll("#player_fields .row .grid")]
+    .find(g2 => g2.textContent.includes("VIP tier")).querySelector("input.inc");
+  pfOr.checked = true; pfOr.dispatchEvent(new w.Event("change", { bubbles: true }));
+  const pfOrRow = exportPlan(w).player_fields.find(f => f.path === "vip_tier");
+  check("fields: ticked orphan ships marker + derived property + dashboard attrs",
+        pfOrRow && pfOrRow.dashboard_orphan === true && pfOrRow.property === "VIPTier"
+        && pfOrRow.kind === "number" && pfOrRow.existing === false, JSON.stringify(pfOrRow));
+  const pfOr2 = [...w.document.querySelectorAll("#player_fields .row .grid")]
+    .find(g2 => g2.textContent.includes("VIP tier")).querySelector("input.inc");
+  pfOr2.checked = false; pfOr2.dispatchEvent(new w.Event("change", { bubbles: true }));
+
   // "on dashboard" ADOPT route: badge + pinned kind + read-only description; the
   // hand-back carries dashboard_field: true and the dashboard's description.
   w.document.getElementById("add-field").click();
@@ -547,7 +580,7 @@ function testFields(file) {
         })());
   check("fields: live-registry header line rendered",
         w.document.getElementById("player_fields").textContent
-          .includes("checked against the live dashboard: 1 predefined / 1 calculated / 1 custom"));
+          .includes("checked against the live dashboard: 1 predefined / 1 calculated / 2 custom"));
   // collapse the adopt probe: the badge must survive the select-first view
   rowByText(w, "player_fields", "wires a code carrier").querySelector("button.pencil").click();
   check("fields: adopt badge visible on the COLLAPSED row",

@@ -372,8 +372,13 @@ class MergePlanPageTests(unittest.TestCase):
         # breaks this test on purpose — a conscious decision, not an accident.
         _, _, out_path = self._run(_payload())
         html = open(out_path, encoding="utf-8").read()
+        # events/player_fields gained a Dashboard->Code orphan prefix (2026-08-05):
+        # ticked registry orphans concat BEFORE the state rows — keys stay append-only.
         for frozen in ("confirmed_at:", "page_generated_at:", "payload_version:",
-                       "events: state.events", "player_fields: state.player_fields",
+                       "events: Object.values(CUSTOM_EVENT_REGISTRY)",
+                       ".concat(state.events.filter(keep)",
+                       "player_fields: Object.values(FR_CUSTOM)",
+                       ".concat(state.player_fields.filter(keep)",
                        "feature_settings: {schemas: state.feature_settings.schemas", "resources: state.resources"):
             self.assertIn(frozen, html)
 

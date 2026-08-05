@@ -43,7 +43,9 @@ PAGES = {
         "payload_version": 1, "generated_at": TS, "game_id": GAME,
         "registries_source": "live",
         "custom_event_registry": [{"name": "daily_bonus",
-                                   "params": [{"name": "streak", "kind": "number"}]}],
+                                   "params": [{"name": "streak", "kind": "number"}]},
+                                  {"name": "push_opt_in",
+                                   "params": [{"name": "channel", "kind": "string"}]}],
         "integration_type": "SDK", "predefined_wire_names": PREDEFINED,
         "debug_wire_names": DEBUG, "sdk_automatic_wire_names": SDK_AUTOMATIC,
         "events": [
@@ -78,7 +80,9 @@ PAGES = {
             "custom_paths": ["transaction_count"],
             "custom_fields": [{"path": "transaction_count", "kind": "number",
                                "name": "TransactionCount",
-                               "description": "Total number of IAP transactions."}],
+                               "description": "Total number of IAP transactions."},
+                              {"path": "vip_tier", "kind": "number", "name": "VIP tier",
+                               "description": "Operator-configured VIP tier."}],
             "names": ["Level", "Days since install", "TransactionCount"]},
         "player_fields": [
             # String ids on purpose: producers mint "pf-ex-1"-style ids; the page's
