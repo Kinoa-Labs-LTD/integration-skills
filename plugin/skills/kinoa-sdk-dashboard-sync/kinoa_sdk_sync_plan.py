@@ -79,9 +79,11 @@ RESOURCE_KEY_RE = r"^[a-zA-Z][a-zA-Z0-9_-]*$"
 # system param (the event loses its standard system column); editing a system param
 # via PUT fails with an unhandled 500 (system params are shared template rows).
 SYSTEM_EVENT_PARAM_NAMES = ("device_id", "level", "place", "success", "time", "time_ms", "wifi")
-# The three that ride the event's BASE CLASS (SetLevel/SetPlace/Success); the other
-# four are composed by the SDK itself — the route advice differs (user 2026-08-03).
-SYSTEM_BASE_PROP_PARAM_NAMES = ("level", "place", "success")
+# The two that ride the event's BASE CLASS via settable properties (SetLevel/SetPlace);
+# `success` is a base field too but READ-ONLY (always true — no setter, verified against
+# SDK sources 2026-08-05), and the other four are composed by the SDK itself — the route
+# advice differs per group (user 2026-08-03; success narrowed 2026-08-05).
+SYSTEM_BASE_PROP_PARAM_NAMES = ("level", "place")
 # Platform-reserved player-field paths (plugin-shipped backend snapshot 2026-08-04;
 # prefix semantics — see reserved-player-field-paths.json).
 RESERVED_PLAYER_FIELD_PATHS = tuple(json.loads(
@@ -596,11 +598,16 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
             if _norm(p.get("name")) in SYSTEM_EVENT_PARAM_NAMES:
                 # Excluded like the flagged case — the server refuses the whole call
                 # otherwise; the warning carries the per-group route (user 2026-08-03).
-                route = ("the value rides the event's base class — move it to "
-                         "SetLevel(...)/SetPlace(...)/Success in the builder"
-                         if _norm(p.get("name")) in SYSTEM_BASE_PROP_PARAM_NAMES
-                         else "the SDK composes it automatically — remove the custom param "
-                              "in game code")
+                if _norm(p.get("name")) in SYSTEM_BASE_PROP_PARAM_NAMES:
+                    route = ("the value rides the event's base class — move it to "
+                             "SetLevel(...)/SetPlace(...) in the builder")
+                elif _norm(p.get("name")) == "success":
+                    route = ("the base field exists on every event but is READ-ONLY — always "
+                             "true in this SDK version, no setter; remove the custom param, "
+                             "nothing to implement")
+                else:
+                    route = ("the SDK composes it automatically — remove the custom param "
+                             "in game code")
                 plan["events"]["warnings"].append({
                     "name": item.get("name"), "param": p.get("name"),
                     "reason": f"system-param collision: '{p.get('name')}' is RESERVED by system "

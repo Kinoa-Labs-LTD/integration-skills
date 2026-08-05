@@ -222,6 +222,7 @@ class MergePlanPageTests(unittest.TestCase):
         # badge + route note, export carries system_field: true, gate NOT blocked.
         self.assertIn("level", self.mod.SYSTEM_EVENT_PARAM_NAMES)
         self.assertEqual(sorted(self.mod.SYSTEM_BASE_PROP_PARAM_NAMES
+                                + self.mod.SYSTEM_READONLY_PARAM_NAMES
                                 + self.mod.SYSTEM_AUTO_PARAM_NAMES),
                          self.mod.SYSTEM_EVENT_PARAM_NAMES)
         self.assertIn("b-system", html)

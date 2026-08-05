@@ -134,11 +134,15 @@ RESOURCE_KEY_RE = r"^[a-zA-Z][a-zA-Z0-9_-]*$"
 # The dashboard auto-attaches these to every event; an operator param with the same
 # name silently DISPLACES the system column (planner constant — parity-tested).
 SYSTEM_EVENT_PARAM_NAMES = ["device_id", "level", "place", "success", "time", "time_ms", "wifi"]
-# The reserved set splits by ROUTE (SDK internals, verified 2026-07-29/30): base-class
-# properties the game sets vs values the SDK composes itself. Union == the reserved list.
-SYSTEM_BASE_PROP_PARAM_NAMES = ["level", "place", "success"]
+# The reserved set splits by ROUTE (SDK internals, verified 2026-07-29/30; success
+# narrowed 2026-08-05): base-class properties the game sets (SetLevel/SetPlace), the
+# read-only base field `success` (always true — no setter exists, so nothing routes
+# there), and values the SDK composes itself. Union == the reserved list.
+SYSTEM_BASE_PROP_PARAM_NAMES = ["level", "place"]
+SYSTEM_READONLY_PARAM_NAMES = ["success"]
 SYSTEM_AUTO_PARAM_NAMES = ["device_id", "time", "time_ms", "wifi"]
-assert sorted(SYSTEM_BASE_PROP_PARAM_NAMES + SYSTEM_AUTO_PARAM_NAMES) == SYSTEM_EVENT_PARAM_NAMES
+assert sorted(SYSTEM_BASE_PROP_PARAM_NAMES + SYSTEM_READONLY_PARAM_NAMES
+              + SYSTEM_AUTO_PARAM_NAMES) == SYSTEM_EVENT_PARAM_NAMES
 # Canonical kinds pinned by the SDK base classes (live-read 2026-07-30: GameEventData /
 # ExtendedGameEventData property types) — the page LOCKS the type for system params.
 SYSTEM_PARAM_KINDS = {"device_id": "string", "level": "number", "place": "string",
@@ -1010,8 +1014,10 @@ function renderEvents() {{
               + 'server refuses registering it; canonical kind '
               + esc(SYSTEM_PARAM_KINDS[String(p.name || "").trim()] || "") + ', canonical route: '
               + (SYSTEM_BASE_PROP_PARAM_NAMES.includes(String(p.name || "").trim())
-                 ? "the event's base-class field (SetLevel/SetPlace/Success)"
-                 : "composed by the SDK — remove the custom param")
+                 ? "the event's base-class field (SetLevel/SetPlace)"
+                 : String(p.name || "").trim() === "success"
+                   ? "read-only base field — always true in this SDK version (no setter); remove the custom param"
+                   : "composed by the SDK — remove the custom param")
               + ". Fix code-first.</span>"
             : esc(p.extra || "")) + "</td>";
       }} else {{
@@ -1049,8 +1055,10 @@ function renderEvents() {{
           sn.textContent = INTEGRATION_TYPE === "API"
             ? " built-in system field — your integration supplies its value directly in the event body; never registered as a custom param"
             : (SYSTEM_BASE_PROP_PARAM_NAMES.includes(String(p.name || "").trim())
-               ? " built-in event field — the value rides the base class (SetLevel/SetPlace/Success); no dashboard registration"
-               : " composed by the SDK automatically — nothing to implement");
+               ? " built-in event field — the value rides the base class (SetLevel/SetPlace); no dashboard registration"
+               : String(p.name || "").trim() === "success"
+                 ? " built-in event field — read-only in this SDK version (always true, no setter); nothing to implement, no dashboard registration"
+                 : " composed by the SDK automatically — nothing to implement");
           sysCell.appendChild(sn);
           tr.appendChild(td(sysCell));
         }}
