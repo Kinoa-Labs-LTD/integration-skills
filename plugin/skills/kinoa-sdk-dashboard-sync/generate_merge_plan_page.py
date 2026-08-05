@@ -517,6 +517,17 @@ function kindSelect(kinds, value, onchange, fid) {{
   return sel;
 }}
 
+function pinnedKind(kind, title) {{
+  // A pinned (non-editable) kind renders as a DISABLED select — the lock itself
+  // communicates "not yours to change"; no "(fixed)" text (user feedback 2026-08-05).
+  const sel = document.createElement("select");
+  sel.disabled = true;
+  const o = document.createElement("option"); o.textContent = kind; o.selected = true;
+  sel.appendChild(o);
+  if (title) sel.title = title;
+  return sel;
+}}
+
 function head(row, label, opts = {{}}) {{
   const div = document.createElement("div"); div.className = "grid";
   if (!row.existing) {{
@@ -1020,11 +1031,9 @@ function renderEvents() {{
               [pdup(p.name), "duplicate param name on this event"],
             ], "maximum 30 characters")}})));
         if (sysHit) {{
-          // The type is PINNED by the base class — no select for system params.
-          const kk = document.createElement("span"); kk.className = "muted";
-          kk.textContent = p.kind + " (fixed)";
-          kk.title = "the type is pinned by the event's built-in field — it must match the dashboard exactly";
-          tr.appendChild(td(kk));
+          // The type is PINNED by the base class — locked select, no editable choice.
+          tr.appendChild(td(pinnedKind(p.kind,
+            "the type is pinned by the event's built-in field — it must match the dashboard exactly")));
         }}
         if (sysHit) {{
           const sysCell = document.createElement("span");
@@ -1055,11 +1064,9 @@ function renderEvents() {{
         // the EXPORT strips it for non-enumeration kinds instead.
         if (!sysHit && !dashHit) tr.appendChild(td(kindSelect(EVENT_PARAM_KINDS, p.kind, v => p.kind = v, "e" + i + "-p" + j + "-k")));
         if (dashHit) {{
-          const kk = document.createElement("span"); kk.className = "muted";
-          kk.textContent = p.kind + " (fixed)";
-          kk.title = "the type is pinned by the dashboard param — the sync never mutates "
-                   + "existing params; rename if you mean a NEW param with its own type";
-          tr.appendChild(td(kk));
+          tr.appendChild(td(pinnedKind(p.kind,
+            "the type is pinned by the dashboard param — the sync never mutates "
+            + "existing params; rename if you mean a NEW param with its own type")));
         }}
         if (!sysHit && !dashHit && p.kind === "enumeration") {{
           tr.appendChild(td(textInput(p.extra, "e" + i + "-p" + j + "-x", v => p.extra = v,
@@ -1236,20 +1243,14 @@ function renderFields() {{
       if (frPredef) {{
         if (FR_PREDEF[pathOf(r)]) {{
           r.kind = FR_PREDEF[pathOf(r)];
-          const kk = document.createElement("span"); kk.className = "muted";
-          kk.textContent = r.kind + " (fixed)";
-          kk.title = "the kind is pinned by the dashboard's predefined field";
-          g.appendChild(kk);
+          g.appendChild(pinnedKind(r.kind, "the kind is pinned by the dashboard's predefined field"));
         }} else {{
           g.appendChild(kindSelect(FIELD_KINDS, r.kind, v => r.kind = v, "f" + i + "-k"));
         }}
       }} else if (frDash) {{
         if (frDash.kind) {{
           r.kind = frDash.kind;
-          const kk = document.createElement("span"); kk.className = "muted";
-          kk.textContent = r.kind + " (fixed)";
-          kk.title = "the kind is pinned by the existing dashboard field";
-          g.appendChild(kk);
+          g.appendChild(pinnedKind(r.kind, "the kind is pinned by the existing dashboard field"));
         }} else {{
           g.appendChild(kindSelect(FIELD_KINDS, r.kind, v => r.kind = v, "f" + i + "-k"));
         }}

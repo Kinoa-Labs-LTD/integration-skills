@@ -232,7 +232,7 @@ class MergePlanPageTests(unittest.TestCase):
         # System-param kinds are pinned by the base class (SDK live-read 2026-07-30)
         self.assertEqual(sorted(self.mod.SYSTEM_PARAM_KINDS), self.mod.SYSTEM_EVENT_PARAM_NAMES)
         self.assertEqual(self.mod.SYSTEM_PARAM_KINDS["level"], "number")
-        self.assertIn('kk.textContent = p.kind + " (fixed)"', html)
+        self.assertIn("pinnedKind(p.kind", html)   # locked select, no "(fixed)" text
         self.assertIn("SYSTEM_PARAM_KINDS[t] !== undefined", html)
         # Dashboard field registry (2026-07-30): predefined path = valid + activate route;
         # calculated path / taken name = red; live custom path = informational.

@@ -297,8 +297,9 @@ function testEvents(file) {
   check("events: system badge + base-class route note shown",
         [...w.document.querySelectorAll("#events .badge")].some(b => b.textContent === "system")
         && w.document.body.textContent.includes("rides the base class"));
-  check("events: system param kind is a fixed label, not a select",
-        w.document.body.textContent.includes("number (fixed)"));
+  check("events: system param kind is a locked select, not an editable one",
+        [...w.document.querySelectorAll("#events select")]
+          .some(s => s.disabled && s.textContent.trim() === "number"));
   const planS = exportPlan(w);
   const evS = planS.events.find(e => !e.existing && (e.params || []).some(p2 => p2.name === "level"));
   check("events: system param exports system_field: true",
@@ -361,15 +362,15 @@ function testEvents(file) {
         && [...dbRow2.querySelectorAll("input[type=text]")].some(i2 => i2.value === "streak"));
   check("events: local param matching a dashboard param carries the registered chip",
         [...dbRow2.querySelectorAll("span")].some(s2 => (s2.title || "").includes("will NOT re-add")));
-  check("events: registered param kind pinned — select only for new params",
-        dbRow2.textContent.includes("(fixed)")
-        && [...dbRow2.querySelectorAll("select")].length === 1);
+  check("events: registered param kind pinned — editable select only for new params",
+        [...dbRow2.querySelectorAll("select")].some(s => s.disabled)
+        && [...dbRow2.querySelectorAll("select")].filter(s => !s.disabled).length === 1);
   typeInto(w, [...dbRow2.querySelectorAll("input[type=text]")]
     .find(i2 => i2.value === "streak").dataset.fid, "streak_x");
   const dbRow2b = rowByText(w, "events", "DailyBonus.cs:41");
   check("events: renaming a registered param unpins its type",
-        !dbRow2b.textContent.includes("(fixed)")
-        && [...dbRow2b.querySelectorAll("select")].length === 2);
+        ![...dbRow2b.querySelectorAll("select")].some(s => s.disabled)
+        && [...dbRow2b.querySelectorAll("select")].filter(s => !s.disabled).length === 2);
   typeInto(w, [...dbRow2b.querySelectorAll("input[type=text]")]
     .find(i2 => i2.value === "streak_x").dataset.fid, "streak");
   const dbRow2c = rowByText(w, "events", "DailyBonus.cs:41");
@@ -626,7 +627,8 @@ function testFields(file) {
   check("fields: adopt row shows the on-dashboard badge + pinned kind",
         [...w.document.querySelectorAll("#player_fields .badge")]
           .some(b => b.textContent === "on dashboard")
-        && w.document.getElementById("player_fields").textContent.includes("number (fixed)"));
+        && [...w.document.querySelectorAll("#player_fields select")]
+          .some(s => s.disabled && s.textContent.trim() === "number"));
   check("fields: adopt row shows the dashboard description read-only",
         w.document.getElementById("player_fields").textContent
           .includes("description (dashboard): Total number of IAP transactions."));
@@ -697,9 +699,10 @@ function testFields(file) {
         ![...w.document.querySelectorAll("#player_fields input[type=text]")]
           .some(i => i.placeholder === "description (optional)" &&
                      i.closest(".row") && i.closest(".row").textContent.includes("predefined")));
-  check("fields: predefined badge + fixed kind shown",
+  check("fields: predefined badge + locked kind shown",
         [...w.document.querySelectorAll("#player_fields .badge")].some(b => b.textContent === "predefined")
-        && w.document.querySelector("#player_fields").textContent.includes("number (fixed)"));
+        && [...w.document.querySelectorAll("#player_fields select")]
+          .some(s => s.disabled && s.textContent.trim() === "number"));
   const planFR = exportPlan(w);
   const lvl = planFR.player_fields.find(f => f.name === "Level");
   check("fields: predefined field exports marker + pinned kind",
