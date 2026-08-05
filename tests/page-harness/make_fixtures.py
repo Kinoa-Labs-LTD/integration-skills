@@ -42,6 +42,8 @@ PAGES = {
     "e2e-events.html": {
         "payload_version": 1, "generated_at": TS, "game_id": GAME,
         "registries_source": "live",
+        "custom_event_registry": [{"name": "daily_bonus",
+                                   "params": [{"name": "streak", "kind": "number"}]}],
         "integration_type": "SDK", "predefined_wire_names": PREDEFINED,
         "debug_wire_names": DEBUG, "sdk_automatic_wire_names": SDK_AUTOMATIC,
         "events": [
@@ -61,7 +63,12 @@ PAGES = {
             # the page must ship it verbatim (no retype) and show the route warning.
             {"id": 5, "kind": "custom", "name": "start_level", "existing": True,
              "source": "AnalyticsEventListener.cs:81",
-             "params": [{"name": "level", "kind": "string", "extra": ""}]}]},
+             "params": [{"name": "level", "kind": "string", "extra": ""}]},
+            # ADOPT candidate: name matches a dashboard custom event (registry above)
+            {"id": 10, "kind": "custom", "name": "daily_bonus", "existing": False,
+             "source": "DailyBonus.cs:41",
+             "params": [{"name": "streak", "kind": "number", "extra": ""},
+                         {"name": "reward_coins", "kind": "number", "extra": ""}]}]},
     "e2e-fields.html": {
         "payload_version": 1, "generated_at": TS, "game_id": GAME,
         "registries_source": "live",

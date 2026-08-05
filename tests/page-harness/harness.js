@@ -254,7 +254,7 @@ function testEvents(file) {
   const plan4 = exportPlan(w);
   check("events: unticked row absent from hand-back", !plan4.events.some(e => e.name === "race_finished"));
   check("events: counter drops the unticked row",
-        w.document.getElementById("counter").textContent.includes("1 events"),
+        w.document.getElementById("counter").textContent.includes("2 events"),
         w.document.getElementById("counter").textContent);
   check("events: unticked row stays alive (dimmed, not deleted)",
         !!rowByText(w, "events", "race_finished"));
@@ -341,6 +341,26 @@ function testEvents(file) {
   check("events: renamed off-registry row exports kind custom", mi && mi.kind === "custom",
         JSON.stringify(mi));
 
+
+  // ---- events ADOPT route (2026-08-05): same-name dashboard custom
+  check("events: adopt candidate shows the on-dashboard badge",
+        [...rowByText(w, "events", "DailyBonus.cs:41").querySelectorAll(".badge")]
+          .some(b => b.textContent === "on dashboard"));
+  clickPencil(w, "events", "DailyBonus.cs:41");
+  const dbRow2 = rowByText(w, "events", "DailyBonus.cs:41");
+  check("events: dashboard part rendered read-only",
+        dbRow2.textContent.includes("already registered on the dashboard:")
+        && dbRow2.textContent.includes("wires into the existing dashboard event"));
+  check("events: local param matching a dashboard param carries the registered chip",
+        [...dbRow2.querySelectorAll("span")].some(s2 => (s2.title || "").includes("will NOT re-add")));
+  const dbName = [...dbRow2.querySelectorAll("input[type=text]")].find(i2 => i2.value === "daily_bonus");
+  typeInto(w, dbName.dataset.fid, "daily_bonus_v2");
+  check("events: renaming opts out of adoption",
+        ![...rowByText(w, "events", "DailyBonus.cs:41").querySelectorAll(".badge")]
+          .some(b => b.textContent === "on dashboard"));
+  typeInto(w, [...rowByText(w, "events", "DailyBonus.cs:41").querySelectorAll("input[type=text]")]
+    .find(i2 => i2.value === "daily_bonus_v2").dataset.fid, "daily_bonus");
+  rowByText(w, "events", "DailyBonus.cs:41").querySelector("button.pencil").click();
 
   // ---- ⌘Z / Ctrl+Z: whole-state undo survives re-renders (native stacks die)
   const zKey = extra => new w.KeyboardEvent("keydown",

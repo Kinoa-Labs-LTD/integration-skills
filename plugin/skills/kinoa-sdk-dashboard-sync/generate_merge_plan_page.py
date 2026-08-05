@@ -250,6 +250,13 @@ const SYSTEM_PARAM_KINDS = {system_param_kinds};
 // reserved"). PREFIX semantics; the predefined route takes precedence — level etc.
 // legally ACTIVATE, so the check applies only when FR_PREDEF has no match.
 const RESERVED_FIELD_PATHS = {reserved_field_paths};
+// Dashboard CUSTOM events (append-only key, 2026-08-05): powers the events ADOPT
+// route — a same-name candidate wires into the existing entity (add-params only,
+// never a create); the ftd case (same signal, different name) gets producer notes.
+const CUSTOM_EVENT_REGISTRY = {{}};
+(DATA.custom_event_registry || []).forEach(e => {{
+  if (e && e.name) CUSTOM_EVENT_REGISTRY[String(e.name).trim()] = e;
+}});
 function reservedFieldPath(p) {{
   return RESERVED_FIELD_PATHS.some(e => p === e || String(p).startsWith(e + "."));
 }}
@@ -747,6 +754,8 @@ function renderEvents() {{
   const dup = dupNames(state.events.filter(r => r.existing || inc(r)), "name");
   state.events.forEach((r, i) => {{
     const expanded = expandedRow(r, () => eventRowInvalid(r, dup), true);
+    const evDash = (!r.existing && effectiveKind(r) === "custom")
+      ? CUSTOM_EVENT_REGISTRY[String(r.name || "").trim()] : undefined;
     const div = document.createElement("div");
     // The locked tint dims the additions editor too — an existing row in ✎ edit mode
     // renders untinted (user 2026-08-04); collapsed keeps the dim.
@@ -754,6 +763,10 @@ function renderEvents() {{
       + (!r.existing && !inc(r) ? " excluded" : "");
     div.appendChild(head(r, "new event", {{collapsible: true, expanded: expanded,
       existingEditable: true,
+      extraBadges: evDash ? [{{text: "on dashboard", cls: "b-dash",
+        title: "a custom event with this name is already registered on the dashboard — "
+             + "this row wires into it: the sync adds only NEW params (add-params), never "
+             + "a create; renaming opts out of adoption"}}] : [],
       onRemove: () => {{ state.events.splice(state.events.indexOf(r), 1); render(); }}}}));
     if (!r.existing && !expanded) {{
       const cg = document.createElement("div"); cg.className = "grid";
@@ -801,6 +814,25 @@ function renderEvents() {{
     }}
     if (r.note) {{ const n = document.createElement("span"); n.className = "muted"; n.textContent = r.note; g.appendChild(n); }}
     div.appendChild(g);
+    if (evDash) {{
+      const dn = document.createElement("div"); dn.className = "muted";
+      dn.textContent = "wires into the existing dashboard event — the sync adds only NEW "
+        + "params (add-params), never a create; renaming opts out of adoption";
+      div.appendChild(dn);
+      if ((evDash.params || []).length) {{
+        const dt = document.createElement("table"); dt.className = "sub";
+        const hr2 = document.createElement("tr");
+        hr2.innerHTML = '<td colspan="3" class="muted">already registered on the dashboard:</td>';
+        dt.appendChild(hr2);
+        (evDash.params || []).forEach(p => {{
+          const tr = document.createElement("tr");
+          tr.innerHTML = "<td><code>" + esc(p.name) + "</code></td><td>" + esc(p.kind || "")
+            + "</td><td></td>";
+          dt.appendChild(tr);
+        }});
+        div.appendChild(dt);
+      }}
+    }}
     // Debug-tagged rows get NO param editor: nothing will be implemented for them
     // (the row is skipped), so authoring params would be a dead-end promise. State is
     // preserved — rename away from the debug name and the params (and editor) return.
@@ -927,6 +959,14 @@ function renderEvents() {{
               title: firstBad([
                 [!String(p.extra || "").trim(), "an enumeration needs at least one value"],
               ], "each value must be 50 characters or less")}})));
+        }}
+        if (!sysHit && evDash && (evDash.params || [])
+            .some(dp => String(dp.name || "").trim() === String(p.name || "").trim())) {{
+          const rg = document.createElement("span"); rg.className = "muted";
+          rg.textContent = "registered";
+          rg.title = "this param already exists on the dashboard event — runtime sends the "
+                   + "value; the sync will NOT re-add it";
+          tr.appendChild(td(rg));
         }}
         if (p._pNew) {{
           const rm = document.createElement("button"); rm.className = "ghost remove";
