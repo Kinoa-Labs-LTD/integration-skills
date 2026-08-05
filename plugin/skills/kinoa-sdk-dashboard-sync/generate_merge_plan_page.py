@@ -545,17 +545,17 @@ function head(row, label, opts = {{}}) {{
     div.appendChild(eb);
   }});
   const ek = row.params !== undefined ? effectiveKind(row) : row.kind;
-  if (ek === "predefined") {{
+  if (row.existing && ek === "predefined") {{
     const b = document.createElement("span"); b.className = "badge b-predef"; b.textContent = "predefined";
     b.title = "predefined Kinoa event — wired via the game's existing builder (e.g. PaymentEventData); " +
               "params attach as custom_params. It will NOT be created as a separate user event.";
     div.appendChild(b);
-  }} else if (ek === "debug") {{
+  }} else if (row.existing && ek === "debug") {{
     const b = document.createElement("span"); b.className = "badge b-debug"; b.textContent = "debug";
     b.title = "debug telemetry — emitted by the SDK/backend itself, never sent from app code; " +
               "there is nothing to implement, this row will be skipped.";
     div.appendChild(b);
-  }} else if (ek === "custom" && row.params !== undefined) {{
+  }} else if (row.existing && ek === "custom" && row.params !== undefined) {{
     const b = document.createElement("span"); b.className = "badge b-user"; b.textContent = "user";
     b.title = "user event — the game's own event, sent from app code; created on the dashboard " +
               "with type USER.";
@@ -814,12 +814,25 @@ function renderEvents() {{
     // renders untinted (user 2026-08-04); collapsed keeps the dim.
     div.className = "row" + (r.existing && !expanded ? " locked" : "")
       + (!r.existing && !inc(r) ? " excluded" : "");
-    div.appendChild(head(r, "new event", {{collapsible: true, expanded: expanded,
-      existingEditable: true,
-      extraBadges: evDash ? [{{text: "on dashboard", cls: "b-dash",
-        title: "a custom event with this name is already registered on the dashboard — "
-             + "this row wires into it: the sync adds only NEW params (add-params), never "
-             + "a create; renaming opts out of adoption"}}] : [],
+    const ekHead = r.existing ? "" : effectiveKind(r);
+    const evLabel = ekHead === "predefined" ? "predefined"
+      : ekHead === "debug" ? "debug"
+      : evDash ? "user" : "new event";
+    const evCls = ekHead === "predefined" ? "b-predef"
+      : ekHead === "debug" ? "b-debug"
+      : evDash ? "b-user" : "b-new";
+    div.appendChild(head(r, evLabel, {{collapsible: true, expanded: expanded,
+      existingEditable: true, labelClass: evCls,
+      extraBadges: (!r.existing && (ekHead === "predefined" || ekHead === "debug" || evDash))
+        ? [{{text: "on dashboard", cls: "b-dash",
+            title: evDash
+              ? "a custom event with this name is already registered on the dashboard — "
+                + "this row wires into it: the sync adds only NEW params (add-params), never "
+                + "a create; renaming opts out of adoption"
+              : ekHead === "debug"
+                ? "debug telemetry — registered dashboard/backend-side; nothing to implement"
+                : "built-in predefined event — the sync publishes/extends it, never creates"}}]
+        : [],
       onRemove: () => {{ state.events.splice(state.events.indexOf(r), 1); render(); }}}}));
     if (!r.existing && !expanded) {{
       const cg = document.createElement("div"); cg.className = "grid";
