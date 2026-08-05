@@ -724,9 +724,12 @@ function dupNames(rows, key) {{
 function dupIn(items, key) {{ return dupNames(items || [], key); }}
 
 // Resource-field carrier rules (module 14 doc-block grammar): tokens split on ':',
-// so ':' in a name/default/description is unrepresentable in KinoaResources.cs;
-// enum values also reject '=' (the values token is "the comma-bearing token without
-// a '='"). Names double as JSON body keys — resource-key charset applies.
+// so ':' in a name/description is unrepresentable in KinoaResources.cs; enum values
+// also reject '=' (the values token is "the comma-bearing token without a '='").
+// Names double as JSON body keys — resource-key charset applies. The DEFAULT no
+// longer bans ':' (invented rule removed 2026-08-05 — the dashboard stores defaults
+// as plain values; the doc-block carrier must escape/cope instead of the page
+// forbidding legal data). The name/description/enum bans are under the same review.
 const RES_FIELD_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 function resEnumBad(f) {{
   const vals = f.enumeration_values || [];
@@ -735,7 +738,6 @@ function resEnumBad(f) {{
 function resDefaultBad(f) {{
   const d = String(f.default || "");
   if (!d) return false;
-  if (d.includes(":")) return true;
   const t = f.field_type;
   if (t === "number") return !/^-?\d+(\.\d+)?$/.test(d.trim());
   if (t === "boolean") return !/^(true|false)$/i.test(d.trim());
@@ -1661,8 +1663,6 @@ function renderResources() {{
         tr.appendChild(td(textInput(f.default, "r" + i + "-f" + j + "-d", v => f.default = v,
           {{placeholder: "default", size: 10, bad: resDefaultBad(f),
             title: firstBad([
-              [String(f.default || "").includes(":"),
-               "':' is not representable in the code doc-block carrier"],
               [f.field_type === "enumeration",
                "the default must be one of the enumeration values"],
             ], "must match the field type (number/boolean/date)")}})));
