@@ -823,16 +823,12 @@ function renderEvents() {{
       : evDash ? "b-user" : "b-new";
     div.appendChild(head(r, evLabel, {{collapsible: true, expanded: expanded,
       existingEditable: true, labelClass: evCls,
-      extraBadges: (!r.existing && (ekHead === "predefined" || ekHead === "debug" || evDash))
-        ? [{{text: "on dashboard", cls: "b-dash",
-            title: evDash
-              ? "a custom event with this name is already registered on the dashboard — "
-                + "this row wires into it: the sync adds only NEW params (add-params), never "
-                + "a create; renaming opts out of adoption"
-              : ekHead === "debug"
-                ? "debug telemetry — registered dashboard/backend-side; nothing to implement"
-                : "built-in predefined event — the sync publishes/extends it, never creates"}}]
-        : [],
+      // predefined/debug live dashboard-side by definition — the kind label alone
+      // says it (user 2026-08-05); the status lamp is reserved for ADOPTed customs.
+      extraBadges: evDash ? [{{text: "on dashboard", cls: "b-dash",
+        title: "a custom event with this name is already registered on the dashboard — "
+             + "this row wires into it: the sync adds only NEW params (add-params), never "
+             + "a create; renaming opts out of adoption"}}] : [],
       onRemove: () => {{ state.events.splice(state.events.indexOf(r), 1); render(); }}}}));
     if (!r.existing && !expanded) {{
       const cg = document.createElement("div"); cg.className = "grid";
