@@ -350,9 +350,12 @@ function testEvents(file) {
           .some(b => b.textContent === "on dashboard"));
   clickPencil(w, "events", "DailyBonus.cs:41");
   const dbRow2 = rowByText(w, "events", "DailyBonus.cs:41");
-  check("events: dashboard part rendered read-only",
-        dbRow2.textContent.includes("already registered on the dashboard:")
-        && dbRow2.textContent.includes("wires into the existing dashboard event"));
+  check("events: uncovered dashboard params render read-only, covered ones only once",
+        dbRow2.textContent.includes("also on the dashboard")
+        && dbRow2.textContent.includes("bonus_day")
+        && dbRow2.textContent.includes("wires into the existing dashboard event")
+        && !dbRow2.textContent.includes("streak")   // covered param lives in the input only
+        && [...dbRow2.querySelectorAll("input[type=text]")].some(i2 => i2.value === "streak"));
   check("events: local param matching a dashboard param carries the registered chip",
         [...dbRow2.querySelectorAll("span")].some(s2 => (s2.title || "").includes("will NOT re-add")));
   const dbName = [...dbRow2.querySelectorAll("input[type=text]")].find(i2 => i2.value === "daily_bonus");

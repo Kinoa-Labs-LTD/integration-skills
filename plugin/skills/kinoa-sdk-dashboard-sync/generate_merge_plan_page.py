@@ -872,12 +872,21 @@ function renderEvents() {{
       dn.textContent = "wires into the existing dashboard event — the sync adds only NEW "
         + "params (add-params), never a create; renaming opts out of adoption";
       div.appendChild(dn);
-      if ((evDash.params || []).length) {{
+      // Only the dashboard params the local code does NOT cover — covered ones show
+      // once, in the editable table below, with the "registered" chip (a run drew
+      // episode_number twice, user 2026-08-05).
+      const localNames = new Set((r.params || [])
+        .map(p => String(p.name || "").trim()).filter(Boolean));
+      const uncovered = (evDash.params || [])
+        .filter(p => !localNames.has(String(p.name || "").trim()));
+      if (uncovered.length) {{
         const dt = document.createElement("table"); dt.className = "sub";
         const hr2 = document.createElement("tr");
-        hr2.innerHTML = '<td colspan="3" class="muted">already registered on the dashboard:</td>';
+        hr2.innerHTML = '<td colspan="3" class="muted">also on the dashboard — not sent '
+          + "by your code yet (the column stays empty unless you add a matching "
+          + "param):</td>";
         dt.appendChild(hr2);
-        (evDash.params || []).forEach(p => {{
+        uncovered.forEach(p => {{
           const tr = document.createElement("tr");
           tr.innerHTML = "<td><code>" + esc(p.name) + "</code></td><td>" + esc(p.kind || "")
             + "</td><td></td>";
@@ -1100,9 +1109,17 @@ function renderFields() {{
     const tCalc = !tPredef && FR_CALC[pathNow0] !== undefined;
     const tExt = !tPredef && !tCalc && String(pathNow0).startsWith("calculated_fields.");
     const tDash = !tPredef && FR_CUSTOM[pathNow0] !== undefined;
-    const fLabel = tPredef ? "predefined" : tCalc ? "calculated" : tExt ? "external" : "new field";
-    const fCls = tPredef ? "b-predef" : tCalc ? "b-calc" : tExt ? "b-ext" : "b-new";
+    const fLabel = "new field";
+    const fCls = "b-new";
     const extras = [];
+    if (!r.existing) {{
+      // Type lamp beside the label (events symmetry, user 2026-08-05):
+      // new field | on dashboard | user.
+      extras.push(tPredef ? {{text: "predefined", cls: "b-predef"}}
+        : tCalc ? {{text: "calculated", cls: "b-calc"}}
+        : tExt ? {{text: "external", cls: "b-ext"}}
+        : {{text: "user", cls: "b-user"}});
+    }}
     if (r.existing) {{
       // Type badge for existing rows (2026-08-04): predefined_in_use base writes now
       // render as read-only rows, so the type became a VARIABLE worth a lamp.
