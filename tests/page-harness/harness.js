@@ -366,11 +366,11 @@ function testEvents(file) {
 
   // ---- Dashboard->Code orphans (2026-08-05): registry entity with no page row
   check("events: orphan section lists the dashboard-only event",
-        w.document.getElementById("events").textContent.includes("push_opt_in")
-        && w.document.getElementById("events").textContent.includes("no code carrier"));
+        w.document.getElementById("events-card").textContent.includes("push_opt_in")
+        && w.document.getElementById("events-card").textContent.includes("no code carrier"));
   check("events: orphan is not exported while unticked",
         !exportPlan(w).events.some(e => e.name === "push_opt_in"));
-  const orCb = [...w.document.querySelectorAll("#events .orphans input.inc")]
+  const orCb = [...w.document.querySelectorAll("#events-card .orphans input.inc")]
     .find(c => (c.title || "").includes("generate the code carrier"));
   orCb.checked = true; orCb.dispatchEvent(new w.Event("change", { bubbles: true }));
   const orRow = exportPlan(w).events.find(e => e.name === "push_opt_in");
@@ -378,9 +378,17 @@ function testEvents(file) {
         orRow && orRow.dashboard_orphan === true && orRow.existing === false
         && deepEq(orRow.params, [{ name: "channel", kind: "string", extra: "" }]),
         JSON.stringify(orRow));
-  const orCb2 = [...w.document.querySelectorAll("#events .orphans input.inc")]
+  const orCb2 = [...w.document.querySelectorAll("#events-card .orphans input.inc")]
     .find(c => (c.title || "").includes("generate the code carrier"));
   orCb2.checked = false; orCb2.dispatchEvent(new w.Event("change", { bubbles: true }));
+  // the list collapses on header click (count stays visible) and expands back
+  w.document.querySelector("#events-card .orphans strong").parentElement.click();
+  check("events: orphan card collapses to its header",
+        w.document.getElementById("events-card").textContent.includes("no code carrier (1)")
+        && ![...w.document.querySelectorAll("#events-card .orphans input.inc")].length);
+  w.document.querySelector("#events-card .orphans strong").parentElement.click();
+  check("events: orphan card expands back",
+        [...w.document.querySelectorAll("#events-card .orphans input.inc")].length === 1);
 
   // ---- ⌘Z / Ctrl+Z: whole-state undo survives re-renders (native stacks die)
   const zKey = extra => new w.KeyboardEvent("keydown",
@@ -528,15 +536,15 @@ function testFields(file) {
 
   // ---- Dashboard->Code orphan (fields): VIP tier -> property derivation on tick
   check("fields: orphan section lists the dashboard-only field",
-        w.document.getElementById("player_fields").textContent.includes("VIP tier"));
-  const pfOr = [...w.document.querySelectorAll("#player_fields .orphans .grid")]
+        w.document.getElementById("fields-card").textContent.includes("VIP tier"));
+  const pfOr = [...w.document.querySelectorAll("#fields-card .orphans .grid")]
     .find(g2 => g2.textContent.includes("VIP tier")).querySelector("input.inc");
   pfOr.checked = true; pfOr.dispatchEvent(new w.Event("change", { bubbles: true }));
   const pfOrRow = exportPlan(w).player_fields.find(f => f.path === "vip_tier");
   check("fields: ticked orphan ships marker + derived property + dashboard attrs",
         pfOrRow && pfOrRow.dashboard_orphan === true && pfOrRow.property === "VIPTier"
         && pfOrRow.kind === "number" && pfOrRow.existing === false, JSON.stringify(pfOrRow));
-  const pfOr2 = [...w.document.querySelectorAll("#player_fields .orphans .grid")]
+  const pfOr2 = [...w.document.querySelectorAll("#fields-card .orphans .grid")]
     .find(g2 => g2.textContent.includes("VIP tier")).querySelector("input.inc");
   pfOr2.checked = false; pfOr2.dispatchEvent(new w.Event("change", { bubbles: true }));
 

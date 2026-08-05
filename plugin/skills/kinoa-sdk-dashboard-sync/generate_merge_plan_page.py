@@ -742,6 +742,7 @@ function isReservedFsColumn(n) {{
 
 // Dashboard->Code orphans: registry entities with NO page row (an operator created
 // them on the dashboard; code has no carrier). Read-only + a tick = take the task.
+const ORPHANS_COLLAPSED = {{}};  // pure UI pref — deliberately outside undo history
 function renderOrphanSection(host, title, typeBadge, items) {{
   // The box lives on the CARD, after the ＋Add button — rows and the add action stay
   // together, the dashboard-orphans card sits below them (user 2026-08-05).
@@ -753,12 +754,23 @@ function renderOrphanSection(host, title, typeBadge, items) {{
   box.className = "orphans";
   box.style.cssText = "border:1px dashed #a9b1ba;background:#fafbfc;border-radius:8px;"
     + "padding:0.8rem 1rem;margin-top:1rem";
-  box.insertAdjacentHTML("beforeend",
-    '<div style="margin-bottom:0.45rem"><strong>' + title + "</strong> "
+  const colKey = typeBadge.text;
+  const collapsed = !!ORPHANS_COLLAPSED[colKey];
+  const hdr = document.createElement("div");
+  hdr.style.cssText = "margin-bottom:0.45rem;cursor:pointer";
+  hdr.title = collapsed ? "expand the list" : "collapse the list";
+  hdr.innerHTML = "<strong>" + (collapsed ? "\u25b8 " : "\u25be ") + title
+    + " (" + items.length + ")</strong> "
     + '<span class="badge ' + typeBadge.cls + '">' + typeBadge.text + "</span>"
-    + '<div class="muted">registered on the dashboard, nothing in code — tick to '
-    + "GENERATE the code carrier (value sources are confirmed at the wiring "
-    + "gates)</div></div>");
+    + (collapsed ? "" :
+       '<div class="muted">registered on the dashboard, nothing in code — tick to '
+       + "GENERATE the code carrier (value sources are confirmed at the wiring "
+       + "gates)</div>");
+  hdr.addEventListener("click", () => {{
+    ORPHANS_COLLAPSED[colKey] = !collapsed; render();
+  }});
+  box.appendChild(hdr);
+  if (collapsed) {{ card.appendChild(box); return; }}
   items.forEach(it => {{
     const line = document.createElement("div"); line.className = "grid";
     const cb = document.createElement("input"); cb.type = "checkbox"; cb.className = "inc";
