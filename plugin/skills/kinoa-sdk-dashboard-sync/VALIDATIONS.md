@@ -5,7 +5,7 @@ Snapshot 2026-08-05 (audit of `generate_merge_plan_page.py`). Classification:
 - **page-mechanics** — needed for the page/export contract itself (keep),
 - **INVENTED** — a constraint the dashboard does NOT enforce (candidates for removal; over-forbidding legal data is the harm).
 
-Status of invented rules: resources default-value `:` ban (#4) and field-description `:` ban (#6) REMOVED 2026-08-05 (user order).
+Status of invented rules: the resources `:`-family (#4 default, #5 enum values `:`/`=`, #6 description) is fully REMOVED 2026-08-05 (user order); module-14 doc-block grammar hardened in the same batch (`values=` named token + rejoin rule).
 The rest are pending user decision — see the notes column.
 
 
@@ -106,10 +106,15 @@ The rest are pending user decision — see the notes column.
 | 2 | fields: path override segment-count match | KEEP — pure code-carrier mechanics ([JsonPropertyName] per segment); without it the implementation strategy breaks. Reclassify as page-mechanics. |
 | 3 | resources: field name charset `RES_FIELD_NAME_RE` | RELAX candidate — JSON body keys are unrestricted server-side; the charset came from the doc-block grammar + key-charset analogy. Needs backend confirmation before relaxing. |
 | 4 | resources: `:` in DEFAULT value | REMOVED 2026-08-05 — dashboard stores plain values; `ratio 1:2` is legal. |
-| 5 | resources: `:`/`=` in enum values | REMOVE candidate — same doc-block rationale; dashboard does not restrict. Blocked on module-14 carrier hardening (grammar splits tokens on `:`/`=`). |
+| 5 | resources: `:`/`=` in enum values | REMOVED 2026-08-05 — module-14 grammar hardened the same day (`values=` named token + rejoin rule), so the carrier now represents `:`/`=` in values. |
 | 6 | resources: `:` in field description | REMOVED 2026-08-05 (user order). |
 
-Follow-up: rules 4–6 shift the burden onto the module-14 `KinoaResources.cs` doc-block
-carrier (its grammar splits on `:`) — the carrier grammar must be hardened (escaping or
-first-colon-only split) before/alongside removing 5–6. Rule 4 is already removed:
-plans may now legally carry `:` in defaults — module-14 consumption must not choke.
+Follow-ups resolved 2026-08-05:
+- module-14 carrier grammar hardened (`values=` named token; rejoin rule closes `:` inside
+  values/default/desc; legacy positional enum form still parse-accepted). Residual
+  unrepresentables: a comma inside a single enum value; the token-lookalike rejoin corner.
+- planner verified: absent default/description/enum-values are carried "verbatim when
+  present" and never diffed (readback cannot confirm extras) — an absent default is a
+  no-op, never a clear; no perpetual-diff risk from page-authored `:` values.
+- execution layer safe: the sync workflow passes fields via `--fields-json` (JSON array),
+  not the positional `--field NAME:TYPE:...` CLI form.

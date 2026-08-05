@@ -722,17 +722,15 @@ function dupNames(rows, key) {{
 
 function dupIn(items, key) {{ return dupNames(items || [], key); }}
 
-// Resource-field carrier rules (module 14 doc-block grammar): tokens split on ':',
-// so ':' in a name/description is unrepresentable in KinoaResources.cs; enum values
-// also reject '=' (the values token is "the comma-bearing token without a '='").
-// Names double as JSON body keys — resource-key charset applies. The DEFAULT no
-// longer bans ':' (invented rule removed 2026-08-05 — the dashboard stores defaults
-// as plain values; the doc-block carrier must escape/cope instead of the page
-// forbidding legal data). The name/description/enum bans are under the same review.
+// Resource-field rules: names double as JSON body keys AND doc-block first tokens —
+// the resource-key charset applies (pending backend confirmation to relax). The former
+// ':'-family bans (default #4, enum values ':'/'=' #5, description #6) were INVENTED
+// (module-14 doc-block carrier grammar, not dashboard rules) and are all removed
+// 2026-08-05 — the carrier grammar is hardened instead (values= named token + rejoin
+// rule; see module 14 "Token details").
 const RES_FIELD_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 function resEnumBad(f) {{
-  const vals = f.enumeration_values || [];
-  return !vals.length || vals.some(v => v.includes(":") || v.includes("="));
+  return !(f.enumeration_values || []).length;
 }}
 function resDefaultBad(f) {{
   const d = String(f.default || "");
@@ -1673,8 +1671,7 @@ function renderResources() {{
             {{placeholder: "a, b, c", size: 16, bad: resEnumBad(f),
               title: firstBad([
                 [!(f.enumeration_values || []).length, "an enumeration needs at least one value"],
-              ], "comma-separated; ':' and '=' are not representable in the code "
-                 + "doc-block carrier")}})));
+              ], "comma-separated values")}})));
         }}
         tr.appendChild(td(textInput(f.description, "r" + i + "-f" + j + "-fd", v => f.description = v,
           {{placeholder: "field description", size: 16}})));
