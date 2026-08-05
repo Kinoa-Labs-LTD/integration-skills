@@ -1165,11 +1165,11 @@ function renderFields() {{
             + "shown for visibility; the sync ACTIVATES it, the page takes no action"
           : "custom player field carried by CustomPlayerState"}});
     }}
-    if (!r.existing && (tPredef || tDash)) extras.push({{text: "on dashboard", cls: "b-dash",
-      title: tDash
-        ? "registered on the dashboard but nothing in code writes it — this row wires a "
-          + "code carrier; the dashboard field itself is never renamed"
-        : "built-in dashboard player field — the sync ACTIVATES it (never creates)"}});
+    // predefined lives dashboard-side by definition — the kind label alone says it
+    // (user 2026-08-05, events symmetry); the status lamp is reserved for ADOPTs.
+    if (!r.existing && tDash && !tPredef) extras.push({{text: "on dashboard", cls: "b-dash",
+      title: "registered on the dashboard but nothing in code writes it — this row wires a "
+           + "code carrier; the dashboard field itself is never renamed"}});
     const div = document.createElement("div");
     div.className = "row" + (r.existing ? " locked" : "") + (!r.existing && !inc(r) ? " excluded" : "");
     div.appendChild(head(r, fLabel, {{collapsible: true, expanded: expanded,
