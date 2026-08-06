@@ -73,6 +73,9 @@ function setCheckbox(w, sectionId, matchText, val) {
   cb.dispatchEvent(new w.Event("change", { bubbles: true }));
 }
 function gateBlocked(w) { return w.document.getElementById("download").disabled; }
+// Open editors block the export by design (2026-08-04) — mid-edit checks assert the
+// absence of VALIDATION errors instead; gate asserts belong to collapsed states.
+function valErrs(w) { return w.document.querySelectorAll("input.bad, select.bad").length; }
 function findRowInput(w, sectionId, placeholder, nth = 0) {
   const hits = [...w.document.querySelectorAll(`#${sectionId} input[type=text]`)]
     .filter(i => i.placeholder === placeholder);
@@ -87,8 +90,128 @@ function testEvents(file) {
   const payload = JSON.parse(fs.readFileSync(file, "utf-8").match(/const DATA = (\{[\s\S]*?\});\n/)[1]);
   const exEv = payload.events.find(e => e.existing);
   const echoed = before.events.find(e => e.id === exEv.id);
-  check("events: existing row echoed verbatim", deepEq(echoed, exEv),
-        JSON.stringify({ echoed, exEv }));
+  const { proposed_params: _pp, ...exCore } = exEv;
+  const { proposed_params: _pe, ...echoedCore } = echoed;
+  check("events: existing row measured part echoed verbatim", deepEq(echoedCore, exCore),
+        JSON.stringify({ echoedCore, exCore }));
+
+  // ---- same-name existing pair (predefined + custom level_up) is legal code reality:
+  // both render, neither reds, both ship; a NEW row taking the name still reds.
+  const luRows = [...w.document.querySelectorAll("#events .row")]
+    .filter(d => d.textContent.includes("level_up"));
+  check("events: both same-name existing rows render", luRows.length >= 2, luRows.length);
+  const luBadges = luRows.map(d => [...d.querySelectorAll(".badge")].map(b => b.textContent).join("|"));
+  check("events: existing custom keeps its measured kind badge (user, not predefined)",
+        luBadges.some(t => t.includes("user")) && luBadges.some(t => t.includes("predefined")),
+        JSON.stringify(luBadges));
+  check("events: same-name existing pair adds no validation error", valErrs(w) === 0);
+  const luEcho = before.events.filter(e => e.name === "level_up").map(e => e.kind).sort();
+  check("events: both same-name existing rows ship in the hand-back",
+        deepEq(luEcho, ["custom", "predefined"]), JSON.stringify(luEcho));
+  // ---- existing rows are measurements: a system-named param keeps its measured kind
+  const slRow = before.events.find(e => e.name === "start_level");
+  check("events: existing system-named param kind ships verbatim (no coercion)",
+        slRow && slRow.params[0].kind === "string", JSON.stringify(slRow));
+  check("events: existing system param shows the route warning",
+        [...w.document.querySelectorAll("#events .row")].some(d =>
+          d.textContent.includes("start_level")
+          && d.textContent.includes("reserved system name measured as a custom param")));
+  w.document.getElementById("add-event").click();
+  const luInp = [...w.document.querySelectorAll("#events input[type=text]")]
+    .find(i => i.placeholder === "event_name" && i.value === "");
+  typeInto(w, luInp.dataset.fid, "level_up");
+  check("events: new row duplicating an existing name blocks the export", gateBlocked(w));
+  check("events: duplicate-vs-existing tooltip names the duplicate",
+        [...w.document.querySelectorAll("#events input.bad")]
+          .some(i => i.value === "level_up" && (i.title || "").includes("duplicate event name")));
+  const luProbe = [...w.document.querySelectorAll("#events .row")]
+    .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "level_up")
+               && d.querySelector("button.pencil"));
+
+  // ---- ✕ remove: only page-added rows are deletable (measured/existing keep checkboxes)
+  check("events: page-added row renders a remove button", !!luProbe.querySelector("button.remove"));
+  check("events: measured candidate has no remove button",
+        !rowByText(w, "events", "race_finished").querySelector("button.remove"));
+  check("events: existing row has no remove button",
+        !rowByText(w, "events", "session_start").querySelector("button.remove"));
+  luProbe.querySelector("button.remove").click();
+  check("events: removing the page-added row clears its errors", valErrs(w) === 0);
+  check("events: removed row is gone from the DOM",
+        ![...w.document.querySelectorAll("#events input[type=text]")].some(i => i.value === "level_up"));
+  // _pageNew never ships in the hand-back
+  w.document.getElementById("add-event").click();
+  const stInp = [...w.document.querySelectorAll("#events input[type=text]")]
+    .find(i => i.placeholder === "event_name" && i.value === "");
+  typeInto(w, stInp.dataset.fid, "probe_strip");
+  const stRow = exportPlan(w).events.find(e => e.name === "probe_strip");
+  check("events: exported page-added row carries no page-local flags",
+        stRow && !("_pageNew" in stRow) && !("editing" in stRow) && !("included" in stRow),
+        JSON.stringify(stRow));
+  [...w.document.querySelectorAll("#events .row")]
+    .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "probe_strip"))
+    .querySelector("button.remove").click();
+
+  // ---- proposed additions (2026-08-04, ✎/done mechanic): discovered additions open
+  // the row in edit mode with params born TICKED; done collapses (ticked stay visible,
+  // marked); untick drops the key; dup vs the measured part still reds.
+  let ssRow = rowByText(w, "events", "session_start");
+  check("events: row with discovered additions opens in edit mode",
+        (ssRow.querySelector("button.pencil") || {}).textContent === "✓ done");
+  check("events: an open editor blocks the export", gateBlocked(w));
+  check("events: the counter names the open-editor reason",
+        w.document.getElementById("counter").textContent.includes("open for editing"));
+  check("events: proposals header rendered", ssRow.textContent.includes("proposed additions"));
+  check("events: live-registry header line rendered",
+        w.document.getElementById("events").textContent
+          .includes("checked against the live dashboard: " + payload.predefined_wire_names.length
+            + " predefined / " + payload.debug_wire_names.length + " debug / "
+            + payload.custom_event_registry.length + " custom event names"));
+  const ppCb = ssRow.querySelector("input.inc");
+  check("events: discovered addition born ticked", !!ppCb && ppCb.checked);
+  const ppRow = before.events.find(e => e.name === "session_start");
+  check("events: ticked addition ships clean under proposed_params",
+        ppRow && deepEq(ppRow.proposed_params,
+                        [{ name: "session_source", kind: "string", extra: "" }]),
+        JSON.stringify(ppRow && ppRow.proposed_params));
+  ssRow.querySelector("button.pencil").click();
+  ssRow = rowByText(w, "events", "session_start");
+  check("events: done collapses the additions editor", !ssRow.querySelector("input.inc"));
+  check("events: collapsed row keeps the ticked addition visible, marked",
+        ssRow.textContent.includes("session_source") && ssRow.textContent.includes("addition"));
+  clickPencil(w, "events", "session_start");
+  const ppCb2 = rowByText(w, "events", "session_start").querySelector("input.inc");
+  ppCb2.checked = false; ppCb2.dispatchEvent(new w.Event("change", { bubbles: true }));
+  check("events: unticked addition leaves no proposed_params key",
+        !("proposed_params" in exportPlan(w).events.find(e => e.name === "session_start")));
+  // manual ＋ param on an existing row (edit mode only): dup vs measured reds
+  check("events: no additions editor on a collapsed clean row",
+        ![...rowByText(w, "events", "start_level").querySelectorAll("button")]
+          .some(b => b.textContent === "＋ param"));
+  clickPencil(w, "events", "start_level");
+  [...rowByText(w, "events", "start_level").querySelectorAll("button")]
+    .find(b => b.textContent === "＋ param").click();
+  const npInp = [...w.document.querySelectorAll("#events input[type=text]")]
+    .find(i2 => i2.placeholder === "param_name" && i2.value === "");
+  typeInto(w, npInp.dataset.fid, "level");
+  check("events: addition duplicating a measured param blocks the export", gateBlocked(w));
+  const slCb2 = [...rowByText(w, "events", "start_level").querySelectorAll("input.inc")].pop();
+  slCb2.checked = false; slCb2.dispatchEvent(new w.Event("change", { bubbles: true }));
+  check("events: unticking the dup addition clears its error", valErrs(w) === 0);
+  rowByText(w, "events", "start_level").querySelector("button.pencil").click();
+  rowByText(w, "events", "session_start").querySelector("button.pencil").click();
+  check("events: confirming every editor with done unblocks the export", !gateBlocked(w));
+  // hand-added params are deletable (✕); discovery params keep checkbox-only
+  clickPencil(w, "events", "race_finished");
+  let rfRow = rowByText(w, "events", "GameStateService.cs:130");
+  check("events: discovery param has no ✕", rfRow.querySelectorAll("button.remove").length === 0);
+  [...rfRow.querySelectorAll("button")].find(b => b.textContent === "＋ param").click();
+  rfRow = rowByText(w, "events", "GameStateService.cs:130");
+  check("events: hand-added param renders ✕", rfRow.querySelectorAll("button.remove").length === 1);
+  rfRow.querySelector("button.remove").click();
+  rfRow = rowByText(w, "events", "GameStateService.cs:130");
+  check("events: deleted hand-added param is gone and its error with it",
+        rfRow.querySelectorAll('input[placeholder="param_name"]').length === 1 && valErrs(w) === 0);
+  rfRow.querySelector("button.pencil").click();
 
   // add event, leave name empty -> gate blocks
   w.document.getElementById("add-event").click();
@@ -104,7 +227,7 @@ function testEvents(file) {
   const counter = w.document.getElementById("counter").textContent;
   const nNew = payload.events.filter(e => !e.existing).length; // page-added row is debug -> excluded
   check("events: counter excludes debug rows", counter.includes(`${nNew} events`), counter);
-  check("events: gate reopens once name valid", !gateBlocked(w), counter);
+  check("events: no validation errors once the name is valid", valErrs(w) === 0, counter);
   const plan1 = exportPlan(w);
   const dbg = plan1.events.find(e => e.name === "feature_settings_download");
   check("events: debug row exports kind debug with params stripped",
@@ -133,7 +256,7 @@ function testEvents(file) {
   const plan4 = exportPlan(w);
   check("events: unticked row absent from hand-back", !plan4.events.some(e => e.name === "race_finished"));
   check("events: counter drops the unticked row",
-        w.document.getElementById("counter").textContent.includes("1 events"),
+        w.document.getElementById("counter").textContent.includes("2 events"),
         w.document.getElementById("counter").textContent);
   check("events: unticked row stays alive (dimmed, not deleted)",
         !!rowByText(w, "events", "race_finished"));
@@ -145,8 +268,8 @@ function testEvents(file) {
 
   // ---- param include-checkbox (unified mechanic): untick leaves a dim line; never ships
   clickPencil(w, "events", "race_finished");
-  const pcb = [...w.document.querySelectorAll("#events input.inc")]
-    .find(c => c.title === "include this param");
+  const pcb = [...rowByText(w, "events", "GameStateService.cs:130")
+    .querySelectorAll("input.inc")].find(c => c.title === "include this param");
   pcb.checked = false; pcb.dispatchEvent(new w.Event("change", { bubbles: true }));
   check("events: unticked param renders a dim left-out line",
         !!rowByText(w, "events", "left out of the plan"));
@@ -154,9 +277,9 @@ function testEvents(file) {
   const rfr = planR.events.find(e => e.name === "race_finished");
   check("events: unticked param absent from hand-back", rfr && rfr.params.length === 0,
         JSON.stringify(rfr));
-  check("events: unticked param never blocks the gate", !gateBlocked(w));
-  const pcb2 = [...w.document.querySelectorAll("#events input.inc")]
-    .find(c => c.title === "include this param");
+  check("events: unticked param carries no validation error", valErrs(w) === 0);
+  const pcb2 = [...rowByText(w, "events", "GameStateService.cs:130")
+    .querySelectorAll("input.inc")].find(c => c.title === "include this param");
   pcb2.checked = true; pcb2.dispatchEvent(new w.Event("change", { bubbles: true }));
   const planR2 = exportPlan(w);
   const rfr2 = planR2.events.find(e => e.name === "race_finished");
@@ -164,33 +287,62 @@ function testEvents(file) {
         rfr2 && rfr2.params.length === 1 && !("included" in rfr2.params[0]), JSON.stringify(rfr2));
 
   // ---- system-named param = VALID candidate, different route (never blocks)
-  const pn = [...w.document.querySelectorAll("#events input[type=text]")]
-    .find(i2 => i2.placeholder === "param_name");
+  const pn = [...rowByText(w, "events", "GameStateService.cs:130")
+    .querySelectorAll("input[type=text]")].find(i2 => i2.placeholder === "param_name");
   const oldName = pn.value;
-  // level is settable on EVERY event (CustomEventData : ExtendedGameEventData, SDK fix
-  // 2026-07-31) — the system route is universal
+  // level/place have NO route on a user event again (SDK revert 2026-08-06:
+  // CustomEventData : GameEventData — no SetLevel/SetPlace, and the reserved name
+  // can't be registered either); success/device_id/time/... still route.
   typeInto(w, pn.dataset.fid, "level");
-  check("events: system-named param does NOT block the export", !gateBlocked(w));
-  check("events: system badge + base-class route note shown",
+  check("events: level on a USER event is a validation error (no route)", valErrs(w) > 0);
+  check("events: unroutable tooltip advises the rename",
+        [...w.document.querySelectorAll("#events input.bad")]
+          .some(i2 => i2.value === "level" && (i2.title || "").includes("level_number")));
+  check("events: unroutable route note shown",
+        w.document.body.textContent.includes("no route on a user event"));
+  // success routes everywhere (read-only base field) — the valid system flow
+  typeInto(w, [...rowByText(w, "events", "GameStateService.cs:130")
+    .querySelectorAll('input[placeholder="param_name"]')][0].dataset.fid, "success");
+  check("events: success on a user event is NOT a validation error", valErrs(w) === 0);
+  check("events: system badge + read-only route note shown",
         [...w.document.querySelectorAll("#events .badge")].some(b => b.textContent === "system")
-        && w.document.body.textContent.includes("rides the base class"));
-  check("events: system param kind is a fixed label, not a select",
-        w.document.body.textContent.includes("number (fixed)"));
+        && w.document.body.textContent.includes("read-only in this SDK version"));
+  check("events: system param kind is a locked select, not an editable one",
+        [...w.document.querySelectorAll("#events select")]
+          .some(s => s.disabled && s.textContent.trim() === "boolean"));
   const planS = exportPlan(w);
-  const evS = planS.events.find(e => (e.params || []).some(p2 => p2.name === "level"));
+  const evS = planS.events.find(e => !e.existing && (e.params || []).some(p2 => p2.name === "success"));
   check("events: system param exports system_field: true",
-        evS && evS.params.find(p2 => p2.name === "level").system_field === true,
+        evS && evS.params.find(p2 => p2.name === "success").system_field === true,
         JSON.stringify(evS));
   check("events: system param kind coerced to the canonical type",
-        evS && evS.params.find(p2 => p2.name === "level").kind === "number",
+        evS && evS.params.find(p2 => p2.name === "success").kind === "boolean",
         JSON.stringify(evS));
-  typeInto(w, w.document.querySelector('#events input[placeholder="param_name"]').dataset.fid, oldName);
+  typeInto(w, [...rowByText(w, "events", "GameStateService.cs:130")
+    .querySelectorAll('input[placeholder="param_name"]')][0].dataset.fid, oldName);
   const planS2 = exportPlan(w);
-  const evS2 = planS2.events.find(e => (e.params || []).some(p2 => p2.name === oldName));
+  const evS2 = planS2.events.find(e => !e.existing && (e.params || []).some(p2 => p2.name === oldName));
   check("events: renaming off the reserved list drops the marker",
         evS2 && !("system_field" in evS2.params.find(p2 => p2.name === oldName)),
         JSON.stringify(evS2));
   clickPencil(w, "events", "GameStateService.cs:130");  // collapse back (expanded row: name lives in the input, match by source)
+
+  // ---- duplicate tooltip names the duplicate, not the length limit
+  w.document.getElementById("add-event").click();
+  const dupInp = [...w.document.querySelectorAll("#events input[type=text]")]
+    .find(i2 => i2.placeholder === "event_name" && i2.value === "");
+  typeInto(w, dupInp.dataset.fid, "race_finished");
+  const dupBad = [...w.document.querySelectorAll("#events input.bad")]
+    .find(i2 => i2.value === "race_finished");
+  check("events: duplicate tooltip names the duplicate",
+        dupBad && (dupBad.title || "").includes("duplicate event name"),
+        dupBad ? dupBad.title : "no red dup input");
+  // drop the probe row via its checkbox
+  const dupRow = [...w.document.querySelectorAll("#events .row")]
+    .find(d => [...d.querySelectorAll("input[type=text]")].some(i2 => i2.value === "race_finished")
+               && d.querySelector("button.pencil"));
+  const dupCb = dupRow.querySelector("input.inc");
+  dupCb.checked = false; dupCb.dispatchEvent(new w.Event("change", { bubbles: true }));
 
   // ---- predefined-name editability: renaming away from the registry downgrades to user
   const nm = [...w.document.querySelectorAll("#events input[type=text]")]
@@ -201,6 +353,90 @@ function testEvents(file) {
   const mi = plan6.events.find(e => e.name === "my_install_report");
   check("events: renamed off-registry row exports kind custom", mi && mi.kind === "custom",
         JSON.stringify(mi));
+
+
+  // ---- events ADOPT route (2026-08-05): same-name dashboard custom
+  check("events: adopt candidate shows the on-dashboard badge",
+        [...rowByText(w, "events", "DailyBonus.cs:41").querySelectorAll(".badge")]
+          .some(b => b.textContent === "on dashboard"));
+  check("events: collapsed adopt row hints at uncovered dashboard params",
+        rowByText(w, "events", "DailyBonus.cs:41").textContent
+          .includes("+1 dashboard param not sent by your code"));
+  clickPencil(w, "events", "DailyBonus.cs:41");
+  const dbRow2 = rowByText(w, "events", "DailyBonus.cs:41");
+  check("events: uncovered dashboard params render read-only, covered ones only once",
+        dbRow2.textContent.includes("also on the dashboard")
+        && dbRow2.textContent.includes("bonus_day")
+        && !dbRow2.textContent.includes("wires into the existing dashboard event")
+        && !dbRow2.textContent.includes("streak")   // covered param lives in the input only
+        && [...dbRow2.querySelectorAll("input[type=text]")].some(i2 => i2.value === "streak"));
+  check("events: local param matching a dashboard param carries the registered chip",
+        [...dbRow2.querySelectorAll("span")].some(s2 => (s2.title || "").includes("will NOT re-add")));
+  check("events: registered param kind pinned — editable select only for new params",
+        [...dbRow2.querySelectorAll("select")].some(s => s.disabled)
+        && [...dbRow2.querySelectorAll("select")].filter(s => !s.disabled).length === 1);
+  typeInto(w, [...dbRow2.querySelectorAll("input[type=text]")]
+    .find(i2 => i2.value === "streak").dataset.fid, "streak_x");
+  const dbRow2b = rowByText(w, "events", "DailyBonus.cs:41");
+  check("events: renaming a registered param unpins its type",
+        ![...dbRow2b.querySelectorAll("select")].some(s => s.disabled)
+        && [...dbRow2b.querySelectorAll("select")].filter(s => !s.disabled).length === 2);
+  typeInto(w, [...dbRow2b.querySelectorAll("input[type=text]")]
+    .find(i2 => i2.value === "streak_x").dataset.fid, "streak");
+  const dbRow2c = rowByText(w, "events", "DailyBonus.cs:41");
+  const dbName = [...dbRow2c.querySelectorAll("input[type=text]")].find(i2 => i2.value === "daily_bonus");
+  typeInto(w, dbName.dataset.fid, "daily_bonus_v2");
+  check("events: renaming opts out of adoption",
+        ![...rowByText(w, "events", "DailyBonus.cs:41").querySelectorAll(".badge")]
+          .some(b => b.textContent === "on dashboard"));
+  typeInto(w, [...rowByText(w, "events", "DailyBonus.cs:41").querySelectorAll("input[type=text]")]
+    .find(i2 => i2.value === "daily_bonus_v2").dataset.fid, "daily_bonus");
+  rowByText(w, "events", "DailyBonus.cs:41").querySelector("button.pencil").click();
+
+  // ---- Dashboard->Code orphans (2026-08-05): registry entity with no page row
+  check("events: orphan is not exported while unticked",
+        !exportPlan(w).events.some(e => e.name === "push_opt_in"));
+  check("events: orphan card starts collapsed with the count visible",
+        w.document.getElementById("events-card").textContent.includes("no code carrier (1)")
+        && ![...w.document.querySelectorAll("#events-card .orphans input.inc")].length);
+  w.document.querySelector("#events-card .orphans strong").parentElement.click();
+  check("events: expanded orphan card lists the dashboard-only event",
+        w.document.getElementById("events-card").textContent.includes("push_opt_in"));
+  const orCb = [...w.document.querySelectorAll("#events-card .orphans input.inc")]
+    .find(c => (c.title || "").includes("generate the code carrier"));
+  orCb.checked = true; orCb.dispatchEvent(new w.Event("change", { bubbles: true }));
+  const orRow = exportPlan(w).events.find(e => e.name === "push_opt_in");
+  check("events: ticked orphan ships with the marker and dashboard params",
+        orRow && orRow.dashboard_orphan === true && orRow.existing === false
+        && deepEq(orRow.params, [{ name: "channel", kind: "string", extra: "" }]),
+        JSON.stringify(orRow));
+  const orCb2 = [...w.document.querySelectorAll("#events-card .orphans input.inc")]
+    .find(c => (c.title || "").includes("generate the code carrier"));
+  orCb2.checked = false; orCb2.dispatchEvent(new w.Event("change", { bubbles: true }));
+  // collapse back after the probe
+  w.document.querySelector("#events-card .orphans strong").parentElement.click();
+  check("events: orphan card collapses back to its header",
+        ![...w.document.querySelectorAll("#events-card .orphans input.inc")].length);
+
+  // ---- ⌘Z / Ctrl+Z: whole-state undo survives re-renders (native stacks die)
+  const zKey = extra => new w.KeyboardEvent("keydown",
+    Object.assign({ key: "z", metaKey: true, bubbles: true, cancelable: true }, extra));
+  const evRowCount = () => w.document.querySelectorAll("#events .row").length;
+  const zBase = evRowCount();
+  w.document.getElementById("add-event").click();
+  const zInp = [...w.document.querySelectorAll("#events input[type=text]")]
+    .find(i2 => i2.placeholder === "event_name" && i2.value === "");
+  typeInto(w, zInp.dataset.fid, "zz");
+  w.document.dispatchEvent(zKey({}));
+  check("undo: last keystroke reverted",
+        [...w.document.querySelectorAll("#events input[type=text]")].some(i2 => i2.value === "z"));
+  w.document.dispatchEvent(zKey({}));
+  w.document.dispatchEvent(zKey({}));
+  check("undo: row-add undone", evRowCount() === zBase);
+  w.document.dispatchEvent(zKey({ shiftKey: true }));
+  check("redo: row-add restored", evRowCount() === zBase + 1);
+  w.document.dispatchEvent(zKey({}));
+  check("undo: clean baseline restored", evRowCount() === zBase);
   return w;
 }
 
@@ -231,7 +467,7 @@ function testFields(file) {
   const second = [...w.document.querySelectorAll("#player_fields input[type=text]")]
     .find(i => i.value === "Wallet_Gold");
   typeInto(w, second.dataset.fid, "WalletGems");
-  check("fields: gate reopens after resolving path dup", !gateBlocked(w));
+  check("fields: resolving the path dup clears the errors", valErrs(w) === 0);
 
   // charset: space+punct is red
   typeInto(w, second.dataset.fid, "My Field!");
@@ -253,8 +489,8 @@ function testFields(file) {
   typeInto(w, lrInput.dataset.fid, "LastRaceTime");
   const planP = exportPlan(w);
   const lrOut = planP.player_fields.find(f => f.name === "LastRaceTime");
-  check("fields: rename clears the measured path (re-derived from the new name)",
-        lrOut && !("path" in lrOut), JSON.stringify(lrOut));
+  check("fields: rename re-derives the shipped path from the new name",
+        lrOut && lrOut.path === "last_race_time", JSON.stringify(lrOut));
   check("fields: path input follows the new name",
         [...w.document.querySelectorAll("#player_fields input[type=text]")]
           .some(i => i.value === "last_race_time"));
@@ -274,8 +510,8 @@ function testFields(file) {
   typeInto(w, nIn.dataset.fid, "LastRaceTime2");
   const planOv2 = exportPlan(w);
   const ov2 = planOv2.player_fields.find(f => f.name === "LastRaceTime2");
-  check("fields: editing the name resets the override to auto",
-        ov2 && !("path" in ov2), JSON.stringify(ov2));
+  check("fields: editing the name resets the override back to the auto-derived path",
+        ov2 && ov2.path === "last_race_time2", JSON.stringify(ov2));
   typeInto(w, [...w.document.querySelectorAll("#player_fields input[type=text]")]
     .find(i => i.value === "LastRaceTime2").dataset.fid, "LastRaceAt");
   typeInto(w, w.document.querySelector('#player_fields input[type=text][value=""]') ? lrInput.dataset.fid : lrInput.dataset.fid, "LastRaceAt");
@@ -295,28 +531,188 @@ function testFields(file) {
           .some(i => (i.title || "").includes("leaf/object conflict")));
   typeInto(w, [...w.document.querySelectorAll("#player_fields input[type=text]")]
     .find(i => i.value === "Wallet.Gold.Price").dataset.fid, "Wallet.GoldPrice");
-  check("fields: restructuring resolves the conflict", !gateBlocked(w));
-  // clean up the two probe rows
+  check("fields: restructuring resolves the conflict", valErrs(w) === 0);
+  // clean up the two probe rows via ✕ (page-added rows are deletable)
   for (const nm of ["Wallet.Gold", "Wallet.GoldPrice"]) {
     const row = [...w.document.querySelectorAll("#player_fields .row")]
       .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === nm));
-    const cb = row.querySelector("input.inc");
-    cb.checked = false; cb.dispatchEvent(new w.Event("change", { bubbles: true }));
+    row.querySelector("button.remove").click();
   }
+  // string producer ids must not break the add-row counter (id: null regression)
+  w.document.getElementById("add-field").click();
+  const sidRow = exportPlan(w).player_fields.find(f => f.source === "added on page" && !f.name);
+  check("fields: page-added row gets a numeric non-null id despite string payload ids",
+        sidRow && typeof sidRow.id === "number" && isFinite(sidRow.id), JSON.stringify(sidRow));
+  [...w.document.querySelectorAll("#player_fields .row")]
+    .filter(d => d.querySelector("button.remove"))
+    .forEach(d => {
+      const inp = [...d.querySelectorAll("input[type=text]")];
+      if (inp.length && inp.every(i => !i.value)) d.querySelector("button.remove").click();
+    });
+
+  // page-added row ships the DERIVED path explicitly (no manual override needed)
+  w.document.getElementById("add-field").click();
+  const dpInp = [...w.document.querySelectorAll("#player_fields input[type=text]")]
+    .find(i => i.placeholder === "Wallet.Gold" && i.value === "");
+  typeInto(w, dpInp.dataset.fid, "InitialDeviceOS");
+  const dpRow = exportPlan(w).player_fields.find(f => f.name === "InitialDeviceOS");
+  check("fields: page-added row exports its derived path",
+        dpRow && dpRow.path === "initial_device_os", JSON.stringify(dpRow));
+  [...w.document.querySelectorAll("#player_fields .row")]
+    .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "InitialDeviceOS"))
+    .querySelector("button.remove").click();
+
+  // ---- Dashboard->Code orphan (fields): VIP tier -> property derivation on tick
+  w.document.querySelector("#fields-card .orphans strong").parentElement.click();
+  check("fields: expanded orphan card lists the dashboard-only field",
+        w.document.getElementById("fields-card").textContent.includes("VIP tier"));
+  const pfOr = [...w.document.querySelectorAll("#fields-card .orphans .grid")]
+    .find(g2 => g2.textContent.includes("VIP tier")).querySelector("input.inc");
+  pfOr.checked = true; pfOr.dispatchEvent(new w.Event("change", { bubbles: true }));
+  const pfOrRow = exportPlan(w).player_fields.find(f => f.path === "vip_tier");
+  check("fields: ticked orphan ships marker + derived property + dashboard attrs",
+        pfOrRow && pfOrRow.dashboard_orphan === true && pfOrRow.property === "VIPTier"
+        && pfOrRow.kind === "number" && pfOrRow.existing === false, JSON.stringify(pfOrRow));
+  const pfOr2 = [...w.document.querySelectorAll("#fields-card .orphans .grid")]
+    .find(g2 => g2.textContent.includes("VIP tier")).querySelector("input.inc");
+  pfOr2.checked = false; pfOr2.dispatchEvent(new w.Event("change", { bubbles: true }));
+  w.document.querySelector("#fields-card .orphans strong").parentElement.click();
+
+  // "on dashboard" ADOPT route: badge + pinned kind + read-only description; the
+  // hand-back carries dashboard_field: true and the dashboard's description.
+  w.document.getElementById("add-field").click();
+  const adInp = [...w.document.querySelectorAll("#player_fields input[type=text]")]
+    .find(i => i.placeholder === "Wallet.Gold" && i.value === "");
+  typeInto(w, adInp.dataset.fid, "TransactionCount");
+  // external namespace: type badge replaces "new field", red with its own message
+  w.document.getElementById("add-field").click();
+  const exInp = [...w.document.querySelectorAll("#player_fields input[type=text]")]
+    .find(i => i.placeholder === "Wallet.Gold" && i.value === "");
+  typeInto(w, exInp.dataset.fid, "BucketFoo");
+  const exRow = [...w.document.querySelectorAll("#player_fields .row")]
+    .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "BucketFoo"));
+  const exPath = [...exRow.querySelectorAll("input[type=text]")].find(i => i.value === "bucket_foo");
+  // one-shot set: clearing first would snap the override back to the derived path
+  exPath.value = "calculated_fields.foo";
+  exPath.dispatchEvent(new w.Event("input", { bubbles: true }));
+  check("fields: external namespace shows the external type badge and reds",
+        [...w.document.querySelectorAll("#player_fields .badge")]
+          .some(b => b.textContent === "external")
+        && [...w.document.querySelectorAll("#player_fields input.bad")]
+          .some(i => (i.title || "").includes("external field namespace")));
+  [...w.document.querySelectorAll("#player_fields .row")]
+    .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "BucketFoo"))
+    .querySelector("button.remove").click();
+  // existing rows carry the type lamp: user customs vs predefined_in_use base writes
+  check("fields: existing custom row shows already-in-code + user",
+        (() => {
+          const bs = [...rowByText(w, "player_fields", "EpisodeNumber").querySelectorAll(".badge")]
+            .map(b => b.textContent);
+          return bs.includes("already in code") && bs.includes("user");
+        })());
+  check("fields: predefined_in_use row shows already-in-code + predefined",
+        (() => {
+          const row = [...w.document.querySelectorAll("#player_fields .row")]
+            .find(d => d.textContent.includes("KinoaGameEventBuildingService.cs:125"));
+          const bs = row ? [...row.querySelectorAll(".badge")].map(b => b.textContent) : [];
+          return bs.includes("already in code") && bs.includes("predefined");
+        })());
+  check("fields: live-registry header line rendered",
+        w.document.getElementById("player_fields").textContent
+          .includes("checked against the live dashboard: 1 predefined / 1 calculated / 2 custom"));
+  // collapse the adopt probe: the badge must survive the select-first view
+  rowByText(w, "player_fields", "wires a code carrier").querySelector("button.pencil").click();
+  check("fields: adopt badge visible on the COLLAPSED row",
+        [...rowByText(w, "player_fields", "transaction_count").querySelectorAll(".badge")]
+          .some(b => b.textContent === "on dashboard"));
+  clickPencil(w, "player_fields", "transaction_count");
+  check("fields: adopt head carries the badge pair in one row",
+        (() => {
+          const adRow2 = [...w.document.querySelectorAll("#player_fields .row")]
+            .find(d => [...d.querySelectorAll("input[type=text]")]
+              .some(i => i.value === "TransactionCount"));
+          const hs = [...adRow2.querySelectorAll(".badge")].map(b => b.textContent);
+          return hs.includes("on dashboard") && hs.includes("user") && !hs.includes("new field");
+        })());
+  check("fields: adopt row shows the on-dashboard badge + pinned kind",
+        [...w.document.querySelectorAll("#player_fields .badge")]
+          .some(b => b.textContent === "on dashboard")
+        && [...w.document.querySelectorAll("#player_fields select")]
+          .some(s => s.disabled && s.textContent.trim() === "number"));
+  check("fields: adopt row shows the dashboard description read-only",
+        w.document.getElementById("player_fields").textContent
+          .includes("description (dashboard): Total number of IAP transactions."));
+  check("fields: adopt row is valid (name taken-check exempted by the path match)",
+        valErrs(w) === 0);
+  const adRow = exportPlan(w).player_fields.find(f => f.name === "TransactionCount");
+  check("fields: adopt row ships dashboard_field + pinned kind + dashboard description",
+        adRow && adRow.dashboard_field === true && adRow.kind === "number"
+        && adRow.description === "Total number of IAP transactions.",
+        JSON.stringify(adRow));
+  // editing the path opts OUT of adoption (dashboard field is never renamed)
+  const adPath = [...rowByText(w, "player_fields", "wires a code carrier")
+    .querySelectorAll("input[type=text]")].find(i => i.value === "transaction_count");
+  typeInto(w, adPath.dataset.fid, "transaction_count_v2");
+  check("fields: editing the path opts out of adoption",
+        ![...w.document.querySelectorAll("#player_fields .badge")]
+          .some(b => b.textContent === "on dashboard"));
+  [...w.document.querySelectorAll("#player_fields .row")]
+    .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "TransactionCount"))
+    .querySelector("button.remove").click();
+
+  // spaced display name: property derives PascalCase, path snake, all three ship
+  w.document.getElementById("add-field").click();
+  const spInp = [...w.document.querySelectorAll("#player_fields input[type=text]")]
+    .find(i => i.placeholder === "Wallet.Gold" && i.value === "");
+  typeInto(w, spInp.dataset.fid, "Skin color");
+  check("fields: spaced name is valid and shows the C# preview",
+        valErrs(w) === 0 && [...w.document.querySelectorAll("#player_fields code")]
+          .some(c => c.textContent === "SkinColor"));
+  const spRow = exportPlan(w).player_fields.find(f => f.name === "Skin color");
+  check("fields: spaced name ships name + property + path",
+        spRow && spRow.property === "SkinColor" && spRow.path === "skin_color",
+        JSON.stringify(spRow));
+  [...w.document.querySelectorAll("#player_fields .row")]
+    .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "Skin color"))
+    .querySelector("button.remove").click();
+
+  // platform-reserved path (static plugin list): red offline-proof, ✕ cleans up
+  w.document.getElementById("add-field").click();
+  const rsInp = [...w.document.querySelectorAll("#player_fields input[type=text]")]
+    .find(i => i.placeholder === "Wallet.Gold" && i.value === "");
+  typeInto(w, rsInp.dataset.fid, "TimeZone");
+  check("fields: platform-reserved path turns red",
+        [...w.document.querySelectorAll("#player_fields input.bad")]
+          .some(i => (i.title || "").includes("RESERVED by the platform")));
+  check("fields: platform-reserved path blocks via validation", valErrs(w) > 0);
+  check("fields: static-reserved-only hit has NO type tag (kind unknown)", (() => {
+    const probe = [...w.document.querySelectorAll("#player_fields .row")]
+      .find(d => [...d.querySelectorAll("input[type=text]")].some(i2 => i2.value === "TimeZone"));
+    return !!probe && ![...probe.querySelectorAll(".badge")]
+      .some(b => ["calculated", "predefined"].includes(b.textContent));
+  })());
+  [...w.document.querySelectorAll("#player_fields .row")]
+    .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "TimeZone"))
+    .querySelector("button.remove").click();
+
+  check("fields: page-added probes fully removed via ✕",
+        ![...w.document.querySelectorAll("#player_fields input[type=text]")]
+          .some(i => ["Wallet.Gold", "Wallet.GoldPrice"].includes(i.value)));
 
   // ---- dashboard field registry: predefined path = valid + activate route
   w.document.getElementById("add-field").click();
   let regInp = [...w.document.querySelectorAll("#player_fields input[type=text]")]
     .find(i => i.placeholder === "Wallet.Gold" && i.value === "");
   typeInto(w, regInp.dataset.fid, "Level");
-  check("fields: predefined dashboard path does NOT block", !gateBlocked(w));
+  check("fields: predefined dashboard path is NOT an error", valErrs(w) === 0);
   check("fields: description input hidden for a predefined match",
         ![...w.document.querySelectorAll("#player_fields input[type=text]")]
           .some(i => i.placeholder === "description (optional)" &&
                      i.closest(".row") && i.closest(".row").textContent.includes("predefined")));
-  check("fields: predefined badge + fixed kind shown",
+  check("fields: predefined badge + locked kind shown",
         [...w.document.querySelectorAll("#player_fields .badge")].some(b => b.textContent === "predefined")
-        && w.document.querySelector("#player_fields").textContent.includes("number (fixed)"));
+        && [...w.document.querySelectorAll("#player_fields select")]
+          .some(s => s.disabled && s.textContent.trim() === "number"));
   const planFR = exportPlan(w);
   const lvl = planFR.player_fields.find(f => f.name === "Level");
   check("fields: predefined field exports marker + pinned kind",
@@ -325,10 +721,14 @@ function testFields(file) {
   typeInto(w, [...w.document.querySelectorAll("#player_fields input[type=text]")]
     .find(i => i.value === "Level").dataset.fid, "DaysSinceInstall");
   check("fields: calculated dashboard path blocks the export", gateBlocked(w));
+  check("fields: calculated match shows its type tag next to the error",
+        [...w.document.querySelectorAll("#player_fields .badge")]
+          .some(b => b.textContent === "calculated"));
+
   // taken name (different path) = red
   typeInto(w, [...w.document.querySelectorAll("#player_fields input[type=text]")]
     .find(i => i.value === "DaysSinceInstall").dataset.fid, "Level2");
-  check("fields: recovery to a free name reopens the gate", !gateBlocked(w));
+  check("fields: recovery to a free name clears the error", valErrs(w) === 0);
   // the textual path preview is gone (path lives in an input) — find the row by its input
   const l2row = [...w.document.querySelectorAll("#player_fields .row")]
     .find(d => [...d.querySelectorAll("input[type=text]")].some(i => i.value === "Level2"));
@@ -365,6 +765,19 @@ function testFs(file) {
   check("fs: new key inherits the schema's highest wired version",
         promo && String(promo.version) === "3", JSON.stringify(promo));
 
+  // ---- FS setting display name (2026-08-06): server DTO takes key AND name
+  check("fs: new setting prefills the humanized name on the collapsed row",
+        [...w.document.querySelectorAll("#feature_settings .row")]
+          .some(d => d.textContent.includes("Race Rewards")));
+  check("fs: settings export ships name; existing rows stay verbatim",
+        (() => {
+          const rr = plan0.feature_settings.settings.find(o => o.key === "RaceRewards");
+          const pp = plan0.feature_settings.settings.find(o => o.key === "BoosterEconomy_Promo");
+          const ex = plan0.feature_settings.settings.find(o => o.key === "BoosterEconomy");
+          return rr && rr.name === "Race Rewards" && pp && pp.name === "Booster Promo"
+              && ex && ex.name === undefined;
+        })());
+
   // rename a NEW schema -> its bound settings turn red "(missing: old)", export blocked
   clickPencil(w, "feature_settings", "RaceRewards");
   const schemaName = [...w.document.querySelectorAll("#feature_settings input[type=text]")]
@@ -377,7 +790,7 @@ function testFs(file) {
   const sel = [...w.document.querySelectorAll("#feature_settings select")]
     .find(s => [...s.options].some(o => o.textContent.includes("missing")));
   setSelect(w, sel, "RaceRewardsV2");
-  check("fs: explicit re-pick reopens the gate", !gateBlocked(w));
+  check("fs: explicit re-pick clears the dangling error", valErrs(w) === 0);
 
   // ---- select-first: unticking a schema pulls it from the plan; bound settings go red
   clickPencil(w, "feature_settings", "new schema");  // "done" -> collapse (single new schema in fixture)
@@ -389,7 +802,7 @@ function testFs(file) {
   check("fs: unticked schema absent from hand-back",
         !planX.feature_settings.schemas.some(x => x.name === "RaceRewardsV2"));
   setCheckbox(w, "feature_settings", ["new setting", "(missing: RaceRewardsV2)"], false);
-  check("fs: unticking the dangling setting too reopens the gate", !gateBlocked(w));
+  check("fs: unticking the dangling setting too clears the error", valErrs(w) === 0);
   const planY = exportPlan(w);
   check("fs: unticked setting absent from hand-back",
         !planY.feature_settings.settings.some(x => x.key === "RaceRewards"));
@@ -446,14 +859,14 @@ function testResources(file) {
   typeInto(w, defInp.dataset.fid, "epic");
   check("resources: default outside enum values blocks export", gateBlocked(w));
   typeInto(w, w.document.querySelector('#resources input[placeholder="default"]').dataset.fid, "rare");
-  check("resources: enum-member default passes", !gateBlocked(w));
+  check("resources: enum-member default passes", valErrs(w) === 0);
 
   // number default validation
   const kindSel2 = [...w.document.querySelectorAll("#resources select")].pop();
   setSelect(w, kindSel2, "number");
   check("resources: stale enum default on number turns red (kind toggle)", gateBlocked(w));
   typeInto(w, w.document.querySelector('#resources input[placeholder="default"]').dataset.fid, "42");
-  check("resources: numeric default passes", !gateBlocked(w));
+  check("resources: numeric default passes", valErrs(w) === 0);
   const plan2 = exportPlan(w);
   const shield2 = plan2.resources.find(r => r.key === "magic_shield");
   check("resources: enum values stripped for non-enum kind at export",

@@ -84,10 +84,12 @@ class BuildPlanTests(unittest.TestCase):
         self.mod = _load_module()
 
     def _plan(self, manifest, ev_predef=(), ev_custom=(), ev_deleted=(),
-              pf_predef=(), pf_custom=(), pf_deleted=(), fs_schemas=(), fs_settings=()):
+              pf_predef=(), pf_custom=(), pf_deleted=(), fs_schemas=(), fs_settings=(),
+              pf_calculated=()):
         return self.mod.build_plan(manifest, list(ev_predef), list(ev_custom), list(ev_deleted),
                                    list(pf_predef), list(pf_custom), list(pf_deleted),
-                                   list(fs_schemas), list(fs_settings))
+                                   list(fs_schemas), list(fs_settings),
+                                   pf_calculated=list(pf_calculated))
 
     # ---- events: predefined ----
 
@@ -231,14 +233,82 @@ class BuildPlanTests(unittest.TestCase):
         self.assertEqual([p["name"] for p in create["params"]], ["position"])
         self.assertTrue(any("built-in system field" in w.get("reason", "")
                             for w in plan["events"]["warnings"]))
-        # an UNFLAGGED reserved name still warns and stays (byte-for-byte manifest)
+        # an UNFLAGGED reserved name is excluded too (the server refuses the call) and
+        # the warning names the SDK-composed route (user decision 2026-08-03)
         manifest2 = _manifest()
         manifest2["events"]["custom"] = [{"name": "e2", "params": [
             {"name": "time", "kind": "number"}]}]
         plan2 = self._plan(manifest2)
-        self.assertEqual([p["name"] for p in plan2["events"]["create"][0]["params"]], ["time"])
+        self.assertEqual(plan2["events"]["create"][0]["params"], [])
         self.assertTrue(any("RESERVED by system parameters" in w.get("reason", "")
+                            and "SDK composes it" in w.get("reason", "")
                             for w in plan2["events"]["warnings"]))
+
+    def test_reserved_param_routes_and_empty_addparams_row_dropped(self):
+        # Route text branches by VEHICLE (SDK revert 2026-08-06): level on a PREDEFINED
+        # event rides SetLevel; on a USER event it has NO route (CustomEventData is
+        # GameEventData-direct — no setter — and the reserved name can't be registered),
+        # so the advice is a rename. An add-params row left with zero params after
+        # exclusion is a no-op and disappears from the plan (2026-08-03).
+        manifest = _manifest()
+        manifest["events"]["custom"] = [{"name": "race_start", "params": [
+            {"name": "level", "kind": "number"}, {"name": "seed", "kind": "string"}]}]
+        manifest["events"]["predefined_in_use"] = [{"name": "payment",
+            "custom_params": [{"name": "wifi", "kind": "boolean"},
+                              {"name": "level", "kind": "number"}]}]
+        predef = {"id": "e1", "name": "payment", "status": "ACTIVE",
+                  "game_event_parameters": []}
+        plan = self._plan(manifest, ev_predef=[predef])
+        create = plan["events"]["create"][0]
+        self.assertEqual([p["name"] for p in create["params"]], ["seed"])
+        warns = plan["events"]["warnings"]
+        self.assertTrue(any(w.get("name") == "race_start" and w.get("param") == "level"
+                            and "NO route on a user event" in w.get("reason", "")
+                            and "level_number" in w.get("reason", "") for w in warns), warns)
+        self.assertTrue(any(w.get("name") == "payment" and w.get("param") == "level"
+                            and "base class" in w.get("reason", "") for w in warns), warns)
+        self.assertTrue(any(w.get("param") == "wifi" and "SDK composes it" in w.get("reason", "")
+                            for w in warns))
+        self.assertEqual(plan["events"]["add_params"], [])
+
+    def test_calculated_path_collision_warns_and_skips_create(self):
+        # types=CALCULATED listing (the per-record flag is dead — always false);
+        # a manifest path colliding with a calculated path must never plan a create.
+        manifest = _manifest()
+        manifest["player_fields"]["custom"] = [
+            {"path": "initial_device_os", "kind": "string"},
+            {"path": "win_streak_custom", "kind": "number"}]
+        pf = self._plan(manifest, pf_calculated=[
+            {"id": "c1", "name": "Initial Device OS", "path": "initial_device_os",
+             "kind": "string", "type": "CALCULATED", "calculated": False}])["player_fields"]
+        self.assertEqual([c["path"] for c in pf["create"]], ["win_streak_custom"])
+        self.assertTrue(any("reserved by a CALCULATED" in w.get("reason", "")
+                            and w.get("path") == "initial_device_os"
+                            for w in pf["warnings"]))
+
+    def test_reserved_platform_path_warns_and_skips_create(self):
+        # Static plugin-shipped list (prefix semantics): exact hit + namespace child.
+        manifest = _manifest()
+        manifest["player_fields"]["custom"] = [
+            {"path": "time_zone", "kind": "string"},
+            {"path": "session_data.my_field", "kind": "number"},
+            {"path": "safe_field", "kind": "number"}]
+        pf = self._plan(manifest)["player_fields"]
+        self.assertEqual([c["path"] for c in pf["create"]], ["safe_field"])
+        self.assertEqual(sorted(w["path"] for w in pf["warnings"]
+                                if "RESERVED by the platform" in w.get("reason", "")),
+                         ["session_data.my_field", "time_zone"])
+
+    def test_dashboard_name_preferred_for_create(self):
+        # /// Dashboard name: carrier (written only when name != property) wins the
+        # create --name; absent -> property default (2026-08-04).
+        manifest = _manifest()
+        manifest["player_fields"]["custom"] = [
+            {"path": "skin_color", "property": "SkinColor",
+             "dashboard_name": "Skin color", "kind": "string"},
+            {"path": "win_streak", "property": "WinStreak", "kind": "number"}]
+        creates = self._plan(manifest)["player_fields"]["create"]
+        self.assertEqual([c["name"] for c in creates], ["Skin color", "WinStreak"])
 
     def test_leaf_object_path_conflict_warns(self):
         manifest = _manifest()

@@ -123,17 +123,26 @@ import webbrowser
 # RESOURCE_KEY_RE); tests enforce the parity.
 EVENT_PARAM_KINDS = ["number", "boolean", "string", "date", "enumeration", "string_array", "number_array"]
 FIELD_KINDS = ["number", "boolean", "string", "date", "long_string", "enumeration", "version"]
+# Platform-reserved player-field paths — plugin-shipped backend snapshot (2026-08-04);
+# see reserved-player-field-paths.json for semantics (prefix rule, server backstop).
+RESERVED_PLAYER_FIELD_PATHS = json.loads(
+    (pathlib.Path(__file__).resolve().parent / "reserved-player-field-paths.json")
+    .read_text(encoding="utf-8"))["reserved"]
 FS_COLUMN_KINDS = ["integer", "number", "string", "boolean", "bundle_key"]
 RESOURCE_FIELD_TYPES = ["number", "string", "boolean", "date", "enumeration"]
 RESOURCE_KEY_RE = r"^[a-zA-Z][a-zA-Z0-9_-]*$"
 # The dashboard auto-attaches these to every event; an operator param with the same
 # name silently DISPLACES the system column (planner constant — parity-tested).
 SYSTEM_EVENT_PARAM_NAMES = ["device_id", "level", "place", "success", "time", "time_ms", "wifi"]
-# The reserved set splits by ROUTE (SDK internals, verified 2026-07-29/30): base-class
-# properties the game sets vs values the SDK composes itself. Union == the reserved list.
-SYSTEM_BASE_PROP_PARAM_NAMES = ["level", "place", "success"]
+# The reserved set splits by ROUTE (SDK internals, verified 2026-07-29/30; success
+# narrowed 2026-08-05): base-class properties the game sets (SetLevel/SetPlace), the
+# read-only base field `success` (always true — no setter exists, so nothing routes
+# there), and values the SDK composes itself. Union == the reserved list.
+SYSTEM_BASE_PROP_PARAM_NAMES = ["level", "place"]
+SYSTEM_READONLY_PARAM_NAMES = ["success"]
 SYSTEM_AUTO_PARAM_NAMES = ["device_id", "time", "time_ms", "wifi"]
-assert sorted(SYSTEM_BASE_PROP_PARAM_NAMES + SYSTEM_AUTO_PARAM_NAMES) == SYSTEM_EVENT_PARAM_NAMES
+assert sorted(SYSTEM_BASE_PROP_PARAM_NAMES + SYSTEM_READONLY_PARAM_NAMES
+              + SYSTEM_AUTO_PARAM_NAMES) == SYSTEM_EVENT_PARAM_NAMES
 # Canonical kinds pinned by the SDK base classes (live-read 2026-07-30: GameEventData /
 # ExtendedGameEventData property types) — the page LOCKS the type for system params.
 SYSTEM_PARAM_KINDS = {"device_id": "string", "level": "number", "place": "string",
@@ -172,7 +181,7 @@ input.bad, select.bad {{ border-color: #cf222e; background: #fff5f5; }}
 input.warnp {{ border-color: #bf8700; }}
 .badge {{ display: inline-block; font-size: 0.72rem; padding: 0.1rem 0.5rem; border-radius: 999px;
          border: 1px solid currentColor; white-space: nowrap; }}
-.b-existing {{ color: #57606a; }} .b-new {{ color: #1a7f37; }} .b-predef {{ color: #0969da; }} .b-debug {{ color: #bf8700; }} .b-user {{ color: #8250df; }} .b-system {{ color: #0e7490; }}
+.b-existing {{ color: #57606a; }} .b-new {{ color: #1a7f37; }} .b-predef {{ color: #0969da; }} .b-debug {{ color: #bf8700; }} .b-user {{ color: #8250df; }} .b-system {{ color: #0e7490; }} .b-calc {{ color: #cf222e; }} .b-dash {{ color: #9a6700; }} .b-ext {{ color: #bf3989; }}
 button {{ font: inherit; padding: 0.35rem 0.8rem; border-radius: 6px; cursor: pointer;
          border: 1px solid #d0d7de; background: #fff; color: #1f2328; }}
 button.ghost {{ border-style: dashed; }}
@@ -185,6 +194,8 @@ table.sub tr.removedp td {{ opacity: 0.5; }}
 table.sub tr.removedp code {{ text-decoration: line-through; }}
 input.inc {{ width: 1.05rem; height: 1.05rem; accent-color: #1f883d; }}
 .grid > button.pencil {{ margin-left: auto; padding: 0.15rem 0.6rem; font-size: 0.85rem; }}
+.grid > button.remove {{ margin-left: 0.35rem; padding: 0.15rem 0.6rem; font-size: 0.85rem; color: #c0392b; }}
+table.sub button.remove {{ color: #c0392b; padding: 0 0.45rem; font-size: 0.85rem; }}
 table.sub {{ width: 100%; border-collapse: collapse; margin-top: 0.4rem; }}
 table.sub td {{ padding: 0.15rem 0.3rem; }}
 footer {{ position: fixed; bottom: 0; left: 0; right: 0; background: #1f2328; color: #fff;
@@ -225,6 +236,7 @@ footer .grow {{ flex: 1; }}
   <div class="grow" id="counter"></div>
   <button id="download" class="primary">⬇ Download plan</button>
   <button id="copy">Copy plan</button>
+  <span class="muted" style="margin-left:0.6rem">⌘Z / Ctrl+Z undo · ⇧⌘Z / Ctrl+Y redo</span>
   <span id="flash"></span>
 </footer>
 <script>
@@ -238,6 +250,20 @@ const SYSTEM_EVENT_PARAM_NAMES = {system_event_param_names};
 const SYSTEM_BASE_PROP_PARAM_NAMES = {system_base_prop_param_names};
 const SYSTEM_AUTO_PARAM_NAMES = {system_auto_param_names};
 const SYSTEM_PARAM_KINDS = {system_param_kinds};
+// Platform-reserved player-field paths (backend snapshot; server backstop: "path is
+// reserved"). PREFIX semantics; the predefined route takes precedence — level etc.
+// legally ACTIVATE, so the check applies only when FR_PREDEF has no match.
+const RESERVED_FIELD_PATHS = {reserved_field_paths};
+// Dashboard CUSTOM events (append-only key, 2026-08-05): powers the events ADOPT
+// route — a same-name candidate wires into the existing entity (add-params only,
+// never a create); the ftd case (same signal, different name) gets producer notes.
+const CUSTOM_EVENT_REGISTRY = {{}};
+(DATA.custom_event_registry || []).forEach(e => {{
+  if (e && e.name) CUSTOM_EVENT_REGISTRY[String(e.name).trim()] = e;
+}});
+function reservedFieldPath(p) {{
+  return RESERVED_FIELD_PATHS.some(e => p === e || String(p).startsWith(e + "."));
+}}
 // Registries travel IN THE PAYLOAD (optional keys, contract clause 1) — sourced live from
 // the server taxonomy (type=PREDEFINED / type=DEBUG listings) with the /kinoa module-13
 // tables as offline fallback. Absent keys -> no live tagging (the sync planner's
@@ -262,6 +288,13 @@ const FR_PREDEF = {{}};
 const FR_CALC = {{}};
 (FIELD_REGISTRY.calculated || []).forEach(e => {{ if (e && e.path) FR_CALC[e.path] = e.kind || ""; }});
 const FR_CUSTOM_PATHS = new Set(FIELD_REGISTRY.custom_paths || []);
+// Rich custom-field records (append-only key custom_fields, 2026-08-04): power the
+// "on dashboard" ADOPT route — a field registered on the dashboard with no code
+// carrier gets kind pinned + read-only description; the row wires the carrier.
+const FR_CUSTOM = {{}};
+(FIELD_REGISTRY.custom_fields || []).forEach(e => {{
+  if (e && e.path) {{ FR_CUSTOM[e.path] = e; FR_CUSTOM_PATHS.add(e.path); }}
+}});
 const FR_NAMES = new Set((FIELD_REGISTRY.names || []).map(n => String(n).trim().toLowerCase()));
 const PAYLOAD_VERSION = {payload_version};
 const DATA_VERSION = DATA.payload_version || 1;
@@ -294,14 +327,38 @@ const state = {{
   player_fields: (DATA.player_fields || []).slice(),
   feature_settings: normalizeFs(DATA.feature_settings),
   resources: (DATA.resources || []).map(x => ({{fields: [], ...x}})),
+  // Dashboard->Code (2026-08-05): ticks of "on dashboard — no code carrier" orphans,
+  // keyed "ev:<name>" / "pf:<path>". A tick asks the run to GENERATE the carrier.
+  orphan_ticks: {{}},
 }};
-state.events.forEach(r => (r.params || []).forEach(p => {{
+// System-kind coercion applies to PROPOSAL rows only: an existing row is a read-only
+// MEASUREMENT — its kind ships verbatim even when a system-named param was measured
+// with a non-canonical kind (the row shows a route warning instead; a live run had
+// silently retyped level string->number on Start/Finish, 2026-08-03).
+state.events.forEach(r => {{ if (r.existing) return; (r.params || []).forEach(p => {{
   const t = String(p.name || "").trim();
   if (SYSTEM_PARAM_KINDS[t] !== undefined) p.kind = SYSTEM_PARAM_KINDS[t];
-}}));
+}}); }});
+// Proposed additions (user decision 2026-08-04): an existing EVENT row may carry
+// evidence-backed NEW-param proposals. Unlike the measured part they are editable,
+// born UNTICKED, and ship only when ticked (append-only key proposed_params) — the
+// implementation routes them through module 04's State-2 builder extension.
+state.events.forEach(r => {{
+  if (!(r.proposed_params || []).length) return;
+  r.editing = true;  // discovered additions open the row in edit mode (user 2026-08-04)
+  r.proposed_params.forEach(p => {{
+    p._proposed = true;
+    p.included = p.included !== false;  // born ticked; ✓ done confirms, untick drops
+    const t = String(p.name || "").trim();
+    if (SYSTEM_PARAM_KINDS[t] !== undefined) p.kind = SYSTEM_PARAM_KINDS[t];
+  }});
+}});
+// Producers may mint STRING row ids ("pf-ex-1") — the contract requires unique
+// non-null, not numeric. Count the max over NUMERIC ids only; string ids once drove
+// this to NaN and a page-added row shipped id: null (demo-b, 2026-08-03).
 let nextId = 1 + Math.max(0, ...[...state.events, ...state.player_fields,
   ...state.feature_settings.schemas, ...state.feature_settings.settings,
-  ...state.resources].map(r => r.id || 0));
+  ...state.resources].map(r => (typeof r.id === "number" && isFinite(r.id)) ? r.id : 0));
 
 // A section exists on this page ONLY if its key is PRESENT in the payload — a scoped/module
 // run (e.g. /kinoa resources) sends just its own section, and the page must not show (or
@@ -323,6 +380,10 @@ function isPredefName(n) {{ return PREDEFINED_EVENT_WIRE_NAMES.includes(String(n
 function isDebugName(n) {{ return DEBUG_WIRE_NAMES.includes(String(n || "").trim().toLowerCase()); }}
 function isSdkAutomatic(n) {{ return SDK_AUTOMATIC_WIRE_NAMES.includes(String(n || "").trim().toLowerCase()); }}
 function effectiveKind(r) {{
+  // Existing rows are MEASUREMENTS — their kind ships from code and is never
+  // re-tagged by registry name (a custom mirror may legally collide with a
+  // predefined wire name; a live run badged both level_up rows "predefined").
+  if (r.existing) return r.kind || "custom";
   if (r.kind === "debug" || r.kind === "sdk" || isDebugName(r.name)) return "debug";
   if (r.kind === "predefined" || isPredefName(r.name)) return "predefined";
   return r.kind || "custom";
@@ -334,9 +395,42 @@ function snake(s) {{ return String(s || "").replace(/([A-Z]+)([A-Z][a-z])/g, "$1
   .replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase(); }}
 // Field NAME must be a dot-separated C# property chain — it ships byte-for-byte
 // into code as identifiers (resource keys already get the same class of rule).
-const FIELD_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/;
+// Display name: spaces allowed between tokens (user 2026-08-04) — the C# property
+// derives PascalCase per token, the path derives snake from the property; a spaced
+// name ships to the dashboard as-is (11 of 16 live predefined names carry spaces).
+const FIELD_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*(?: [A-Za-z0-9_]+)*(?:\.[A-Za-z_][A-Za-z0-9_]*(?: [A-Za-z0-9_]+)*)*$/;
+function propOf(r) {{
+  const n = String(r.name || "").trim();
+  if (!n.includes(" ")) return n;   // identity for space-free names (incl. measured rows)
+  return n.split(".").map(seg => seg.trim().split(/ +/)
+    .map(t => t.charAt(0).toUpperCase() + t.slice(1)).join("")).join(".");
+}}
 // Registered-path charset (server rule): letter first; letters, digits, _, -, dots.
 const FIELD_PATH_RE = /^[A-Za-z][A-Za-z0-9_\-]*(\.[A-Za-z0-9_\-]+)*$/;
+
+// Re-renders destroy the browser's native per-input undo stack — the page keeps a
+// whole-state history instead (user request 2026-08-04): snapshot per render
+// (char-level), cap 200; ⌘Z/Ctrl+Z undo, ⇧⌘Z/Ctrl+Y redo. nextId is deliberately
+// NOT restored — ids stay monotonic so an undone row can't collide with a new one.
+let UNDO = [], REDO = [], RESTORING = false;
+function restoreSnap(snap) {{
+  const d = JSON.parse(snap);
+  state.events = d.events; state.player_fields = d.player_fields;
+  state.feature_settings = d.feature_settings; state.resources = d.resources;
+  state.orphan_ticks = d.orphan_ticks || {{}};
+  RESTORING = true; render(); RESTORING = false;
+}}
+document.addEventListener("keydown", e => {{
+  const k = String(e.key || "").toLowerCase();
+  if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+  if (k === "z" && !e.shiftKey) {{
+    e.preventDefault();
+    if (UNDO.length > 1) {{ REDO.push(UNDO.pop()); restoreSnap(UNDO[UNDO.length - 1]); }}
+  }} else if ((k === "z" && e.shiftKey) || k === "y") {{
+    e.preventDefault();
+    if (REDO.length) {{ const snap = REDO.pop(); UNDO.push(snap); restoreSnap(snap); }}
+  }}
+}});
 
 // Re-render destroys every node — remember the focused input and caret so
 // live-validated typing doesn't drop focus.
@@ -356,6 +450,14 @@ function render() {{
     }});
     return;
   }}
+  if (!RESTORING) {{
+    const snap = JSON.stringify(state);
+    if (!UNDO.length || UNDO[UNDO.length - 1] !== snap) {{
+      UNDO.push(snap);
+      if (UNDO.length > 200) UNDO.shift();
+      REDO.length = 0;
+    }}
+  }}
   const active = document.activeElement;
   const focusId = active && active.dataset ? active.dataset.fid : null;
   const selStart = focusId && "selectionStart" in active ? active.selectionStart : null;
@@ -363,11 +465,21 @@ function render() {{
   // ANY visible validation error blocks the export — an invalid plan must never
   // become a hand-back (user rule 2026-07-28).
   const errs = document.querySelectorAll("input.bad, select.bad").length;
-  document.getElementById("download").disabled = errs > 0;
-  document.getElementById("copy").disabled = errs > 0;
+  // ✓ done is the COMPLETENESS signal: a half-typed name is often perfectly valid
+  // (race_fin mid-typing), so validity alone can't see an unfinished edit. Any open
+  // editor on any surface blocks the export until confirmed (user decision 2026-08-04).
+  const openRows = [...state.events, ...state.player_fields,
+    ...state.feature_settings.schemas, ...state.feature_settings.settings,
+    ...state.resources].filter(r => r.editing === true && inc(r)).length;
+  document.getElementById("download").disabled = errs > 0 || openRows > 0;
+  document.getElementById("copy").disabled = errs > 0 || openRows > 0;
   if (errs > 0) {{
     document.getElementById("counter").textContent +=
       "  \u00b7  " + errs + " validation error(s) — fix to enable export";
+  }}
+  if (openRows > 0) {{
+    document.getElementById("counter").textContent +=
+      "  \u00b7  " + openRows + " row(s) open for editing — tap \u2713 done to confirm";
   }}
   if (focusId) {{
     const el = document.querySelector('[data-fid="' + focusId + '"]');
@@ -409,6 +521,17 @@ function kindSelect(kinds, value, onchange, fid) {{
   return sel;
 }}
 
+function pinnedKind(kind, title) {{
+  // A pinned (non-editable) kind renders as a DISABLED select — the lock itself
+  // communicates "not yours to change"; no "(fixed)" text (user feedback 2026-08-05).
+  const sel = document.createElement("select");
+  sel.disabled = true;
+  const o = document.createElement("option"); o.textContent = kind; o.selected = true;
+  sel.appendChild(o);
+  if (title) sel.title = title;
+  return sel;
+}}
+
 function head(row, label, opts = {{}}) {{
   const div = document.createElement("div"); div.className = "grid";
   if (!row.existing) {{
@@ -419,21 +542,37 @@ function head(row, label, opts = {{}}) {{
     div.appendChild(cb);
   }}
   const badge = document.createElement("span");
-  badge.className = "badge " + (row.existing ? "b-existing" : "b-new");
-  badge.textContent = row.existing ? "already in code — edit code-first" : label;
+  badge.className = "badge " + (row.existing ? "b-existing" : (opts.labelClass || "b-new"));
+  // One short status lamp everywhere (user 2026-08-04): the badge is a STATE, not an
+  // instruction — "edit code-first" lives in the hover, where each surface explains
+  // its own nuance (events rows additionally take additions via ✎).
+  badge.textContent = row.existing ? "already in code" : label;
+  if (row.existing) {{
+    badge.title = row.params !== undefined
+      ? "measured part is read-only (edit code-first); ✎ opens the additions editor — "
+        + "ticked additions ship via a builder extension"
+      : "measurement of code — edit code-first; the page cannot change it";
+  }} else if (opts.labelTitle) {{
+    badge.title = opts.labelTitle;
+  }}
   div.appendChild(badge);
+  (opts.extraBadges || []).forEach(b => {{
+    const eb = document.createElement("span"); eb.className = "badge " + (b.cls || "");
+    eb.textContent = b.text; if (b.title) eb.title = b.title;
+    div.appendChild(eb);
+  }});
   const ek = row.params !== undefined ? effectiveKind(row) : row.kind;
-  if (ek === "predefined") {{
+  if (row.existing && ek === "predefined") {{
     const b = document.createElement("span"); b.className = "badge b-predef"; b.textContent = "predefined";
     b.title = "predefined Kinoa event — wired via the game's existing builder (e.g. PaymentEventData); " +
               "params attach as custom_params. It will NOT be created as a separate user event.";
     div.appendChild(b);
-  }} else if (ek === "debug") {{
+  }} else if (row.existing && ek === "debug") {{
     const b = document.createElement("span"); b.className = "badge b-debug"; b.textContent = "debug";
     b.title = "debug telemetry — emitted by the SDK/backend itself, never sent from app code; " +
               "there is nothing to implement, this row will be skipped.";
     div.appendChild(b);
-  }} else if (ek === "custom" && row.params !== undefined) {{
+  }} else if (row.existing && ek === "custom" && row.params !== undefined) {{
     const b = document.createElement("span"); b.className = "badge b-user"; b.textContent = "user";
     b.title = "user event — the game's own event, sent from app code; created on the dashboard " +
               "with type USER.";
@@ -443,7 +582,9 @@ function head(row, label, opts = {{}}) {{
     const s = document.createElement("span"); s.className = "muted"; s.textContent = row.source;
     div.appendChild(s);
   }}
-  if (!row.existing && opts.collapsible && inc(row)) {{
+  const pencilShown = opts.collapsible && inc(row)
+    && (!row.existing || opts.existingEditable === true);
+  if (pencilShown) {{
     const ed = document.createElement("button"); ed.className = "ghost pencil";
     ed.dataset.fid = "ed-" + (row.id || "");
     ed.textContent = opts.expanded ? "✓ done" : "✎ edit";
@@ -451,12 +592,45 @@ function head(row, label, opts = {{}}) {{
     ed.addEventListener("click", () => {{ row.editing = !opts.expanded; render(); }});
     div.appendChild(ed);
   }}
+  // ✕ only for rows created by this page session's "+ add" buttons (_pageNew is
+  // page-local and never ships) — measured candidates keep checkbox semantics, and a
+  // round-tripped row loses deletability by design (user decision 2026-08-03).
+  if (row._pageNew && !row.existing && opts.onRemove) {{
+    const rm = document.createElement("button"); rm.className = "ghost remove";
+    rm.dataset.fid = "rm-" + (row.id || "");
+    rm.textContent = "✕ remove";
+    rm.title = "delete this row — available only for rows just added on this page "
+             + "(measured candidates use the checkbox instead)";
+    if (!pencilShown) rm.style.marginLeft = "auto";
+    rm.addEventListener("click", opts.onRemove);
+    div.appendChild(rm);
+  }}
   return div;
 }}
 
 // Select-first: the checkbox is the primary decision. `included` / `editing` are
 // page-local flags — they never ship in the hand-back (stripLocal at export).
 const inc = r => r.included !== false;
+
+// level/place live ONLY on ExtendedGameEventData (predefined vehicles) — a CUSTOM
+// event's vehicle is GameEventData-direct again (SDK revert 2026-08-06; the 2026-07-31
+// reparent is rolled back), so a user event can neither SET them (no SetLevel/SetPlace)
+// nor REGISTER them (reserved names) — rename (e.g. level_number) is the only route.
+// success/device_id/time/time_ms/wifi still exist on every event with their own routes.
+// The rename a developer is nudged toward when the name has no carrier on a user
+// event — the value then ships as an ordinary registered param.
+const RENAME_HINT = {{level: "level_number", place: "place_name"}};
+function sysNoRoute(row, p) {{
+  return INTEGRATION_TYPE === "SDK"
+    && ["level", "place"].includes(String(p.name || "").trim())
+    && effectiveKind(row) !== "predefined";
+}}
+// ...but only an EDITABLE param can be red: a measured param on an existing row is
+// read-only code reality (its note says "Fix code-first") — redding it would block the
+// export with nothing on the page to fix. Same doctrine as duplicate names.
+function sysUnroutable(row, p) {{
+  return sysNoRoute(row, p) && (!row.existing || p._proposed);
+}}
 
 // A row may render COLLAPSED only while it is valid — a hidden red input would blind
 // the export gate (the exact bug class fixed for debug-collapsed params). These
@@ -466,10 +640,12 @@ function eventRowInvalid(r, dup) {{
       && (!String(r.name || "").trim() || dup(r.name) || String(r.name || "").length > 30)) return true;
   const ek = effectiveKind(r);
   if (ek === "debug" || (ek === "predefined" && isSdkAutomatic(r.name) && INTEGRATION_TYPE === "SDK")) return false;
-  const live = (r.params || []).filter(p => p.included !== false);
+  const live = ((r.params || []).concat(r.proposed_params || []))
+    .filter(p => p.included !== false);
   const pdup = dupIn(live, "name");
   return live.some(p =>
     !String(p.name || "").trim() || pdup(p.name) || String(p.name || "").length > 30
+    || sysUnroutable(r, p)
     || !EVENT_PARAM_KINDS.includes(p.kind)
     || (p.kind === "enumeration" && (!String(p.extra || "").trim() || enumValuesTooLong(p.extra))));
 }}
@@ -489,16 +665,23 @@ function pathNodeConflict(path, allPaths) {{
 function pathSegMismatch(r, pathOf) {{
   // A dotted override maps PER-SEGMENT onto the property chain ([JsonPropertyName]
   // per segment) — nesting depth comes from nested properties, never from the string.
-  return pathOf(r).split(".").length !== String(r.name || "").trim().split(".").length;
+  return pathOf(r).split(".").length !== propOf(r).split(".").length;
 }}
 function fieldRowInvalid(r, dup, pathDup, pathOf, nodeConf) {{
+  if (FR_CUSTOM[pathOf(r)] !== undefined && FR_PREDEF[pathOf(r)] === undefined) {{
+    // ADOPT route: kind/description are pinned by the dashboard record — only the
+    // C# name shape is the developer's to get right.
+    return !String(r.name || "").trim() || dup(r.name)
+      || !FIELD_NAME_RE.test(String(r.name || "").trim()) || String(r.name || "").length > 30;
+  }}
   if (FR_PREDEF[pathOf(r)] !== undefined) {{
     // predefined dashboard field: valid candidate; only name-shape rules apply
     return !String(r.name || "").trim() || dup(r.name)
       || !FIELD_NAME_RE.test(String(r.name || "").trim()) || String(r.name || "").length > 30;
   }}
   return !String(r.name || "").trim() || dup(r.name) || pathDup(r)
-    || FR_CALC[pathOf(r)] !== undefined || fieldTakenName(r, pathOf)
+    || FR_CALC[pathOf(r)] !== undefined || reservedFieldPath(pathOf(r))
+    || fieldTakenName(r, pathOf)
     || !FIELD_NAME_RE.test(String(r.name || "").trim())
     || !FIELD_PATH_RE.test(pathOf(r)) || pathSegMismatch(r, pathOf)
     || (nodeConf && nodeConf(r))
@@ -527,21 +710,29 @@ function resRowInvalid(r, dup, ndup) {{
     || String(f.name || "").length > 100
     || !RESOURCE_FIELD_TYPES.includes(f.field_type)
     || (f.field_type === "enumeration" && resEnumBad(f))
-    || resDefaultBad(f)
-    || String(f.description || "").includes(":"));
+    || resDefaultBad(f));
 }}
 function fsSettingRowInvalid(r, kdup, schemaNames) {{
   return !String(r.key || "").trim() || kdup(r.key) || String(r.key || "").length > 100
+    || !String(r.name || "").trim()
     || !r.schema_name || !schemaNames.includes(r.schema_name);
 }}
 // Expanded iff: new + included + (explicitly editing OR invalid — red must stay visible).
 // STICKY: an auto-expanded (invalid) row is stamped editing=true, so fixing the last
 // error never collapses it mid-typing (focus theft / truncated input); only the
 // explicit "done" collapses — and an invalid row just re-expands.
-function expandedRow(r, invalidFn) {{
-  const open = !r.existing && inc(r) && (r.editing === true || invalidFn());
+function expandedRow(r, invalidFn, allowExisting) {{
+  const open = (allowExisting === true || !r.existing) && inc(r)
+    && (r.editing === true || invalidFn());
   if (open) r.editing = true;
   return open;
+}}
+
+// The bad-predicates OR several conditions; the tooltip must name the one that
+// actually fired (a duplicate used to show "maximum 30 characters").
+function firstBad(pairs, fallback) {{
+  for (const pr of pairs) if (pr[0]) return pr[1];
+  return fallback;
 }}
 
 function dupNames(rows, key) {{
@@ -553,19 +744,19 @@ function dupNames(rows, key) {{
 
 function dupIn(items, key) {{ return dupNames(items || [], key); }}
 
-// Resource-field carrier rules (module 14 doc-block grammar): tokens split on ':',
-// so ':' in a name/default/description is unrepresentable in KinoaResources.cs;
-// enum values also reject '=' (the values token is "the comma-bearing token without
-// a '='"). Names double as JSON body keys — resource-key charset applies.
+// Resource-field rules: names double as JSON body keys AND doc-block first tokens —
+// the resource-key charset applies (pending backend confirmation to relax). The former
+// ':'-family bans (default #4, enum values ':'/'=' #5, description #6) were INVENTED
+// (module-14 doc-block carrier grammar, not dashboard rules) and are all removed
+// 2026-08-05 — the carrier grammar is hardened instead (values= named token + rejoin
+// rule; see module 14 "Token details").
 const RES_FIELD_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 function resEnumBad(f) {{
-  const vals = f.enumeration_values || [];
-  return !vals.length || vals.some(v => v.includes(":") || v.includes("="));
+  return !(f.enumeration_values || []).length;
 }}
 function resDefaultBad(f) {{
   const d = String(f.default || "");
   if (!d) return false;
-  if (d.includes(":")) return true;
   const t = f.field_type;
   if (t === "number") return !/^-?\d+(\.\d+)?$/.test(d.trim());
   if (t === "boolean") return !/^(true|false)$/i.test(d.trim());
@@ -582,13 +773,78 @@ function enumValuesTooLong(csv) {{
   return String(csv || "").split(",").some(x => x.trim().length > 50);
 }}
 
+// Setting display name (2026-08-06): the dashboard's create-setting DTO takes BOTH
+// key (runtime lookup id) and name (human label); the executor used to paper over
+// with name=key. New-setting rows prefill a humanized key — the developer approves.
+function humanizeKey(k) {{
+  return String(k || "").replace(/[_\-]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .trim().split(/\s+/).map(w => w ? w[0].toUpperCase() + w.slice(1) : "").join(" ");
+}}
+
 function isReservedFsColumn(n) {{
   const t = String(n || "").trim().toLowerCase();
   return t.startsWith("filter:") || String(n || "").includes("<");
 }}
 
+// Dashboard->Code orphans: registry entities with NO page row (an operator created
+// them on the dashboard; code has no carrier). Read-only + a tick = take the task.
+const ORPHANS_COLLAPSED = {{}};  // pure UI pref — deliberately outside undo history
+function renderOrphanSection(host, title, typeBadge, items) {{
+  // The box lives on the CARD, after the ＋Add button — rows and the add action stay
+  // together, the dashboard-orphans card sits below them (user 2026-08-05).
+  const card = host.parentElement;
+  [...card.querySelectorAll(":scope > .orphans")].forEach(n => n.remove());
+  if (!items.length) return;
+  // A card of its own: the dashed border reads as "not yet materialized in code".
+  const box = document.createElement("div");
+  box.className = "orphans";
+  box.style.cssText = "border:1px dashed #a9b1ba;background:#fafbfc;border-radius:8px;"
+    + "padding:0.8rem 1rem;margin-top:1rem";
+  const colKey = typeBadge.text;
+  const collapsed = ORPHANS_COLLAPSED[colKey] !== false;  // collapsed by default
+  const hdr = document.createElement("div");
+  hdr.style.cssText = "margin-bottom:0.45rem;cursor:pointer";
+  hdr.title = collapsed ? "expand the list" : "collapse the list";
+  hdr.innerHTML = "<strong>" + (collapsed ? "\u25b8 " : "\u25be ") + title
+    + " (" + items.length + ")</strong> "
+    + '<span class="badge ' + typeBadge.cls + '">' + typeBadge.text + "</span>"
+    + (collapsed ? "" :
+       '<div class="muted">registered on the dashboard, nothing in code — tick to '
+       + "GENERATE the code carrier (value sources are confirmed at the wiring "
+       + "gates)</div>");
+  hdr.addEventListener("click", () => {{
+    ORPHANS_COLLAPSED[colKey] = !collapsed; render();
+  }});
+  box.appendChild(hdr);
+  if (collapsed) {{ card.appendChild(box); return; }}
+  items.forEach(it => {{
+    const line = document.createElement("div"); line.className = "grid";
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.className = "inc";
+    cb.checked = !!state.orphan_ticks[it.key];
+    cb.title = "generate the code carrier for this dashboard entity";
+    cb.addEventListener("change", e => {{
+      if (e.target.checked) state.orphan_ticks[it.key] = true;
+      else delete state.orphan_ticks[it.key];
+      render();
+    }});
+    line.appendChild(cb);
+    line.insertAdjacentHTML("beforeend", it.html);
+    box.appendChild(line);
+  }});
+  card.appendChild(box);
+}}
+
 function renderEvents() {{
   const host = document.getElementById("events"); host.innerHTML = "";
+  if (REGISTRIES_SOURCE === "live"
+      && ((DATA.predefined_wire_names || []).length || (DATA.debug_wire_names || []).length)) {{
+    host.insertAdjacentHTML("beforeend",
+      '<div class="muted" style="margin:0.2rem 0 0.4rem">checked against the live dashboard: '
+      + (DATA.predefined_wire_names || []).length + " predefined / "
+      + (DATA.debug_wire_names || []).length + " debug / "
+      + (DATA.custom_event_registry || []).length + " custom event names</div>");
+  }}
   if (REGISTRIES_SOURCE === "fallback") {{
     host.insertAdjacentHTML("beforeend",
       '<div class="muted" style="margin:0.2rem 0 0.4rem">\u26a0 event registries come from the ' +
@@ -597,10 +853,34 @@ function renderEvents() {{
   }}
   const dup = dupNames(state.events.filter(r => r.existing || inc(r)), "name");
   state.events.forEach((r, i) => {{
-    const expanded = expandedRow(r, () => eventRowInvalid(r, dup));
+    const expanded = expandedRow(r, () => eventRowInvalid(r, dup), true);
+    const evDash = (!r.existing && effectiveKind(r) === "custom")
+      ? CUSTOM_EVENT_REGISTRY[String(r.name || "").trim()] : undefined;
     const div = document.createElement("div");
-    div.className = "row" + (r.existing ? " locked" : "") + (!r.existing && !inc(r) ? " excluded" : "");
-    div.appendChild(head(r, "new event", {{collapsible: true, expanded: expanded}}));
+    // The locked tint dims the additions editor too — an existing row in ✎ edit mode
+    // renders untinted (user 2026-08-04); collapsed keeps the dim.
+    div.className = "row" + (r.existing && !expanded ? " locked" : "")
+      + (!r.existing && !inc(r) ? " excluded" : "");
+    const ekHead = r.existing ? "" : effectiveKind(r);
+    const evLabel = ekHead === "predefined" ? "predefined"
+      : ekHead === "debug" ? "debug"
+      : evDash ? "on dashboard" : "new event";
+    const evCls = ekHead === "predefined" ? "b-predef"
+      : ekHead === "debug" ? "b-debug"
+      : evDash ? "b-dash" : "b-new";
+    div.appendChild(head(r, evLabel, {{collapsible: true, expanded: expanded,
+      existingEditable: true, labelClass: evCls,
+      // predefined/debug live dashboard-side by definition — the kind label alone
+      // says it (user 2026-08-05); the status lamp is reserved for ADOPTed customs
+      // and leads the pair (user 2026-08-05): on dashboard | user.
+      labelTitle: evDash
+        ? "a custom event with this name is already registered on the dashboard — "
+          + "this row wires into it: the sync adds only NEW params (add-params), never "
+          + "a create; renaming opts out of adoption"
+        : undefined,
+      extraBadges: evDash ? [{{text: "user", cls: "b-user",
+        title: "user event — the game's own custom event, sent from app code"}}] : [],
+      onRemove: () => {{ state.events.splice(state.events.indexOf(r), 1); render(); }}}}));
     if (!r.existing && !expanded) {{
       const cg = document.createElement("div"); cg.className = "grid";
       const ek = effectiveKind(r);
@@ -627,6 +907,22 @@ function renderEvents() {{
         }});
         div.appendChild(ct);
       }}
+      if (evDash) {{
+        const sent = new Set((r.params || [])
+          .map(p => String(p.name || "").trim()).filter(Boolean));
+        const unc = (evDash.params || [])
+          .filter(p => !sent.has(String(p.name || "").trim())).length;
+        if (unc) {{
+          // Uncovered dashboard params were invisible until expand, so expanding
+          // LOOKED like it changed the event's composition (user 2026-08-05).
+          const h = document.createElement("div"); h.className = "muted";
+          h.textContent = "+" + unc + " dashboard param" + (unc === 1 ? "" : "s")
+            + " not sent by your code — expand for details";
+          h.title = "registered on the dashboard event but absent from this row — the "
+                  + "dashboard column stays empty unless you add a matching param";
+          div.appendChild(h);
+        }}
+      }}
       host.appendChild(div); return;
     }}
     const g = document.createElement("div"); g.className = "grid";
@@ -640,10 +936,45 @@ function renderEvents() {{
         v => {{ r.name = v; if (r.kind === "predefined" && !isPredefName(v)) r.kind = "custom"; }},
         {{placeholder: "event_name", size: 28, maxlength: 30,
           bad: !String(r.name || "").trim() || dup(r.name) || String(r.name || "").length > 30,
-          title: "maximum 30 characters"}}));
+          title: firstBad([
+            [!String(r.name || "").trim(), "the event name is required"],
+            [dup(r.name), "duplicate event name on this page"],
+          ], "maximum 30 characters")}}));
     }}
     if (r.note) {{ const n = document.createElement("span"); n.className = "muted"; n.textContent = r.note; g.appendChild(n); }}
     div.appendChild(g);
+    if (evDash) {{
+      // Only the dashboard params the local code does NOT cover — covered ones show
+      // once, in the editable table below, with the "registered" chip (a run drew
+      // episode_number twice, user 2026-08-05).
+      const localNames = new Set((r.params || [])
+        .map(p => String(p.name || "").trim()).filter(Boolean));
+      const uncovered = (evDash.params || [])
+        .filter(p => !localNames.has(String(p.name || "").trim()));
+      if (!uncovered.length) {{
+        // No table to tell the story — keep one line of adopt semantics (otherwise
+        // it lives only in the badge hover).
+        const dn = document.createElement("div"); dn.className = "muted";
+        dn.textContent = "wires into the existing dashboard event — the sync adds only NEW "
+          + "params (add-params), never a create; renaming opts out of adoption";
+        div.appendChild(dn);
+      }}
+      if (uncovered.length) {{
+        const dt = document.createElement("table"); dt.className = "sub";
+        const hr2 = document.createElement("tr");
+        hr2.innerHTML = '<td colspan="3" class="muted">also on the dashboard — not sent '
+          + "by your code yet (the column stays empty unless you add a matching "
+          + "param):</td>";
+        dt.appendChild(hr2);
+        uncovered.forEach(p => {{
+          const tr = document.createElement("tr");
+          tr.innerHTML = "<td><code>" + esc(p.name) + "</code></td><td>" + esc(p.kind || "")
+            + "</td><td></td>";
+          dt.appendChild(tr);
+        }});
+        div.appendChild(dt);
+      }}
+    }}
     // Debug-tagged rows get NO param editor: nothing will be implemented for them
     // (the row is skipped), so authoring params would be a dead-end promise. State is
     // preserved — rename away from the debug name and the params (and editor) return.
@@ -666,11 +997,23 @@ function renderEvents() {{
       return;
     }}
     const tbl = document.createElement("table"); tbl.className = "sub";
-    const pdup = dupIn((r.params || []).filter(p => p.included !== false), "name");
-    (r.params || []).forEach((p, j) => {{
+    const allParams = (r.params || [])
+      .concat(r.existing ? (r.proposed_params = r.proposed_params || []) : []);
+    const pdup = dupIn(allParams.filter(p => p.included !== false), "name");
+    let propHeaderDone = false;
+    allParams.forEach((p, j) => {{
+      if (p._proposed && !expanded && p.included === false) return;
+      if (p._proposed && !propHeaderDone) {{
+        propHeaderDone = true;
+        const hr = document.createElement("tr");
+        hr.innerHTML = '<td colspan="4" class="muted">＋ proposed additions — found near the '
+          + 'call sites but NOT wired in code; unticked = not implemented, ticked ships via '
+          + 'a builder extension</td>';
+        tbl.appendChild(hr);
+      }}
       const tr = document.createElement("tr");
       const td = t => {{ const c = document.createElement("td"); c.appendChild(t); return c; }};
-      if (!r.existing) {{
+      if (!r.existing || (p._proposed && expanded)) {{
         const pcb = document.createElement("input"); pcb.type = "checkbox"; pcb.className = "inc";
         pcb.checked = p.included !== false; pcb.title = "include this param";
         pcb.addEventListener("change", e => {{ p.included = e.target.checked; render(); }});
@@ -683,27 +1026,61 @@ function renderEvents() {{
           return;
         }}
       }}
-      if (r.existing) {{
-        tr.innerHTML = "<td><code>" + esc(p.name) + "</code></td><td>" + esc(p.kind) + "</td><td>" + esc(p.extra || "") + "</td>";
+      if (r.existing && p._proposed && !expanded) {{
+        // ✓ done view: the confirmed addition reads like a measured param, marked.
+        tr.innerHTML = "<td><code>" + esc(p.name)
+          + '</code> <span class="badge b-new">addition</span></td><td>' + esc(p.kind)
+          + "</td><td>" + esc(p.kind === "enumeration" ? (p.extra || "") : "") + "</td>";
+        tbl.appendChild(tr);
+        return;
+      }}
+      if (r.existing && !p._proposed) {{
+        const sysEx = SYSTEM_EVENT_PARAM_NAMES.includes(String(p.name || "").trim());
+        tr.innerHTML = "<td><code>" + esc(p.name) + "</code>" +
+          (sysEx ? ' <span class="badge b-system">system</span>' : "") +
+          "</td><td>" + esc(p.kind) + "</td><td>" +
+          (sysEx
+            ? '<span class="muted">reserved system name measured as a custom param — the '
+              + 'server refuses registering it; canonical kind '
+              + esc(SYSTEM_PARAM_KINDS[String(p.name || "").trim()] || "") + ', canonical route: '
+              + (sysNoRoute(r, p)
+                 ? "NONE on a user event — no SetLevel/SetPlace on CustomEventData and the "
+                   + "reserved name can't be registered; rename it in game code (e.g. "
+                   + esc(RENAME_HINT[String(p.name || "").trim()]) + ")"
+                 : SYSTEM_BASE_PROP_PARAM_NAMES.includes(String(p.name || "").trim())
+                   ? "the event's base-class field (SetLevel/SetPlace)"
+                   : String(p.name || "").trim() === "success"
+                     ? "read-only base field — always true in this SDK version (no setter); remove the custom param"
+                     : "composed by the SDK — remove the custom param")
+              + ". Fix code-first.</span>"
+            : esc(p.extra || "")) + "</td>";
       }} else {{
-        // A reserved system name is a VALID candidate — the value just takes a different
-        // ROUTE (base-class property or SDK-composed) and is never registered as a custom
-        // param (the server refuses those names). Renaming is only for the case where the
-        // name matches but the MEANING differs (user decision 2026-07-30).
+        // A reserved system name is a VALID candidate on the routes that exist — but
+        // level/place on a USER event have NO route since the 2026-08-06 SDK revert
+        // (no setter on GameEventData-direct CustomEventData; registration refused):
+        // those RED with a rename advice. Elsewhere renaming stays only for the case
+        // where the name matches but the MEANING differs (user decision 2026-07-30).
         const sysHit = SYSTEM_EVENT_PARAM_NAMES.includes(String(p.name || "").trim());
+        const unroutable = sysUnroutable(r, p);
         tr.appendChild(td(textInput(p.name, "e" + i + "-p" + j,
           v => {{ p.name = v;
                  const t = String(v || "").trim();
                  if (SYSTEM_PARAM_KINDS[t] !== undefined) p.kind = SYSTEM_PARAM_KINDS[t]; }},
           {{placeholder: "param_name", size: 20, maxlength: 30,
-            bad: !String(p.name || "").trim() || pdup(p.name) || String(p.name || "").length > 30,
-            title: "maximum 30 characters"}})));
+            bad: !String(p.name || "").trim() || pdup(p.name) || String(p.name || "").length > 30
+                 || unroutable,
+            title: firstBad([
+              [!String(p.name || "").trim(), "the param name is required"],
+              [pdup(p.name), "duplicate param name on this event"],
+              [unroutable, "'" + String(p.name || "").trim() + "' can't ship on a user event — "
+                + "CustomEventData has no SetLevel/SetPlace (no SDK setter), and the reserved "
+                + "name can't be registered as a custom param; rename it (e.g. "
+                + RENAME_HINT[String(p.name || "").trim()] + ") or untick it"],
+            ], "maximum 30 characters")}})));
         if (sysHit) {{
-          // The type is PINNED by the base class — no select for system params.
-          const kk = document.createElement("span"); kk.className = "muted";
-          kk.textContent = p.kind + " (fixed)";
-          kk.title = "the type is pinned by the event's built-in field — it must match the dashboard exactly";
-          tr.appendChild(td(kk));
+          // The type is PINNED by the base class — locked select, no editable choice.
+          tr.appendChild(td(pinnedKind(p.kind,
+            "the type is pinned by the event's built-in field — it must match the dashboard exactly")));
         }}
         if (sysHit) {{
           const sysCell = document.createElement("span");
@@ -718,21 +1095,55 @@ function renderEvents() {{
           // directly in the event body (user decision 2026-07-30).
           sn.textContent = INTEGRATION_TYPE === "API"
             ? " built-in system field — your integration supplies its value directly in the event body; never registered as a custom param"
-            : (SYSTEM_BASE_PROP_PARAM_NAMES.includes(String(p.name || "").trim())
-               ? " built-in event field — the value rides the base class (SetLevel/SetPlace/Success); no dashboard registration"
-               : " composed by the SDK automatically — nothing to implement");
+            : unroutable
+              ? " no route on a user event — no SDK setter and the reserved name can't be registered; rename or untick"
+              : (SYSTEM_BASE_PROP_PARAM_NAMES.includes(String(p.name || "").trim())
+                 ? " built-in event field — the value rides the base class (SetLevel/SetPlace); no dashboard registration"
+                 : String(p.name || "").trim() === "success"
+                   ? " built-in event field — read-only in this SDK version (always true, no setter); nothing to implement, no dashboard registration"
+                   : " composed by the SDK automatically — nothing to implement");
           sysCell.appendChild(sn);
           tr.appendChild(td(sysCell));
         }}
+        const dashHit = (!sysHit && evDash)
+          ? (evDash.params || []).find(dp =>
+              String(dp.name || "").trim() === String(p.name || "").trim())
+          : undefined;
+        if (dashHit && dashHit.kind) p.kind = dashHit.kind;
         // Enum-values input shows ONLY while kind === enumeration, but the VALUE is
         // preserved on kind changes (discovery-found candidates must survive a toggle);
         // the EXPORT strips it for non-enumeration kinds instead.
-        if (!sysHit) tr.appendChild(td(kindSelect(EVENT_PARAM_KINDS, p.kind, v => p.kind = v, "e" + i + "-p" + j + "-k")));
-        if (!sysHit && p.kind === "enumeration") {{
+        if (!sysHit && !dashHit) tr.appendChild(td(kindSelect(EVENT_PARAM_KINDS, p.kind, v => p.kind = v, "e" + i + "-p" + j + "-k")));
+        if (dashHit) {{
+          tr.appendChild(td(pinnedKind(p.kind,
+            "the type is pinned by the dashboard param — the sync never mutates "
+            + "existing params; rename if you mean a NEW param with its own type")));
+        }}
+        if (!sysHit && !dashHit && p.kind === "enumeration") {{
           tr.appendChild(td(textInput(p.extra, "e" + i + "-p" + j + "-x", v => p.extra = v,
             {{placeholder: "a, b, c", size: 18,
               bad: !String(p.extra || "").trim() || enumValuesTooLong(p.extra),
-              title: "each value must be 50 characters or less"}})));
+              title: firstBad([
+                [!String(p.extra || "").trim(), "an enumeration needs at least one value"],
+              ], "each value must be 50 characters or less")}})));
+        }}
+        if (dashHit) {{
+          const rg = document.createElement("span"); rg.className = "muted";
+          rg.textContent = "registered";
+          rg.title = "this param already exists on the dashboard event — runtime sends the "
+                   + "value; the sync will NOT re-add it";
+          tr.appendChild(td(rg));
+        }}
+        if (p._pNew) {{
+          const rm = document.createElement("button"); rm.className = "ghost remove";
+          rm.textContent = "✕";
+          rm.title = "delete this param — available only for params just added on this page "
+                   + "(discovered params use the checkbox instead)";
+          rm.addEventListener("click", () => {{
+            const list = p._proposed ? r.proposed_params : r.params;
+            list.splice(list.indexOf(p), 1); render();
+          }});
+          tr.appendChild(td(rm));
         }}
       }}
       tbl.appendChild(tr);
@@ -740,19 +1151,50 @@ function renderEvents() {{
     div.appendChild(tbl);
     if (!r.existing) {{
       const add = document.createElement("button"); add.className = "ghost"; add.textContent = "＋ param";
-      add.addEventListener("click", () => {{ r.params.push({{name: "", kind: "string", extra: ""}}); render(); }});
+      add.addEventListener("click", () => {{ r.params.push({{name: "", kind: "string", extra: "", _pNew: true}}); render(); }});
+      div.appendChild(add);
+    }} else if (expanded) {{
+      const add = document.createElement("button"); add.className = "ghost";
+      add.textContent = "＋ param";
+      add.title = "add a NEW param to this already-wired event — implemented as a builder "
+                + "extension; the value source is confirmed at a wiring gate";
+      add.addEventListener("click", () => {{ (r.proposed_params = r.proposed_params || [])
+        .push({{name: "", kind: "string", extra: "", included: true, _proposed: true, _pNew: true}}); render(); }});
       div.appendChild(add);
     }}
     host.appendChild(div);
   }});
+  const evNames = new Set(state.events.map(r => String(r.name || "").trim()));
+  renderOrphanSection(host, "On dashboard — no code carrier",
+    {{text: "user", cls: "b-user"}},
+    Object.values(CUSTOM_EVENT_REGISTRY)
+      .filter(e => !evNames.has(String(e.name).trim()))
+      .map(e => ({{key: "ev:" + e.name,
+        html: "<code>" + esc(e.name) + "</code> <span class=\"muted\">"
+          + ((e.params || []).map(p => esc(p.name) + " (" + esc(p.kind || "") + ")").join(", ")
+             || "no params") + "</span>"}})));
 }}
+
+
 
 function renderFields() {{
   const host = document.getElementById("player_fields"); host.innerHTML = "";
+  // A LIVE registry announces itself (run-3 audit UX: on a silent page a non-hit read
+  // as "nothing was checked" — now the absence of badges is informative).
+  if (REGISTRIES_SOURCE === "live" && ((FIELD_REGISTRY.predefined || []).length
+      || (FIELD_REGISTRY.calculated || []).length)) {{
+    host.insertAdjacentHTML("beforeend",
+      '<div class="muted" style="margin:0.2rem 0 0.4rem">checked against the live dashboard: '
+      + (FIELD_REGISTRY.predefined || []).length + " predefined / "
+      + (FIELD_REGISTRY.calculated || []).length + " calculated / "
+      + ((FIELD_REGISTRY.custom_fields && FIELD_REGISTRY.custom_fields.length)
+         || (FIELD_REGISTRY.custom_paths || []).length)
+      + " custom fields</div>");
+  }}
   const shipped = state.player_fields.filter(r => r.existing || inc(r));
   const dup = dupNames(shipped, "name");
   const pathCount = new Map();
-  const pathOf = r => String(r.path || "").trim() || snake(String(r.name || "").trim());
+  const pathOf = r => String(r.path || "").trim() || snake(propOf(r));
   shipped.forEach(r => {{
     const p = pathOf(r);
     if (p) pathCount.set(p, (pathCount.get(p) || 0) + 1);
@@ -762,12 +1204,48 @@ function renderFields() {{
   const nodeConf = r => pathNodeConflict(pathOf(r), allPaths);
   state.player_fields.forEach((r, i) => {{
     const expanded = expandedRow(r, () => fieldRowInvalid(r, dup, pathDup, pathOf, nodeConf));
+    // The four field types (user 2026-08-04): user / predefined / calculated /
+    // external (bucket-fed namespace calculated_fields.* — historic name clash with
+    // the calculated listing is deliberate backend legacy). The TYPE badge replaces
+    // "new field" for non-user rows; status badges sit beside it in one row.
+    const pathNow0 = pathOf(r);
+    const tPredef = FR_PREDEF[pathNow0] !== undefined;
+    const tCalc = !tPredef && FR_CALC[pathNow0] !== undefined;
+    const tExt = !tPredef && !tCalc && String(pathNow0).startsWith("calculated_fields.");
+    const tDash = !tPredef && FR_CUSTOM[pathNow0] !== undefined;
+    const fLabel = tPredef ? "predefined" : tCalc ? "calculated" : tExt ? "external"
+      : (!r.existing && tDash) ? "on dashboard" : "new field";
+    const fCls = tPredef ? "b-predef" : tCalc ? "b-calc" : tExt ? "b-ext"
+      : (!r.existing && tDash) ? "b-dash" : "b-new";
+    const extras = [];
+    if (r.existing) {{
+      // Type badge for existing rows (2026-08-04): predefined_in_use base writes now
+      // render as read-only rows, so the type became a VARIABLE worth a lamp.
+      const exPredef = r.predefined_in_use === true || tPredef;
+      extras.push({{text: exPredef ? "predefined" : "user",
+        cls: exPredef ? "b-predef" : "b-user",
+        title: exPredef
+          ? "base-class dashboard field the game already writes (module 02 route) — "
+            + "shown for visibility; the sync ACTIVATES it, the page takes no action"
+          : "custom player field carried by CustomPlayerState"}});
+    }}
+    // predefined lives dashboard-side by definition — the kind label alone says it
+    // (user 2026-08-05, events symmetry); the status lamp is reserved for ADOPTs and
+    // leads the pair (user 2026-08-05): on dashboard | user.
+    if (!r.existing && tDash && !tPredef) extras.push({{text: "user", cls: "b-user",
+      title: "custom player field carried by CustomPlayerState"}});
     const div = document.createElement("div");
     div.className = "row" + (r.existing ? " locked" : "") + (!r.existing && !inc(r) ? " excluded" : "");
-    div.appendChild(head(r, "new field", {{collapsible: true, expanded: expanded}}));
+    div.appendChild(head(r, fLabel, {{collapsible: true, expanded: expanded,
+      labelClass: fCls, extraBadges: extras,
+      labelTitle: (!r.existing && tDash && !tPredef)
+        ? "registered on the dashboard but nothing in code writes it — this row wires a "
+          + "code carrier; the dashboard field itself is never renamed"
+        : undefined,
+      onRemove: () => {{ state.player_fields.splice(state.player_fields.indexOf(r), 1); render(); }}}}));
     if (!r.existing && !expanded) {{
       const cg = document.createElement("div"); cg.className = "grid";
-      cg.innerHTML = "<code>" + esc(r.name || "(unnamed)") + "</code> <span class=\"muted\">" +
+      cg.innerHTML += "<code>" + esc(r.name || "(unnamed)") + "</code> <span class=\"muted\">" +
         esc(r.kind) + (r.kind === "enumeration" && r.extra ? " (" + esc(r.extra) + ")" : "") +
         " · → path: " + esc(pathOf(r)) +
         (r.description ? " · " + esc(r.description) : "") + "</span>";
@@ -784,31 +1262,46 @@ function renderFields() {{
       const frPredef = FR_PREDEF[pathOf(r)] !== undefined;
       const frCalc = FR_CALC[pathOf(r)] !== undefined;
       const frTaken = fieldTakenName(r, pathOf);
+      const frReserved = !frPredef && reservedFieldPath(pathOf(r));
+      const frDash = !frPredef ? FR_CUSTOM[pathOf(r)] : undefined;
       g.appendChild(textInput(r.name, "f" + i, v => {{ r.name = v; delete r.path; }},
         {{placeholder: "Wallet.Gold", size: 26, maxlength: 30,
           bad: !String(r.name || "").trim() || dup(r.name) || (!frPredef && pathDup(r))
-               || frCalc || frTaken
+               || frCalc || frReserved || frTaken
                || !FIELD_NAME_RE.test(String(r.name || "").trim())
                || String(r.name || "").length > 30 || (!frPredef && pathOf(r).length > 100),
-          title: frCalc ? "this path is a CALCULATED dashboard field — computed server-side, "
-                          + "the game cannot write it; rename if you meant a different value"
-                 : frTaken ? "this name is already taken on the dashboard (names are unique "
-                             + "across ALL statuses); rename"
-                 : "a dot-separated C# property chain (letters, digits, _), maximum 30 "
-                   + "characters; the registered snake path must be unique (across "
-                   + "existing fields too) and 100 characters or less"}}));
+          title: firstBad([
+            [frCalc, "this path is a CALCULATED dashboard field — computed server-side, "
+                     + "the game cannot write it; rename if you meant a different value"],
+            [String(pathOf(r)).startsWith("calculated_fields."),
+             "external field namespace (calculated_fields.*) — values arrive from the "
+             + "data bucket; the game cannot register fields here; pick another path"],
+            [frReserved, "this path is RESERVED by the platform (base player-state "
+                         + "namespace) — the server refuses the create ('path is reserved'). "
+                         + "If the dashboard lists it as a PREDEFINED field, a live registry "
+                         + "routes it to ACTIVATE instead; otherwise rename"],
+            [frTaken, "this name is already taken on the dashboard (names are unique "
+                      + "across ALL statuses); rename"],
+            [!String(r.name || "").trim(), "the field name is required"],
+            [dup(r.name), "duplicate field name on this page"],
+            [!frPredef && pathDup(r), "another field registers the SAME path — rename one "
+                                      + "(the registered snake path must be unique)"],
+            [!FIELD_NAME_RE.test(String(r.name || "").trim()),
+             "letters, digits, _ and single spaces between tokens; dot-separated segments "
+             + "(spaces stay in the dashboard Name — the C# property derives PascalCase)"],
+            [String(r.name || "").length > 30, "maximum 30 characters"],
+          ], "the registered snake path must be unique and 100 characters or less")}}));
       if (frPredef) {{
-        const b = document.createElement("span"); b.className = "badge b-predef";
-        b.textContent = "predefined";
-        b.title = "built-in dashboard player field — the sync ACTIVATES it (never creates); "
-                  + "the value is set via the SDK's own state route (module 02)";
-        g.appendChild(b);
         if (FR_PREDEF[pathOf(r)]) {{
           r.kind = FR_PREDEF[pathOf(r)];
-          const kk = document.createElement("span"); kk.className = "muted";
-          kk.textContent = r.kind + " (fixed)";
-          kk.title = "the kind is pinned by the dashboard's predefined field";
-          g.appendChild(kk);
+          g.appendChild(pinnedKind(r.kind, "the kind is pinned by the dashboard's predefined field"));
+        }} else {{
+          g.appendChild(kindSelect(FIELD_KINDS, r.kind, v => r.kind = v, "f" + i + "-k"));
+        }}
+      }} else if (frDash) {{
+        if (frDash.kind) {{
+          r.kind = frDash.kind;
+          g.appendChild(pinnedKind(r.kind, "the kind is pinned by the existing dashboard field"));
         }} else {{
           g.appendChild(kindSelect(FIELD_KINDS, r.kind, v => r.kind = v, "f" + i + "-k"));
         }}
@@ -818,17 +1311,34 @@ function renderFields() {{
       // Path is a first-class input: auto-derived from the name (editing the name
       // resets it); a manual edit stores an override — the implementation carries it
       // as [JsonPropertyName] on the property. Checked against the registry too.
-      g.insertAdjacentHTML("beforeend", "<span class=\"muted\">\u2192 path</span>");
+      if (!r.existing && propOf(r) !== String(r.name || "").trim() && propOf(r)) {{
+        g.insertAdjacentHTML("beforeend",
+          "<span class=\"muted\">\u2192 C# <code>" + esc(propOf(r)) + "</code></span>");
+      }}
+      g.insertAdjacentHTML("beforeend", "<span class=\"muted\" title=\"auto-derived "
+        + "as snake_case of the C# property; editing it stores an override, implemented as "
+        + "[JsonPropertyName] on the property (per segment) — the serialized key follows "
+        + "the attribute, so the wire data and the registration stay identical\">"
+        + "\u2192 path</span>");
       g.appendChild(textInput(pathOf(r), "f" + i + "-p",
         v => {{ const t = String(v || "").trim();
-               if (!t || t === snake(String(r.name || "").trim())) delete r.path;
+               if (!t || t === snake(propOf(r))) delete r.path;
                else r.path = t; }},
-        {{placeholder: "auto (snake of the name)", size: 18,
+        {{placeholder: "wallet.gold", size: 18,
           bad: !frPredef && (!FIELD_PATH_RE.test(pathOf(r)) || pathOf(r).length > 100
-               || pathDup(r) || frCalc || pathSegMismatch(r, pathOf) || nodeConf(r)),
-          title: frCalc ? "this path is a CALCULATED dashboard field — computed server-side; "
-                          + "pick another path or rename"
-                 : nodeConf(r)
+               || pathDup(r) || frCalc || frReserved || pathSegMismatch(r, pathOf) || nodeConf(r)),
+          title: firstBad([
+            [frCalc, "this path is a CALCULATED dashboard field — computed server-side; "
+                     + "pick another path or rename"],
+            [String(pathOf(r)).startsWith("calculated_fields."),
+             "external field namespace (calculated_fields.*) — values arrive from the "
+             + "data bucket; the game cannot register fields here; pick another path"],
+            [frReserved, "this path is RESERVED by the platform — the server refuses the "
+                         + "create. If the dashboard lists it as a PREDEFINED field, a live "
+                         + "registry routes it to ACTIVATE instead; otherwise rename"],
+            [!frPredef && pathDup(r), "duplicate registered path — another field (incl. "
+                                      + "existing ones) already uses it"],
+          ], frCalc ? "" : nodeConf(r)
                    ? "leaf/object conflict: another field's path sits inside this one "
                      + "(Wallet.Gold vs Wallet.Gold.Price — Gold cannot be a value AND an "
                      + "object); restructure as sibling leaves (Wallet.Gold.Amount + "
@@ -838,8 +1348,21 @@ function renderFields() {{
                      + "must match (nesting depth comes from nested properties: name "
                      + "Wallet.Gold can map to wallet.gold_amount, not to a deeper path)"
                    : "letter first; letters, digits, _, - and dot separators; unique "
-                     + "across existing fields; maximum 100 characters"}}));
-      if (!frPredef && FR_CUSTOM_PATHS.has(pathOf(r))) {{
+                     + "across existing fields; maximum 100 characters")}}));
+      if (frDash) {{
+        const ex = document.createElement("span"); ex.className = "muted";
+        ex.textContent = "wires a code carrier for the existing dashboard field — no create; "
+          + "editing the path opts OUT of adoption (the dashboard field is never renamed)";
+        g.appendChild(ex);
+        if (frDash.description) {{
+          r.description = frDash.description;
+          const dx = document.createElement("span"); dx.className = "muted";
+          dx.textContent = "description (dashboard): " + frDash.description;
+          dx.title = "lives on the dashboard — page edits would not propagate (the sync "
+                   + "never rewrites an existing field's description), so it is read-only";
+          g.appendChild(dx);
+        }}
+      }} else if (!frPredef && FR_CUSTOM_PATHS.has(pathOf(r))) {{
         const ex = document.createElement("span"); ex.className = "muted";
         ex.textContent = "already registered on the dashboard — the sync will activate/skip, not create";
         g.appendChild(ex);
@@ -848,9 +1371,11 @@ function renderFields() {{
         g.appendChild(textInput(r.extra, "f" + i + "-x", v => r.extra = v,
           {{placeholder: "a, b, c", size: 16,
             bad: !String(r.extra || "").trim() || enumValuesTooLong(r.extra),
-            title: "each value must be 50 characters or less"}}));
+            title: firstBad([
+              [!String(r.extra || "").trim(), "an enumeration needs at least one value"],
+            ], "each value must be 50 characters or less")}}));
       }}
-      if (!frPredef && !frCalc) {{
+      if (!frPredef && !frCalc && !frDash) {{
         g.appendChild(textInput(r.description, "f" + i + "-d", v => r.description = v,
           {{placeholder: "description (optional)", size: 24}}));
       }}
@@ -859,6 +1384,15 @@ function renderFields() {{
     div.appendChild(g);
     host.appendChild(div);
   }});
+  const pfPaths = new Set(state.player_fields.map(r => String(r.path || "").trim() || snake(propOf(r))));
+  renderOrphanSection(host, "On dashboard — no code carrier",
+    {{text: "user", cls: "b-user"}},
+    Object.values(FR_CUSTOM)
+      .filter(e => !pfPaths.has(String(e.path).trim()))
+      .map(e => ({{key: "pf:" + e.path,
+        html: "<code>" + esc(e.name || e.path) + "</code> <span class=\"muted\">→ "
+          + esc(e.path) + " · " + esc(e.kind || "")
+          + (e.description ? " · " + esc(e.description) : "") + "</span>"}})));
 }}
 
 function renderFs() {{
@@ -879,7 +1413,8 @@ function renderFs() {{
     const expanded = expandedRow(r, () => fsSchemaRowInvalid(r, sdup));
     const div = document.createElement("div");
     div.className = "row" + (r.existing ? " locked" : "") + (!r.existing && !inc(r) ? " excluded" : "");
-    div.appendChild(head(r, "new schema", {{collapsible: true, expanded: expanded}}));
+    div.appendChild(head(r, "new schema", {{collapsible: true, expanded: expanded,
+      onRemove: () => {{ fs.schemas.splice(fs.schemas.indexOf(r), 1); render(); }}}}));
     if (!r.existing && !expanded) {{
       const cg = document.createElement("div"); cg.className = "grid";
       cg.innerHTML = "schema <code>" + esc(r.name || "(unnamed)") + "</code>";
@@ -909,8 +1444,11 @@ function renderFs() {{
         {{placeholder: "SchemaName", size: 22, maxlength: 255,
           bad: !String(r.name || "").trim() || sdup(r.name)
                || String(r.name || "").length > 255 || noColumns,
-          title: noColumns ? "Schema should contain minimum 1 column (server rule)"
-                           : "maximum 255 characters"}}));
+          title: firstBad([
+            [noColumns, "Schema should contain minimum 1 column (server rule)"],
+            [!String(r.name || "").trim(), "the schema name is required"],
+            [sdup(r.name), "duplicate schema name on this page"],
+          ], "maximum 255 characters")}}));
       // A NEW schema always wires as version 1 (module 07) — shown, never editable.
       g.insertAdjacentHTML("beforeend", "<span class=\"muted\">v1 (new schemas always start at 1)</span>");
     }}
@@ -955,7 +1493,11 @@ function renderFs() {{
           {{placeholder: "column", size: 20, maxlength: 100,
             bad: !String(c.name || "").trim() || cdup(c.name) || reserved
                  || String(c.name || "").length > 100,
-            title: reserved ? "filters are configuration-level (IncludeFilters readers), not schema columns — the operator picks them on the configuration table; unreplaced <placeholders> are scaffold" : ""}})));
+            title: firstBad([
+              [reserved, "filters are configuration-level (IncludeFilters readers), not schema columns — the operator picks them on the configuration table; unreplaced <placeholders> are scaffold"],
+              [!String(c.name || "").trim(), "the column name is required"],
+              [cdup(c.name), "duplicate column name in this schema"],
+            ], "maximum 100 characters")}})));
         tr.appendChild(td(kindSelect(FS_COLUMN_KINDS, c.kind, v => c.kind = v, "s" + i + "-c" + j + "-k")));
         if (c.kind === "bundle_key") {{
           const h = document.createElement("span"); h.className = "muted";
@@ -981,7 +1523,7 @@ function renderFs() {{
   const addS = document.createElement("button"); addS.className = "ghost"; addS.textContent = "＋ Add schema";
   addS.addEventListener("click", () => {{
     fs.schemas.push({{id: nextId++, name: "", existing: false, columns: [], editing: true,
-                     source: "added on page"}});
+                     _pageNew: true, source: "added on page"}});
     render();
   }});
   host.appendChild(addS);
@@ -989,14 +1531,16 @@ function renderFs() {{
   host.insertAdjacentHTML("beforeend",
     '<div class="muted" style="margin:0.8rem 0 0.4rem"><b>Settings (keys)</b> — the runtime download keys; each binds ONE schema from the list above</div>');
   fs.settings.forEach((r, i) => {{
+    if (!r.existing && r.name === undefined) r.name = humanizeKey(r.key);
     const expanded = expandedRow(r, () => fsSettingRowInvalid(r, kdup, schemaNames));
     const div = document.createElement("div");
     div.className = "row" + (r.existing ? " locked" : "") + (!r.existing && !inc(r) ? " excluded" : "");
-    div.appendChild(head(r, "new setting", {{collapsible: true, expanded: expanded}}));
+    div.appendChild(head(r, "new setting", {{collapsible: true, expanded: expanded,
+      onRemove: () => {{ fs.settings.splice(fs.settings.indexOf(r), 1); render(); }}}}));
     if (!r.existing && !expanded) {{
       const cg = document.createElement("div"); cg.className = "grid";
       const bound = shippedSchemas.find(x => String(x.name || "") === String(r.schema_name || ""));
-      cg.innerHTML = "key <code>" + esc(r.key || "(unnamed)") + "</code> <span class=\"muted\">schema " +
+      cg.innerHTML = "<code>" + esc(r.name || "(unnamed)") + "</code> key <code>" + esc(r.key || "(unnamed)") + "</code> <span class=\"muted\">schema " +
         esc(r.schema_name || "—") + " · v" +
         esc(newSchemas.has(r.schema_name) ? 1 : ((bound && bound.version) || r.version || 1)) + "</span>";
       if (r.note) cg.insertAdjacentHTML("beforeend", " <span class=\"muted\">" + esc(r.note) + "</span>");
@@ -1004,9 +1548,18 @@ function renderFs() {{
     }}
     const g = document.createElement("div"); g.className = "grid";
     if (r.existing) {{
-      g.innerHTML = "key <code>" + esc(r.key) + "</code> · schema <code>" + esc(r.schema_name) +
+      g.innerHTML = (r.name ? "<code>" + esc(r.name) + "</code> · " : "")
+                    + "key <code>" + esc(r.key) + "</code> · schema <code>" + esc(r.schema_name) +
                     "</code> · v" + esc(r.version);
     }} else {{
+      g.insertAdjacentHTML("beforeend", "<span class=\"muted\">name</span>");
+      g.appendChild(textInput(r.name, "sn" + i, v => r.name = v,
+        {{placeholder: "Feature name", size: 18,
+          bad: !String(r.name || "").trim(),
+          title: firstBad([
+            [!String(r.name || "").trim(),
+             "the setting name is required — the dashboard displays it (the key stays the runtime id)"],
+          ], "dashboard display name; the key stays the runtime lookup id")}}));
       g.insertAdjacentHTML("beforeend", "<span class=\"muted\">key</span>");
       // Server rules (backend-confirmed 2026-07-28): key capped at 100 characters;
       // a setting cannot exist without a schema (the dropdown below enforces that —
@@ -1014,7 +1567,10 @@ function renderFs() {{
       g.appendChild(textInput(r.key, "sk" + i, v => r.key = v,
         {{placeholder: "FeatureKey", size: 20, maxlength: 100,
           bad: !String(r.key || "").trim() || kdup(r.key) || String(r.key || "").length > 100,
-          title: "maximum 100 characters"}}));
+          title: firstBad([
+            [!String(r.key || "").trim(), "the setting key is required"],
+            [kdup(r.key), "duplicate setting key on this page"],
+          ], "maximum 100 characters")}}));
       g.insertAdjacentHTML("beforeend", "<span class=\"muted\">schema</span>");
       // Schema is a REFERENCE, not free text — pick from the schemas defined above
       // (kills dangling schema_name and shape redefinition by construction).
@@ -1058,7 +1614,7 @@ function renderFs() {{
   const addK = document.createElement("button"); addK.className = "ghost"; addK.textContent = "＋ Add setting (key)";
   addK.addEventListener("click", () => {{
     fs.settings.push({{id: nextId++, key: "", schema_name: schemaNames[0] || "", version: 1,
-                      editing: true, existing: false, source: "added on page"}});
+                      editing: true, existing: false, _pageNew: true, source: "added on page"}});
     render();
   }});
   host.appendChild(addK);
@@ -1072,7 +1628,8 @@ function renderResources() {{
     const expanded = expandedRow(r, () => resRowInvalid(r, dup, ndup));
     const div = document.createElement("div");
     div.className = "row" + (r.existing ? " locked" : "") + (!r.existing && !inc(r) ? " excluded" : "");
-    div.appendChild(head(r, "new resource", {{collapsible: true, expanded: expanded}}));
+    div.appendChild(head(r, "new resource", {{collapsible: true, expanded: expanded,
+      onRemove: () => {{ state.resources.splice(state.resources.indexOf(r), 1); render(); }}}}));
     if (!r.existing && !expanded) {{
       const cg = document.createElement("div"); cg.className = "grid";
       cg.innerHTML = "<code>" + esc(r.key || "(unnamed)") + "</code> <span class=\"muted\">" +
@@ -1100,12 +1657,20 @@ function renderResources() {{
         {{placeholder: "legendary_sword", size: 22, maxlength: 100,
           bad: !RESOURCE_KEY_RE.test(String(r.key || "")) || dup(r.key)
                || String(r.key || "").length > 100,
-          title: "letter first; letters, digits, _ and -; maximum 100 characters"}}));
+          title: firstBad([
+            [dup(r.key), "duplicate resource key on this page"],
+            [!RESOURCE_KEY_RE.test(String(r.key || "")),
+             "letter first; letters, digits, _ and - only"],
+          ], "maximum 100 characters")}}));
       g.insertAdjacentHTML("beforeend", "<span class=\"muted\">name</span>");
       g.appendChild(textInput(r.name, "r" + i + "-name", v => r.name = v,
         {{placeholder: "Legendary Sword", size: 22, maxlength: 100,
           bad: !String(r.name || "").trim() || ndup(r.name) || String(r.name || "").length > 100,
-          title: "unique on the server across ALL statuses (incl. DEPRECATED); maximum 100 characters"}}));
+          title: firstBad([
+            [!String(r.name || "").trim(), "the resource name is required"],
+            [ndup(r.name), "duplicate resource name on this page (the server also enforces "
+                           + "uniqueness across ALL statuses, incl. DEPRECATED)"],
+          ], "maximum 100 characters")}}));
       g.insertAdjacentHTML("beforeend", "<span class=\"muted\">description</span>");
       g.appendChild(textInput(r.description, "r" + i + "-desc", v => r.description = v,
         {{placeholder: "optional", size: 26, maxlength: 100,
@@ -1139,26 +1704,31 @@ function renderResources() {{
           {{placeholder: "field_name", size: 16, maxlength: 100,
             bad: !RES_FIELD_NAME_RE.test(String(f.name || "")) || fdup(f.name)
                  || String(f.name || "").length > 100,
-            title: "letter first; letters, digits, _ and - (the name is a JSON body key "
-                   + "and a code doc-block token); maximum 100 characters"}})));
+            title: firstBad([
+              [fdup(f.name), "duplicate field name on this resource"],
+              [!RES_FIELD_NAME_RE.test(String(f.name || "")),
+               "letter first; letters, digits, _ and - only (the name is a JSON body key "
+               + "and a code doc-block token)"],
+            ], "maximum 100 characters")}})));
         tr.appendChild(td(kindSelect(RESOURCE_FIELD_TYPES, f.field_type, v => f.field_type = v, "r" + i + "-f" + j + "-k")));
         tr.appendChild(td(textInput(f.default, "r" + i + "-f" + j + "-d", v => f.default = v,
           {{placeholder: "default", size: 10, bad: resDefaultBad(f),
-            title: "must match the field type (enumeration: one of the values); "
-                   + "':' is not representable in the code doc-block carrier"}})));
+            title: firstBad([
+              [f.field_type === "enumeration",
+               "the default must be one of the enumeration values"],
+            ], "must match the field type (number/boolean/date)")}})));
         if (f.field_type === "enumeration") {{
           const enumRaw = f._enumRaw !== undefined ? f._enumRaw : (f.enumeration_values || []).join(", ");
           tr.appendChild(td(textInput(enumRaw, "r" + i + "-f" + j + "-e",
             v => {{ f._enumRaw = v;
                    f.enumeration_values = v.split(",").map(x => x.trim()).filter(Boolean); }},
             {{placeholder: "a, b, c", size: 16, bad: resEnumBad(f),
-              title: "comma-separated; ':' and '=' are not representable in the code "
-                     + "doc-block carrier"}})));
+              title: firstBad([
+                [!(f.enumeration_values || []).length, "an enumeration needs at least one value"],
+              ], "comma-separated values")}})));
         }}
         tr.appendChild(td(textInput(f.description, "r" + i + "-f" + j + "-fd", v => f.description = v,
-          {{placeholder: "field description", size: 16,
-            bad: String(f.description || "").includes(":"),
-            title: "':' is not representable in the code doc-block carrier"}})));
+          {{placeholder: "field description", size: 16}})));
       }}
       tbl.appendChild(tr);
     }});
@@ -1197,17 +1767,17 @@ function renderCounter() {{
 
 document.getElementById("add-event").addEventListener("click", () => {{
   state.events.push({{id: nextId++, kind: "custom", name: "", existing: false, params: [],
-                    editing: true, source: "added on page"}});
+                    editing: true, _pageNew: true, source: "added on page"}});
   render();
 }});
 document.getElementById("add-field").addEventListener("click", () => {{
   state.player_fields.push({{id: nextId++, name: "", kind: "string", description: "",
-                             editing: true, existing: false, source: "added on page"}});
+                             editing: true, existing: false, _pageNew: true, source: "added on page"}});
   render();
 }});
 document.getElementById("add-res").addEventListener("click", () => {{
   state.resources.push({{id: nextId++, name: "", key: "", description: "", editing: true, existing: false,
-    fields: [], source: "added on page"}});
+    _pageNew: true, fields: [], source: "added on page"}});
   render();
 }});
 
@@ -1215,7 +1785,7 @@ function exportJson() {{
   // Enum values live in state across kind toggles (so switching back restores them),
   // but the EXPORT carries them only for enumeration kinds — a stale list never ships.
   const cleanParam = p => {{
-    const {{included, ...rest}} = p;
+    const {{included, _pNew, ...rest}} = p;
     return rest.kind === "enumeration" ? rest : {{...rest, extra: ""}};
   }};
   const cleanField = f => {{
@@ -1225,13 +1795,29 @@ function exportJson() {{
   // Select-first: unticked rows are simply absent from the hand-back (same semantics
   // as the old drop); the page-local flags never ship.
   const keep = r => r.existing || inc(r);
-  const stripLocal = r => {{ const {{included, editing, _enumRaw, ...rest}} = r; return rest; }};
+  const stripLocal = r => {{ const {{included, editing, _enumRaw, _pageNew, ...rest}} = r; return rest; }};
   return JSON.stringify({{
     confirmed_at: new Date().toISOString(),
     page_generated_at: DATA.generated_at,
     payload_version: DATA_VERSION,
-    events: state.events.filter(keep).map(r => {{
-      if (r.existing) return r;  // echoed verbatim — the row is a measurement of code
+    events: Object.values(CUSTOM_EVENT_REGISTRY)
+      .filter(e => state.orphan_ticks["ev:" + e.name])
+      .map(e => ({{id: "orph-" + e.name, name: e.name, kind: "custom", existing: false,
+        dashboard_orphan: true,
+        params: (e.params || []).map(p => ({{name: p.name, kind: p.kind || "string", extra: ""}}))}}))
+      .concat(state.events.filter(keep).map(r => {{
+      if (r.existing) {{
+        // Measured part echoes verbatim; ticked proposals ship under proposed_params
+        // (append-only key — older consumers ignore it). No ticked proposals -> key absent.
+        const {{proposed_params, ...rest}} = r;
+        const ticked = (proposed_params || []).filter(p => p.included === true).map(p => {{
+          const {{_proposed, ...c}} = cleanParam(p);
+          return SYSTEM_EVENT_PARAM_NAMES.includes(String(c.name || "").trim())
+            ? {{...c, system_field: true}} : c;
+        }});
+        // stripLocal here too: auto edit-mode stamps editing:true on these rows.
+        return stripLocal(ticked.length ? {{...rest, proposed_params: ticked}} : rest);
+      }}
       const ek = effectiveKind(r);
       const collapsed = ek === "debug" ||
         (ek === "predefined" && isSdkAutomatic(r.name) && INTEGRATION_TYPE === "SDK");
@@ -1243,16 +1829,36 @@ function exportJson() {{
           return SYSTEM_EVENT_PARAM_NAMES.includes(String(p.name || "").trim())
             ? {{...c, system_field: true}} : c;
         }})}});
-    }}),
-    player_fields: state.player_fields.filter(keep).map(r => {{
+    }})),
+    player_fields: Object.values(FR_CUSTOM)
+      .filter(e => state.orphan_ticks["pf:" + e.path])
+      .map(e => ({{id: "orph-" + e.path, name: e.name || e.path,
+        property: propOf({{name: e.name || e.path}}), path: e.path,
+        kind: e.kind || "string", description: e.description || "",
+        existing: false, dashboard_orphan: true}}))
+      .concat(state.player_fields.filter(keep).map(r => {{
       if (r.existing) return r;  // echoed verbatim — the row is a measurement of code
       const out = stripLocal(r.kind === "enumeration" ? {{...r}} : {{...r, extra: ""}});
-      const p = String(r.path || "").trim() || snake(String(r.name || "").trim());
+      const p = String(r.path || "").trim() || snake(propOf(r));
+      // The path the developer SAW (derived or overridden) ships explicitly — the page
+      // is the approval gate; a hand-back without it made the consumer re-derive and
+      // hid the approved value (demo-b InitialDeviceOS, 2026-08-03).
+      out.path = p;
+      // Explicit derivation (2026-08-04): name may carry spaces (dashboard display
+      // name); the C# property ships alongside — identity for space-free names.
+      out.property = propOf(r);
       // Append-only marker: the sync ACTIVATES the dashboard's predefined field —
       // implementation takes the module-02 SDK-state route, never a custom create.
       if (FR_PREDEF[p] !== undefined) out.predefined_field = true;
+      else if (FR_CUSTOM[p] !== undefined) {{  // adopt marker (candidate rows)
+        // ADOPT marker (append-only, 2026-08-04): wire a code carrier for the existing
+        // dashboard field — the sync sees already_ok, never a create.
+        out.dashboard_field = true;
+        if (FR_CUSTOM[p].kind) out.kind = FR_CUSTOM[p].kind;
+        if (FR_CUSTOM[p].description) out.description = FR_CUSTOM[p].description;
+      }}
       return out;
-    }}),
+    }})),
     feature_settings: {{schemas: state.feature_settings.schemas.filter(keep)
         .map(r => r.existing ? r : stripLocal({{...r,
           columns: (r.columns || []).filter(c => c.included !== false)
@@ -1312,6 +1918,7 @@ def build_page(payload):
         resource_field_types=json.dumps(RESOURCE_FIELD_TYPES),
         resource_key_re=json.dumps(RESOURCE_KEY_RE),
         system_event_param_names=json.dumps(SYSTEM_EVENT_PARAM_NAMES),
+        reserved_field_paths=json.dumps(RESERVED_PLAYER_FIELD_PATHS),
         system_base_prop_param_names=json.dumps(SYSTEM_BASE_PROP_PARAM_NAMES),
         system_auto_param_names=json.dumps(SYSTEM_AUTO_PARAM_NAMES),
         system_param_kinds=json.dumps(SYSTEM_PARAM_KINDS),

@@ -124,7 +124,7 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertIn(json.dumps(self.mod.SYSTEM_EVENT_PARAM_NAMES), html)
         self.assertIn("v1 (new schemas always start at 1)", html)
         self.assertIn("never editable", html)                      # predefined wire names
-        self.assertIn("unique on the server across ALL statuses", html)  # resource NAME rule
+        self.assertIn("uniqueness across ALL statuses", html)  # resource NAME rule
         self.assertIn("c.is_required = true", html)                # FS required: ALWAYS true, no UI control
         # Enum values: state survives kind toggles; the EXPORT strips them for non-enum kinds.
         self.assertIn("cleanParam", html)
@@ -190,7 +190,10 @@ class MergePlanPageTests(unittest.TestCase):
         self.assertNotIn('req.title = "required"', html)
         self.assertNotIn("\u00b7 required", html)
         self.assertNotIn("· required", html)
-        self.assertGreaterEqual(html.count("// echoed verbatim"), 4)   # all four surfaces
+        # events' existing branch has its own wording since proposed-additions (2026-08-04)
+        self.assertGreaterEqual(html.count("// echoed verbatim"), 3)   # fields/fs/resources
+        self.assertIn("Measured part echoes verbatim", html)           # events
+
         # Resources audit round 2 (2026-07-28): carrier guards + raw enum editing
         self.assertIn("RES_FIELD_NAME_RE", html)                       # field-name charset
         self.assertIn("resEnumBad", html)                              # enum ':'/'=' guard
@@ -219,6 +222,7 @@ class MergePlanPageTests(unittest.TestCase):
         # badge + route note, export carries system_field: true, gate NOT blocked.
         self.assertIn("level", self.mod.SYSTEM_EVENT_PARAM_NAMES)
         self.assertEqual(sorted(self.mod.SYSTEM_BASE_PROP_PARAM_NAMES
+                                + self.mod.SYSTEM_READONLY_PARAM_NAMES
                                 + self.mod.SYSTEM_AUTO_PARAM_NAMES),
                          self.mod.SYSTEM_EVENT_PARAM_NAMES)
         self.assertIn("b-system", html)
@@ -229,7 +233,7 @@ class MergePlanPageTests(unittest.TestCase):
         # System-param kinds are pinned by the base class (SDK live-read 2026-07-30)
         self.assertEqual(sorted(self.mod.SYSTEM_PARAM_KINDS), self.mod.SYSTEM_EVENT_PARAM_NAMES)
         self.assertEqual(self.mod.SYSTEM_PARAM_KINDS["level"], "number")
-        self.assertIn('kk.textContent = p.kind + " (fixed)"', html)
+        self.assertIn("pinnedKind(p.kind", html)   # locked select, no "(fixed)" text
         self.assertIn("SYSTEM_PARAM_KINDS[t] !== undefined", html)
         # Dashboard field registry (2026-07-30): predefined path = valid + activate route;
         # calculated path / taken name = red; live custom path = informational.
@@ -241,9 +245,40 @@ class MergePlanPageTests(unittest.TestCase):
         # Separate Name/Path inputs (2026-07-30): path auto-derives, override-able,
         # registry-checked; description hidden for predefined/calculated matches.
         self.assertIn("FIELD_PATH_RE", html)
-        self.assertIn('placeholder: "auto (snake of the name)"', html)
-        self.assertIn("if (!frPredef && !frCalc) {", html)
+        # the path input carries the live derived value; its placeholder was dropped —
+        # "auto (snake...)" read as "auto and snake are mandatory" (user 2026-08-04)
+        self.assertNotIn("auto (snake of the name)", html)
+        self.assertIn("if (!frPredef && !frCalc && !frDash) {", html)
         self.assertIn("pathNodeConflict", html)                        # leaf/object conflict red
+        # Context-aware validation tooltips (2026-08-03): the first failing condition
+        # names itself — a duplicate no longer shows "maximum 30 characters".
+        self.assertIn("function firstBad", html)
+        self.assertIn("duplicate event name on this page", html)
+        self.assertIn("duplicate param name on this event", html)
+        self.assertIn("duplicate resource key on this page", html)
+        # ✕ remove for page-added rows only (user decision 2026-08-03): the marker is
+        # page-local (stripLocal) and the button renders solely on _pageNew rows.
+        self.assertIn("_pageNew", html)
+        # effectiveKind never re-tags existing rows (measured kind wins over the
+        # registry-name match — the level_up predefined+custom pair, 2026-08-03).
+        self.assertIn('if (r.existing) return r.kind || "custom";', html)
+        # existing rows never get the system-kind retype; they warn instead (2026-08-03)
+        self.assertIn("reserved system name measured as a custom param", html)
+        self.assertIn("✕ remove", html)
+        # proposed additions on existing event rows (2026-08-04): editable, unticked,
+        # ship via the append-only proposed_params key; badge wording adjusted.
+        self.assertIn("proposed_params", html)
+        self.assertIn('<span class="badge b-new">addition</span>', html)
+        self.assertIn("delete this param", html)   # ✕ on hand-added params (2026-08-04)
+        # static reserved-path list baked into the page (backend snapshot 2026-08-04)
+        self.assertIn("RESERVED_FIELD_PATHS", html)
+        self.assertIn("session_data", html)
+        self.assertIn("RESERVED by the platform", html)
+        self.assertIn("UNDO = [], REDO = []", html)   # ⌘Z whole-state history (2026-08-04)
+        # "on dashboard" adopt route (2026-08-04): rich custom_fields registry
+        self.assertIn("dashboard_field = true", html.replace("out.dashboard_field = true", "dashboard_field = true"))
+        self.assertIn('"on dashboard"', html)
+        self.assertIn("measured part is read-only", html)
         self.assertNotIn('prev.textContent = "\u2192 path: "', html.replace("→", "\\u2192"))
         # FS column checkbox trial (2026-07-29): unticked columns dim + leave the plan
         self.assertIn('ccb.title = "include this column"', html)
@@ -338,8 +373,13 @@ class MergePlanPageTests(unittest.TestCase):
         # breaks this test on purpose — a conscious decision, not an accident.
         _, _, out_path = self._run(_payload())
         html = open(out_path, encoding="utf-8").read()
+        # events/player_fields gained a Dashboard->Code orphan prefix (2026-08-05):
+        # ticked registry orphans concat BEFORE the state rows — keys stay append-only.
         for frozen in ("confirmed_at:", "page_generated_at:", "payload_version:",
-                       "events: state.events", "player_fields: state.player_fields",
+                       "events: Object.values(CUSTOM_EVENT_REGISTRY)",
+                       ".concat(state.events.filter(keep)",
+                       "player_fields: Object.values(FR_CUSTOM)",
+                       ".concat(state.player_fields.filter(keep)",
                        "feature_settings: {schemas: state.feature_settings.schemas", "resources: state.resources"):
             self.assertIn(frozen, html)
 

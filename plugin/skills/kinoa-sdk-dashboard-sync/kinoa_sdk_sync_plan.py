@@ -40,7 +40,7 @@ Usage:
       --events-predefined ep.json --events-custom ec.json \
       [--events-custom-deleted ecd.json] \
       --fields-predefined fp.json --fields-custom fc.json \
-      [--fields-custom-deleted fcd.json] \
+      [--fields-custom-deleted fcd.json] [--fields-calculated fcalc.json] \
       [--fs-schemas fss.json --fs-settings fst.json] \
       [--resources rt.json]
 
@@ -51,6 +51,7 @@ single JSON object on stdout. Exit codes: 0 plan produced, 2 invalid input.
 
 import argparse
 import json
+import pathlib
 import re
 import sys
 
@@ -78,6 +79,20 @@ RESOURCE_KEY_RE = r"^[a-zA-Z][a-zA-Z0-9_-]*$"
 # system param (the event loses its standard system column); editing a system param
 # via PUT fails with an unhandled 500 (system params are shared template rows).
 SYSTEM_EVENT_PARAM_NAMES = ("device_id", "level", "place", "success", "time", "time_ms", "wifi")
+# The two that ride the event's BASE CLASS via settable properties (SetLevel/SetPlace);
+# `success` is a base field too but READ-ONLY (always true — no setter, verified against
+# SDK sources 2026-08-05), and the other four are composed by the SDK itself — the route
+# advice differs per group (user 2026-08-03; success narrowed 2026-08-05).
+SYSTEM_BASE_PROP_PARAM_NAMES = ("level", "place")
+# Platform-reserved player-field paths (plugin-shipped backend snapshot 2026-08-04;
+# prefix semantics — see reserved-player-field-paths.json).
+RESERVED_PLAYER_FIELD_PATHS = tuple(json.loads(
+    (pathlib.Path(__file__).resolve().parent / "reserved-player-field-paths.json")
+    .read_text(encoding="utf-8"))["reserved"])
+
+
+def _reserved_field_path(path):
+    return any(path == e or path.startswith(e + ".") for e in RESERVED_PLAYER_FIELD_PATHS)
 
 # Entity surfaces this planner knows how to sync. The manifest is designed to grow
 # (feature settings, bundles, translations, ...) — any other top-level section is
@@ -256,7 +271,8 @@ def _rt_fields_map(record):
 
 
 def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_custom, pf_custom_deleted,
-               fs_schemas=None, fs_settings=None, resource_templates=None, ev_debug=None):
+               fs_schemas=None, fs_settings=None, resource_templates=None, ev_debug=None,
+               pf_calculated=None):
     plan = {
         "schema_version": PLAN_SCHEMA_VERSION,
         "manifest_schema_version": manifest.get("schema_version"),
@@ -281,12 +297,20 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
     pf_predef_by_path = _index_by(pf_predef, "path")
     pf_custom_by_path = _index_by(pf_custom, "path")
     pf_deleted_by_path = _index_by(pf_custom_deleted, "path")
+    # CALCULATED fields come from their own listing (types=CALCULATED) — the
+    # per-record `calculated` flag is dead (always false, live-verified 2026-08-04).
+    pf_calc_by_path = _index_by(pf_calculated or [], "path")
 
     events = manifest.get("events") or {}
     fields = manifest.get("player_fields") or {}
 
     manifest_event_names = set()
     manifest_field_paths = set()
+    # Predefined vehicles (ExtendedGameEventData subclasses) are the ONLY ones carrying
+    # level/place — the system-param route advice below branches on this set.
+    predefined_in_use_names = {
+        _norm(e.get("name")) for e in (events.get("predefined_in_use") or [])
+        if isinstance(e, dict) and _norm(e.get("name"))}
 
     # --- Predefined events in use: publish NOT_IMPLEMENTED, diff custom params ---
     for entry in events.get("predefined_in_use") or []:
@@ -481,6 +505,16 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                           "paths are byte-for-byte; a hand-normalized manifest would register a dead "
                           "duplicate that never receives state",
             })
+        calc_hit = pf_calc_by_path.get(path) or next(
+            (pf_calc_by_path[k] for k in pf_calc_by_path if k.lower() == path.lower()), None)
+        if calc_hit is not None:
+            plan["player_fields"]["warnings"].append({
+                "path": path, "dashboard_path": calc_hit.get("path"),
+                "reason": "path is reserved by a CALCULATED dashboard field (server-computed — the "
+                          "game cannot write it); the create would be rejected ('path is reserved'). "
+                          "Rename the property in code; no create is planned.",
+            })
+            continue
         predef_hit = pf_predef_by_path.get(path) or next(
             (pf_predef_by_path[k] for k in pf_predef_by_path if k.lower() == path.lower()), None)
         if predef_hit is not None:
@@ -490,10 +524,20 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                           "this manifest entry is classified custom; creating it would duplicate the "
                           "predefined record. Re-check the producer's predefined/custom classification.",
             })
+        if _reserved_field_path(path):
+            plan["player_fields"]["warnings"].append({
+                "path": path, "name": entry.get("name") or entry.get("property") or path,
+                "reason": "path is RESERVED by the platform (base player-state namespace, "
+                          "plugin-shipped backend snapshot) — the server refuses the create "
+                          "('path is reserved'); rename the property in code. No create is "
+                          "planned.",
+            })
+            continue
         # default_value is deliberately NOT forwarded: the live API 422-rejects it
         # for non-calculated fields, and manifest fields are code-backed, never calculated.
         item = {
-            "name": entry.get("name") or entry.get("property") or path,
+            "name": entry.get("dashboard_name") or entry.get("name")
+                    or entry.get("property") or path,
             "path": path,
             "kind": kind,
             "extra": entry.get("extra") or "",
@@ -557,16 +601,42 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                 })
                 continue
             if _norm(p.get("name")) in SYSTEM_EVENT_PARAM_NAMES:
+                # Excluded like the flagged case — the server refuses the whole call
+                # otherwise; the warning carries the per-group route (user 2026-08-03).
+                # level/place have NO route on a USER event: CustomEventData is
+                # GameEventData-direct again (SDK revert 2026-08-06), so there is no
+                # SetLevel/SetPlace to move the value to and the reserved name cannot be
+                # registered — the only fix is a rename in game code.
+                if (_norm(p.get("name")) in SYSTEM_BASE_PROP_PARAM_NAMES
+                        and _norm(item.get("name")) not in predefined_in_use_names):
+                    route = (f"NO route on a user event — CustomEventData has no "
+                             f"Set{_norm(p.get('name')).capitalize()}(...) and the reserved name "
+                             f"cannot be registered; rename it in game code "
+                             f"(e.g. {_norm(p.get('name'))}_number)")
+                elif _norm(p.get("name")) in SYSTEM_BASE_PROP_PARAM_NAMES:
+                    route = ("the value rides the event's base class — move it to "
+                             "SetLevel(...)/SetPlace(...) in the builder")
+                elif _norm(p.get("name")) == "success":
+                    route = ("the base field exists on every event but is READ-ONLY — always "
+                             "true in this SDK version, no setter; remove the custom param, "
+                             "nothing to implement")
+                else:
+                    route = ("the SDK composes it automatically — remove the custom param "
+                             "in game code")
                 plan["events"]["warnings"].append({
                     "name": item.get("name"), "param": p.get("name"),
                     "reason": f"system-param collision: '{p.get('name')}' is RESERVED by system "
                               "parameters — the server refuses the registration ('Parameter name(s) "
-                              "[...] are reserved by system parameters', backend-confirmed 2026-07-29). "
-                              "Route the value via the base class (level/place/success) or rename "
-                              "the param in game code if it means something else.",
+                              "[...] are reserved by system parameters', backend-confirmed 2026-07-29); "
+                              f"excluded from this action. Route: {route}; rename the param in "
+                              "game code if it means something else.",
                 })
+                continue
             kept.append(p)
         item["params"] = kept
+    # An add-params row whose params were ALL excluded is a no-op — drop it (the
+    # warnings above still tell the story). Creates stay: the event itself is the action.
+    plan["events"]["add_params"] = [i for i in plan["events"]["add_params"] if i.get("params")]
 
     # --- Informational: dashboard ACTIVE entities the manifest doesn't mention. Never deleted. ---
     for name, record in ev_custom_by_name.items():
@@ -752,13 +822,25 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                     "reason": "the live setting is bound to a different schema than the code's schema_name — "
                               "reconcile on the dashboard (the helpers cannot re-bind a setting)",
                 })
+            # Display-name drift is visibility-only (user decision 2026-08-06): the sync
+            # creates and never mutates existing settings — the operator edits if desired.
+            want_name = _norm(st.get("name"))
+            live_name = _norm(live.get("name"))
+            if want_name and live_name and want_name != live_name:
+                fsp["warnings"].append({
+                    "key": key, "code_name": want_name, "live_name": live_name,
+                    "reason": "display name differs from the code carrier — the sync never "
+                              "mutates existing settings; edit on the dashboard if desired",
+                })
             fsp["already_ok"].append({"surface": "setting", "key": key, "id": live.get("id"),
                                       "reason": "feature setting key already exists"})
             # Resume path: a prior partial run may have created the setting but died before its default
             # configuration was created/published. Conditional item — the executor first runs
             # list-configs for this setting and SKIPS when any configuration already exists.
             fsp["config_create"].append({
-                "setting_key": key, "schema_name": schema_name, "default": True,
+                "setting_key": key,
+                "name": _norm(st.get("name")) or _norm(live.get("name")) or key,
+                "schema_name": schema_name, "default": True,
                 "seed_csv": st.get("seed_csv"), "conditional": "only_if_no_configs",
                 "reason": "existing setting — ensure a default configuration exists (create+seed only if the "
                           "setting has zero configurations; otherwise skip)",
@@ -769,11 +851,16 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
             })
             continue
         fsp["setting_create"].append({
-            "key": key, "schema_name": schema_name, "version": version,
+            # name: the dashboard's human label (the server DTO takes key AND name);
+            # older manifests carry none — the executor falls back to the key.
+            "key": key, "name": _norm(st.get("name")) or key,
+            "schema_name": schema_name, "version": version,
             "reason": "feature setting key not present — create (binds the schema by id)",
         })
         fsp["config_create"].append({
-            "setting_key": key, "schema_name": schema_name, "default": True,
+            "setting_key": key,
+            "name": _norm(st.get("name")) or key,
+            "schema_name": schema_name, "default": True,
             "seed_csv": st.get("seed_csv"),
             "reason": "new setting — create a default configuration and seed it from the developer's CSV "
                       "(seed_csv, mirrored values; operator edits afterward), or empty when no seed_csv",
@@ -985,6 +1072,8 @@ def main(argv):
     parser.add_argument("--fields-predefined", default=None)
     parser.add_argument("--fields-custom", default=None)
     parser.add_argument("--fields-custom-deleted", default=None)
+    parser.add_argument("--fields-calculated", default=None,
+                        help="list-calculated output — reserved server-computed paths.")
     parser.add_argument("--fs-schemas", default=None,
                         help="Live feature schemas (list-schemas, ideally enriched with get-schema "
                              "records so versions[].tableFields are present for the column diff).")
@@ -1050,6 +1139,8 @@ def main(argv):
         if args.fields_custom else [],
         "fields-custom-deleted": _extract_items(_load_json(args.fields_custom_deleted, "fields-custom-deleted"), "fields-custom-deleted")
         if args.fields_custom_deleted else [],
+        "fields-calculated": _extract_items(_load_json(args.fields_calculated, "fields-calculated"), "fields-calculated")
+        if args.fields_calculated else [],
         "fs-schemas": _extract_items(_load_json(args.fs_schemas, "fs-schemas"), "fs-schemas") if args.fs_schemas else [],
         "fs-settings": _extract_items(_load_json(args.fs_settings, "fs-settings"), "fs-settings") if args.fs_settings else [],
         "resources": _extract_items(_load_json(args.resources, "resources"), "resources") if args.resources else [],
@@ -1082,6 +1173,7 @@ def main(argv):
         listings["fs-settings"],
         listings["resources"],
         listings["events-debug"],
+        pf_calculated=listings["fields-calculated"],
     )
     print(json.dumps(plan, indent=2))
     return 0

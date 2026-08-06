@@ -41,27 +41,62 @@ TS = "2026-07-28T22:00:00Z"
 PAGES = {
     "e2e-events.html": {
         "payload_version": 1, "generated_at": TS, "game_id": GAME,
+        "registries_source": "live",
+        "custom_event_registry": [{"name": "daily_bonus",
+                                   "params": [{"name": "streak", "kind": "number"},
+                                              {"name": "bonus_day", "kind": "number"}]},
+                                  {"name": "push_opt_in",
+                                   "params": [{"name": "channel", "kind": "string"}]}],
         "integration_type": "SDK", "predefined_wire_names": PREDEFINED,
         "debug_wire_names": DEBUG, "sdk_automatic_wire_names": SDK_AUTOMATIC,
         "events": [
             {"id": 1, "kind": "predefined", "name": "session_start", "existing": True,
-             "source": "KinoaGameController.cs:41", "params": []},
+             "source": "KinoaGameController.cs:41", "params": [],
+             "proposed_params": [{"name": "session_source", "kind": "string", "extra": ""}]},
             {"id": 2, "kind": "custom", "name": "race_finished", "existing": False,
              "source": "GameStateService.cs:130",
-             "params": [{"name": "position", "kind": "number", "extra": ""}]}]},
+             "params": [{"name": "position", "kind": "number", "extra": ""}]},
+            # Same-name existing pair — a custom mirror colliding with the predefined
+            # wire name is legal code reality (demo-a EventName_FakeLevelUpCustom).
+            {"id": 3, "kind": "predefined", "name": "level_up", "existing": True,
+             "source": "AnalyticsEventListener.cs:58", "params": []},
+            {"id": 4, "kind": "custom", "name": "level_up", "existing": True,
+             "source": "AnalyticsEventListener.cs:352", "params": []},
+            # System-named param measured with a NON-canonical kind on a read-only row:
+            # the page must ship it verbatim (no retype) and show the route warning.
+            {"id": 5, "kind": "custom", "name": "start_level", "existing": True,
+             "source": "AnalyticsEventListener.cs:81",
+             "params": [{"name": "level", "kind": "string", "extra": ""}]},
+            # ADOPT candidate: name matches a dashboard custom event (registry above)
+            {"id": 10, "kind": "custom", "name": "daily_bonus", "existing": False,
+             "source": "DailyBonus.cs:41",
+             "params": [{"name": "streak", "kind": "number", "extra": ""},
+                         {"name": "reward_coins", "kind": "number", "extra": ""}]}]},
     "e2e-fields.html": {
         "payload_version": 1, "generated_at": TS, "game_id": GAME,
+        "registries_source": "live",
         "dashboard_field_registry": {
             "predefined": [{"path": "level", "kind": "number"}],
             "calculated": [{"path": "days_since_install", "kind": "number"}],
             "custom_paths": ["transaction_count"],
+            "custom_fields": [{"path": "transaction_count", "kind": "number",
+                               "name": "TransactionCount",
+                               "description": "Total number of IAP transactions."},
+                              {"path": "vip_tier", "kind": "number", "name": "VIP tier",
+                               "description": "Operator-configured VIP tier."}],
             "names": ["Level", "Days since install", "TransactionCount"]},
         "player_fields": [
-            {"id": 1, "name": "EpisodeNumber", "kind": "number", "extra": "", "existing": True,
+            # String ids on purpose: producers mint "pf-ex-1"-style ids; the page's
+            # add-row counter must stay numeric-robust (id: null regression, demo-b).
+            {"id": "pf-ex-1", "name": "EpisodeNumber", "kind": "number", "extra": "", "existing": True,
              "source": "CustomPlayerState.cs:18", "path": "episode_number",
              "description": "current episode"},
-            {"id": 2, "name": "LastRaceAt", "kind": "date", "extra": "", "existing": False,
-             "source": "GameStateService.cs:77", "path": "last_race_at"}]},
+            {"id": "pf-new-1", "name": "LastRaceAt", "kind": "date", "extra": "", "existing": False,
+             "source": "GameStateService.cs:77", "path": "last_race_at"},
+            # predefined_in_use base write: read-only visibility row (2026-08-04)
+            {"id": "pf-piu-1", "name": "PersonalInfo.CountryCode", "kind": "string", "extra": "",
+             "existing": True, "predefined_in_use": True, "path": "personal_info.country_code",
+             "source": "KinoaGameEventBuildingService.cs:125"}]},
     "e2e-fs.html": {
         "payload_version": 1, "generated_at": TS, "game_id": GAME,
         "feature_settings": {
@@ -79,6 +114,7 @@ PAGES = {
                 {"id": 13, "key": "BoosterEconomy_Legacy", "schema_name": "BoosterEconomy",
                  "version": 3, "existing": True, "source": "LegacyBoosterLoader.cs:58"},
                 {"id": 11, "key": "BoosterEconomy_Promo", "schema_name": "BoosterEconomy",
+                 "name": "Booster Promo",
                  "version": 3, "existing": False, "source": "added on page"},
                 {"id": 12, "key": "RaceRewards", "schema_name": "RaceRewards", "version": 1,
                  "existing": False, "source": "RewardConfig.cs:22"}]}},

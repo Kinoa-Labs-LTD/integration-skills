@@ -11,6 +11,12 @@ Subcommands:
       GET https://dashboard.kinoa.io/gamemetaapi/api/player_fields (types=PREDEFINED)
   list-custom [--states active] [--rows N]
       GET https://dashboard.kinoa.io/gamemetaapi/api/player_fields (types=USER)
+  list-calculated [--states active,not_implemented] [--rows N]
+      GET https://dashboard.kinoa.io/gamemetaapi/api/player_fields (types=CALCULATED)
+      Server-computed fields (eCPM, session counts, ...). Their paths are RESERVED —
+      a custom create on one is refused ("path is reserved"). NOTE: the per-record
+      `calculated` boolean is dead (always false, live-verified 2026-08-04) — the
+      record's `type` / this types= query is the only reliable marker.
   activate --field-id UUID
       PATCH https://dashboard.kinoa.io/gamemetaapi/api/player_fields/<id>/ACTIVATE
       Flips not_implemented -> active; also the recovery path for soft-deleted
@@ -172,6 +178,10 @@ def cmd_list_custom(args):
     return _list_fields("USER", args.states, args.rows)
 
 
+def cmd_list_calculated(args):
+    return _list_fields("CALCULATED", args.states, args.rows)
+
+
 def cmd_activate(args):
     url = f"{PLAYER_FIELDS_URL}/{args.field_id}/ACTIVATE"
     status, raw = _request("PATCH", url, headers=_admin_headers())
@@ -266,6 +276,12 @@ def main(argv):
     )
     p_lc.add_argument("--rows", type=int, default=100, help="Page size. Default: 100.")
     p_lc.set_defaults(func=cmd_list_custom)
+
+    p_lcalc = sub.add_parser("list-calculated", parents=[guard],
+                             help="GET calculated (server-computed) player fields.")
+    p_lcalc.add_argument("--states", default="active,not_implemented")
+    p_lcalc.add_argument("--rows", type=int, default=200)
+    p_lcalc.set_defaults(func=cmd_list_calculated)
 
     p_act = sub.add_parser("activate", parents=[guard], help="PATCH a predefined field to ACTIVATE.")
     p_act.add_argument("--field-id", required=True, help="Predefined field UUID.")
