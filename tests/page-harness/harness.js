@@ -755,6 +755,19 @@ function testFs(file) {
   check("fs: new key inherits the schema's highest wired version",
         promo && String(promo.version) === "3", JSON.stringify(promo));
 
+  // ---- FS setting display name (2026-08-06): server DTO takes key AND name
+  check("fs: new setting prefills the humanized name on the collapsed row",
+        [...w.document.querySelectorAll("#feature_settings .row")]
+          .some(d => d.textContent.includes("Race Rewards")));
+  check("fs: settings export ships name; existing rows stay verbatim",
+        (() => {
+          const rr = plan0.feature_settings.settings.find(o => o.key === "RaceRewards");
+          const pp = plan0.feature_settings.settings.find(o => o.key === "BoosterEconomy_Promo");
+          const ex = plan0.feature_settings.settings.find(o => o.key === "BoosterEconomy");
+          return rr && rr.name === "Race Rewards" && pp && pp.name === "Booster Promo"
+              && ex && ex.name === undefined;
+        })());
+
   // rename a NEW schema -> its bound settings turn red "(missing: old)", export blocked
   clickPencil(w, "feature_settings", "RaceRewards");
   const schemaName = [...w.document.querySelectorAll("#feature_settings input[type=text]")]

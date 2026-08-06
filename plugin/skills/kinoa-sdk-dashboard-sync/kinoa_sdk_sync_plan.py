@@ -807,6 +807,16 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                     "reason": "the live setting is bound to a different schema than the code's schema_name — "
                               "reconcile on the dashboard (the helpers cannot re-bind a setting)",
                 })
+            # Display-name drift is visibility-only (user decision 2026-08-06): settings
+            # have no update endpoint, so nothing is mutated — the operator edits if desired.
+            want_name = _norm(st.get("name"))
+            live_name = _norm(live.get("name"))
+            if want_name and live_name and want_name != live_name:
+                fsp["warnings"].append({
+                    "key": key, "code_name": want_name, "live_name": live_name,
+                    "reason": "display name differs from the code carrier — settings have no "
+                              "update endpoint; edit on the dashboard if desired (nothing is mutated)",
+                })
             fsp["already_ok"].append({"surface": "setting", "key": key, "id": live.get("id"),
                                       "reason": "feature setting key already exists"})
             # Resume path: a prior partial run may have created the setting but died before its default
@@ -824,7 +834,10 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
             })
             continue
         fsp["setting_create"].append({
-            "key": key, "schema_name": schema_name, "version": version,
+            # name: the dashboard's human label (the server DTO takes key AND name);
+            # older manifests carry none — the executor falls back to the key.
+            "key": key, "name": _norm(st.get("name")) or key,
+            "schema_name": schema_name, "version": version,
             "reason": "feature setting key not present — create (binds the schema by id)",
         })
         fsp["config_create"].append({

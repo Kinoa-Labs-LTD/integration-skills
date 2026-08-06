@@ -114,6 +114,7 @@ PAGES = {
                 {"id": 13, "key": "BoosterEconomy_Legacy", "schema_name": "BoosterEconomy",
                  "version": 3, "existing": True, "source": "LegacyBoosterLoader.cs:58"},
                 {"id": 11, "key": "BoosterEconomy_Promo", "schema_name": "BoosterEconomy",
+                 "name": "Booster Promo",
                  "version": 3, "existing": False, "source": "added on page"},
                 {"id": 12, "key": "RaceRewards", "schema_name": "RaceRewards", "version": 1,
                  "existing": False, "source": "RewardConfig.cs:22"}]}},

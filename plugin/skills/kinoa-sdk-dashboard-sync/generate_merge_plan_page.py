@@ -693,6 +693,7 @@ function resRowInvalid(r, dup, ndup) {{
 }}
 function fsSettingRowInvalid(r, kdup, schemaNames) {{
   return !String(r.key || "").trim() || kdup(r.key) || String(r.key || "").length > 100
+    || !String(r.name || "").trim()
     || !r.schema_name || !schemaNames.includes(r.schema_name);
 }}
 // Expanded iff: new + included + (explicitly editing OR invalid — red must stay visible).
@@ -749,6 +750,15 @@ function resDefaultBad(f) {{
 // Enumeration values: each value must be 50 characters or less (backend-confirmed).
 function enumValuesTooLong(csv) {{
   return String(csv || "").split(",").some(x => x.trim().length > 50);
+}}
+
+// Setting display name (2026-08-06): the dashboard's create-setting DTO takes BOTH
+// key (runtime lookup id) and name (human label); the executor used to paper over
+// with name=key. New-setting rows prefill a humanized key — the developer approves.
+function humanizeKey(k) {{
+  return String(k || "").replace(/[_\-]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .trim().split(/\s+/).map(w => w ? w[0].toUpperCase() + w.slice(1) : "").join(" ");
 }}
 
 function isReservedFsColumn(n) {{
@@ -1487,6 +1497,7 @@ function renderFs() {{
   host.insertAdjacentHTML("beforeend",
     '<div class="muted" style="margin:0.8rem 0 0.4rem"><b>Settings (keys)</b> — the runtime download keys; each binds ONE schema from the list above</div>');
   fs.settings.forEach((r, i) => {{
+    if (!r.existing && r.name === undefined) r.name = humanizeKey(r.key);
     const expanded = expandedRow(r, () => fsSettingRowInvalid(r, kdup, schemaNames));
     const div = document.createElement("div");
     div.className = "row" + (r.existing ? " locked" : "") + (!r.existing && !inc(r) ? " excluded" : "");
@@ -1495,7 +1506,7 @@ function renderFs() {{
     if (!r.existing && !expanded) {{
       const cg = document.createElement("div"); cg.className = "grid";
       const bound = shippedSchemas.find(x => String(x.name || "") === String(r.schema_name || ""));
-      cg.innerHTML = "key <code>" + esc(r.key || "(unnamed)") + "</code> <span class=\"muted\">schema " +
+      cg.innerHTML = "<code>" + esc(r.name || "(unnamed)") + "</code> key <code>" + esc(r.key || "(unnamed)") + "</code> <span class=\"muted\">schema " +
         esc(r.schema_name || "—") + " · v" +
         esc(newSchemas.has(r.schema_name) ? 1 : ((bound && bound.version) || r.version || 1)) + "</span>";
       if (r.note) cg.insertAdjacentHTML("beforeend", " <span class=\"muted\">" + esc(r.note) + "</span>");
@@ -1503,9 +1514,18 @@ function renderFs() {{
     }}
     const g = document.createElement("div"); g.className = "grid";
     if (r.existing) {{
-      g.innerHTML = "key <code>" + esc(r.key) + "</code> · schema <code>" + esc(r.schema_name) +
+      g.innerHTML = (r.name ? "<code>" + esc(r.name) + "</code> · " : "")
+                    + "key <code>" + esc(r.key) + "</code> · schema <code>" + esc(r.schema_name) +
                     "</code> · v" + esc(r.version);
     }} else {{
+      g.insertAdjacentHTML("beforeend", "<span class=\"muted\">name</span>");
+      g.appendChild(textInput(r.name, "sn" + i, v => r.name = v,
+        {{placeholder: "Feature name", size: 18,
+          bad: !String(r.name || "").trim(),
+          title: firstBad([
+            [!String(r.name || "").trim(),
+             "the setting name is required — the dashboard displays it (the key stays the runtime id)"],
+          ], "dashboard display name; the key stays the runtime lookup id")}}));
       g.insertAdjacentHTML("beforeend", "<span class=\"muted\">key</span>");
       // Server rules (backend-confirmed 2026-07-28): key capped at 100 characters;
       // a setting cannot exist without a schema (the dropdown below enforces that —
