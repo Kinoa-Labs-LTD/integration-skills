@@ -823,7 +823,9 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
             # configuration was created/published. Conditional item — the executor first runs
             # list-configs for this setting and SKIPS when any configuration already exists.
             fsp["config_create"].append({
-                "setting_key": key, "schema_name": schema_name, "default": True,
+                "setting_key": key,
+                "name": _norm(st.get("name")) or _norm(live.get("name")) or key,
+                "schema_name": schema_name, "default": True,
                 "seed_csv": st.get("seed_csv"), "conditional": "only_if_no_configs",
                 "reason": "existing setting — ensure a default configuration exists (create+seed only if the "
                           "setting has zero configurations; otherwise skip)",
@@ -841,7 +843,9 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
             "reason": "feature setting key not present — create (binds the schema by id)",
         })
         fsp["config_create"].append({
-            "setting_key": key, "schema_name": schema_name, "default": True,
+            "setting_key": key,
+            "name": _norm(st.get("name")) or key,
+            "schema_name": schema_name, "default": True,
             "seed_csv": st.get("seed_csv"),
             "reason": "new setting — create a default configuration and seed it from the developer's CSV "
                       "(seed_csv, mirrored values; operator edits afterward), or empty when no seed_csv",
