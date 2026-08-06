@@ -612,6 +612,26 @@ function head(row, label, opts = {{}}) {{
 // page-local flags — they never ship in the hand-back (stripLocal at export).
 const inc = r => r.included !== false;
 
+// level/place live ONLY on ExtendedGameEventData (predefined vehicles) — a CUSTOM
+// event's vehicle is GameEventData-direct again (SDK revert 2026-08-06; the 2026-07-31
+// reparent is rolled back), so a user event can neither SET them (no SetLevel/SetPlace)
+// nor REGISTER them (reserved names) — rename (e.g. level_number) is the only route.
+// success/device_id/time/time_ms/wifi still exist on every event with their own routes.
+// The rename a developer is nudged toward when the name has no carrier on a user
+// event — the value then ships as an ordinary registered param.
+const RENAME_HINT = {{level: "level_number", place: "place_name"}};
+function sysNoRoute(row, p) {{
+  return INTEGRATION_TYPE === "SDK"
+    && ["level", "place"].includes(String(p.name || "").trim())
+    && effectiveKind(row) !== "predefined";
+}}
+// ...but only an EDITABLE param can be red: a measured param on an existing row is
+// read-only code reality (its note says "Fix code-first") — redding it would block the
+// export with nothing on the page to fix. Same doctrine as duplicate names.
+function sysUnroutable(row, p) {{
+  return sysNoRoute(row, p) && (!row.existing || p._proposed);
+}}
+
 // A row may render COLLAPSED only while it is valid — a hidden red input would blind
 // the export gate (the exact bug class fixed for debug-collapsed params). These
 // predicates mirror the expanded inputs' bad-conditions.
@@ -625,6 +645,7 @@ function eventRowInvalid(r, dup) {{
   const pdup = dupIn(live, "name");
   return live.some(p =>
     !String(p.name || "").trim() || pdup(p.name) || String(p.name || "").length > 30
+    || sysUnroutable(r, p)
     || !EVENT_PARAM_KINDS.includes(p.kind)
     || (p.kind === "enumeration" && (!String(p.extra || "").trim() || enumValuesTooLong(p.extra))));
 }}
@@ -1022,28 +1043,39 @@ function renderEvents() {{
             ? '<span class="muted">reserved system name measured as a custom param — the '
               + 'server refuses registering it; canonical kind '
               + esc(SYSTEM_PARAM_KINDS[String(p.name || "").trim()] || "") + ', canonical route: '
-              + (SYSTEM_BASE_PROP_PARAM_NAMES.includes(String(p.name || "").trim())
-                 ? "the event's base-class field (SetLevel/SetPlace)"
-                 : String(p.name || "").trim() === "success"
-                   ? "read-only base field — always true in this SDK version (no setter); remove the custom param"
-                   : "composed by the SDK — remove the custom param")
+              + (sysNoRoute(r, p)
+                 ? "NONE on a user event — no SetLevel/SetPlace on CustomEventData and the "
+                   + "reserved name can't be registered; rename it in game code (e.g. "
+                   + esc(RENAME_HINT[String(p.name || "").trim()]) + ")"
+                 : SYSTEM_BASE_PROP_PARAM_NAMES.includes(String(p.name || "").trim())
+                   ? "the event's base-class field (SetLevel/SetPlace)"
+                   : String(p.name || "").trim() === "success"
+                     ? "read-only base field — always true in this SDK version (no setter); remove the custom param"
+                     : "composed by the SDK — remove the custom param")
               + ". Fix code-first.</span>"
             : esc(p.extra || "")) + "</td>";
       }} else {{
-        // A reserved system name is a VALID candidate — the value just takes a different
-        // ROUTE (base-class property or SDK-composed) and is never registered as a custom
-        // param (the server refuses those names). Renaming is only for the case where the
-        // name matches but the MEANING differs (user decision 2026-07-30).
+        // A reserved system name is a VALID candidate on the routes that exist — but
+        // level/place on a USER event have NO route since the 2026-08-06 SDK revert
+        // (no setter on GameEventData-direct CustomEventData; registration refused):
+        // those RED with a rename advice. Elsewhere renaming stays only for the case
+        // where the name matches but the MEANING differs (user decision 2026-07-30).
         const sysHit = SYSTEM_EVENT_PARAM_NAMES.includes(String(p.name || "").trim());
+        const unroutable = sysUnroutable(r, p);
         tr.appendChild(td(textInput(p.name, "e" + i + "-p" + j,
           v => {{ p.name = v;
                  const t = String(v || "").trim();
                  if (SYSTEM_PARAM_KINDS[t] !== undefined) p.kind = SYSTEM_PARAM_KINDS[t]; }},
           {{placeholder: "param_name", size: 20, maxlength: 30,
-            bad: !String(p.name || "").trim() || pdup(p.name) || String(p.name || "").length > 30,
+            bad: !String(p.name || "").trim() || pdup(p.name) || String(p.name || "").length > 30
+                 || unroutable,
             title: firstBad([
               [!String(p.name || "").trim(), "the param name is required"],
               [pdup(p.name), "duplicate param name on this event"],
+              [unroutable, "'" + String(p.name || "").trim() + "' can't ship on a user event — "
+                + "CustomEventData has no SetLevel/SetPlace (no SDK setter), and the reserved "
+                + "name can't be registered as a custom param; rename it (e.g. "
+                + RENAME_HINT[String(p.name || "").trim()] + ") or untick it"],
             ], "maximum 30 characters")}})));
         if (sysHit) {{
           // The type is PINNED by the base class — locked select, no editable choice.
@@ -1063,11 +1095,13 @@ function renderEvents() {{
           // directly in the event body (user decision 2026-07-30).
           sn.textContent = INTEGRATION_TYPE === "API"
             ? " built-in system field — your integration supplies its value directly in the event body; never registered as a custom param"
-            : (SYSTEM_BASE_PROP_PARAM_NAMES.includes(String(p.name || "").trim())
-               ? " built-in event field — the value rides the base class (SetLevel/SetPlace); no dashboard registration"
-               : String(p.name || "").trim() === "success"
-                 ? " built-in event field — read-only in this SDK version (always true, no setter); nothing to implement, no dashboard registration"
-                 : " composed by the SDK automatically — nothing to implement");
+            : unroutable
+              ? " no route on a user event — no SDK setter and the reserved name can't be registered; rename or untick"
+              : (SYSTEM_BASE_PROP_PARAM_NAMES.includes(String(p.name || "").trim())
+                 ? " built-in event field — the value rides the base class (SetLevel/SetPlace); no dashboard registration"
+                 : String(p.name || "").trim() === "success"
+                   ? " built-in event field — read-only in this SDK version (always true, no setter); nothing to implement, no dashboard registration"
+                   : " composed by the SDK automatically — nothing to implement");
           sysCell.appendChild(sn);
           tr.appendChild(td(sysCell));
         }}

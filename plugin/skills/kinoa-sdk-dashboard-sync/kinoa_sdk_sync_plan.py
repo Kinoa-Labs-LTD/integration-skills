@@ -306,6 +306,11 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
 
     manifest_event_names = set()
     manifest_field_paths = set()
+    # Predefined vehicles (ExtendedGameEventData subclasses) are the ONLY ones carrying
+    # level/place — the system-param route advice below branches on this set.
+    predefined_in_use_names = {
+        _norm(e.get("name")) for e in (events.get("predefined_in_use") or [])
+        if isinstance(e, dict) and _norm(e.get("name"))}
 
     # --- Predefined events in use: publish NOT_IMPLEMENTED, diff custom params ---
     for entry in events.get("predefined_in_use") or []:
@@ -598,7 +603,17 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
             if _norm(p.get("name")) in SYSTEM_EVENT_PARAM_NAMES:
                 # Excluded like the flagged case — the server refuses the whole call
                 # otherwise; the warning carries the per-group route (user 2026-08-03).
-                if _norm(p.get("name")) in SYSTEM_BASE_PROP_PARAM_NAMES:
+                # level/place have NO route on a USER event: CustomEventData is
+                # GameEventData-direct again (SDK revert 2026-08-06), so there is no
+                # SetLevel/SetPlace to move the value to and the reserved name cannot be
+                # registered — the only fix is a rename in game code.
+                if (_norm(p.get("name")) in SYSTEM_BASE_PROP_PARAM_NAMES
+                        and _norm(item.get("name")) not in predefined_in_use_names):
+                    route = (f"NO route on a user event — CustomEventData has no "
+                             f"Set{_norm(p.get('name')).capitalize()}(...) and the reserved name "
+                             f"cannot be registered; rename it in game code "
+                             f"(e.g. {_norm(p.get('name'))}_number)")
+                elif _norm(p.get("name")) in SYSTEM_BASE_PROP_PARAM_NAMES:
                     route = ("the value rides the event's base class — move it to "
                              "SetLevel(...)/SetPlace(...) in the builder")
                 elif _norm(p.get("name")) == "success":

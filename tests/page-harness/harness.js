@@ -290,23 +290,33 @@ function testEvents(file) {
   const pn = [...rowByText(w, "events", "GameStateService.cs:130")
     .querySelectorAll("input[type=text]")].find(i2 => i2.placeholder === "param_name");
   const oldName = pn.value;
-  // level is settable on EVERY event (CustomEventData : ExtendedGameEventData, SDK fix
-  // 2026-07-31) — the system route is universal
+  // level/place have NO route on a user event again (SDK revert 2026-08-06:
+  // CustomEventData : GameEventData — no SetLevel/SetPlace, and the reserved name
+  // can't be registered either); success/device_id/time/... still route.
   typeInto(w, pn.dataset.fid, "level");
-  check("events: system-named param is NOT a validation error", valErrs(w) === 0);
-  check("events: system badge + base-class route note shown",
+  check("events: level on a USER event is a validation error (no route)", valErrs(w) > 0);
+  check("events: unroutable tooltip advises the rename",
+        [...w.document.querySelectorAll("#events input.bad")]
+          .some(i2 => i2.value === "level" && (i2.title || "").includes("level_number")));
+  check("events: unroutable route note shown",
+        w.document.body.textContent.includes("no route on a user event"));
+  // success routes everywhere (read-only base field) — the valid system flow
+  typeInto(w, [...rowByText(w, "events", "GameStateService.cs:130")
+    .querySelectorAll('input[placeholder="param_name"]')][0].dataset.fid, "success");
+  check("events: success on a user event is NOT a validation error", valErrs(w) === 0);
+  check("events: system badge + read-only route note shown",
         [...w.document.querySelectorAll("#events .badge")].some(b => b.textContent === "system")
-        && w.document.body.textContent.includes("rides the base class"));
+        && w.document.body.textContent.includes("read-only in this SDK version"));
   check("events: system param kind is a locked select, not an editable one",
         [...w.document.querySelectorAll("#events select")]
-          .some(s => s.disabled && s.textContent.trim() === "number"));
+          .some(s => s.disabled && s.textContent.trim() === "boolean"));
   const planS = exportPlan(w);
-  const evS = planS.events.find(e => !e.existing && (e.params || []).some(p2 => p2.name === "level"));
+  const evS = planS.events.find(e => !e.existing && (e.params || []).some(p2 => p2.name === "success"));
   check("events: system param exports system_field: true",
-        evS && evS.params.find(p2 => p2.name === "level").system_field === true,
+        evS && evS.params.find(p2 => p2.name === "success").system_field === true,
         JSON.stringify(evS));
   check("events: system param kind coerced to the canonical type",
-        evS && evS.params.find(p2 => p2.name === "level").kind === "number",
+        evS && evS.params.find(p2 => p2.name === "success").kind === "boolean",
         JSON.stringify(evS));
   typeInto(w, [...rowByText(w, "events", "GameStateService.cs:130")
     .querySelectorAll('input[placeholder="param_name"]')][0].dataset.fid, oldName);

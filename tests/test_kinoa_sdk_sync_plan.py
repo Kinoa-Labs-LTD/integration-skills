@@ -245,22 +245,30 @@ class BuildPlanTests(unittest.TestCase):
                             for w in plan2["events"]["warnings"]))
 
     def test_reserved_param_routes_and_empty_addparams_row_dropped(self):
-        # level -> base-class route text; an add-params row left with zero params
-        # after exclusion is a no-op and disappears from the plan (2026-08-03).
+        # Route text branches by VEHICLE (SDK revert 2026-08-06): level on a PREDEFINED
+        # event rides SetLevel; on a USER event it has NO route (CustomEventData is
+        # GameEventData-direct — no setter — and the reserved name can't be registered),
+        # so the advice is a rename. An add-params row left with zero params after
+        # exclusion is a no-op and disappears from the plan (2026-08-03).
         manifest = _manifest()
         manifest["events"]["custom"] = [{"name": "race_start", "params": [
             {"name": "level", "kind": "number"}, {"name": "seed", "kind": "string"}]}]
         manifest["events"]["predefined_in_use"] = [{"name": "payment",
-            "custom_params": [{"name": "wifi", "kind": "boolean"}]}]
+            "custom_params": [{"name": "wifi", "kind": "boolean"},
+                              {"name": "level", "kind": "number"}]}]
         predef = {"id": "e1", "name": "payment", "status": "ACTIVE",
                   "game_event_parameters": []}
         plan = self._plan(manifest, ev_predef=[predef])
         create = plan["events"]["create"][0]
         self.assertEqual([p["name"] for p in create["params"]], ["seed"])
-        self.assertTrue(any(w.get("param") == "level" and "base class" in w.get("reason", "")
-                            for w in plan["events"]["warnings"]))
+        warns = plan["events"]["warnings"]
+        self.assertTrue(any(w.get("name") == "race_start" and w.get("param") == "level"
+                            and "NO route on a user event" in w.get("reason", "")
+                            and "level_number" in w.get("reason", "") for w in warns), warns)
+        self.assertTrue(any(w.get("name") == "payment" and w.get("param") == "level"
+                            and "base class" in w.get("reason", "") for w in warns), warns)
         self.assertTrue(any(w.get("param") == "wifi" and "SDK composes it" in w.get("reason", "")
-                            for w in plan["events"]["warnings"]))
+                            for w in warns))
         self.assertEqual(plan["events"]["add_params"], [])
 
     def test_calculated_path_collision_warns_and_skips_create(self):
