@@ -807,15 +807,15 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                     "reason": "the live setting is bound to a different schema than the code's schema_name — "
                               "reconcile on the dashboard (the helpers cannot re-bind a setting)",
                 })
-            # Display-name drift is visibility-only (user decision 2026-08-06): settings
-            # have no update endpoint, so nothing is mutated — the operator edits if desired.
+            # Display-name drift is visibility-only (user decision 2026-08-06): the sync
+            # creates and never mutates existing settings — the operator edits if desired.
             want_name = _norm(st.get("name"))
             live_name = _norm(live.get("name"))
             if want_name and live_name and want_name != live_name:
                 fsp["warnings"].append({
                     "key": key, "code_name": want_name, "live_name": live_name,
-                    "reason": "display name differs from the code carrier — settings have no "
-                              "update endpoint; edit on the dashboard if desired (nothing is mutated)",
+                    "reason": "display name differs from the code carrier — the sync never "
+                              "mutates existing settings; edit on the dashboard if desired",
                 })
             fsp["already_ok"].append({"surface": "setting", "key": key, "id": live.get("id"),
                                       "reason": "feature setting key already exists"})
