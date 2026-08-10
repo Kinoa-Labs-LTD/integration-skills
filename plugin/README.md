@@ -162,7 +162,7 @@ python -m unittest discover tests
 
 Covers the helper CLIs and the sync planner with mocked HTTP. Run after any change to a `kinoa_*.py` helper.
 
-**Evals (skill behavior)** — cases live in [`skills/kinoa-api-integration/evals/evals.json`](skills/kinoa-api-integration/evals/evals.json). Run via the `skill-creator` harness, or invoke any helper directly against a real Kinoa project — every CLI is independently usable.
+**Evals (skill behavior)** — one suite per consumption mode: [`skills/kinoa-api-integration/evals/evals.json`](skills/kinoa-api-integration/evals/evals.json) (API mode) and [`skills/kinoa-sdk-dashboard-sync/evals/evals.json`](skills/kinoa-sdk-dashboard-sync/evals/evals.json) (SDK dashboard sync). Run via the `skill-creator` harness, or invoke any helper directly against a real Kinoa project — every CLI is independently usable.
 
 Run-artifact directories (`kinoa-api-integration-workspace/`, `kinoa-sdk-dashboard-sync-workspace/`) are gitignored — **do not commit them**.
 

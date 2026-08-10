@@ -198,7 +198,7 @@ For games integrated via the Kinoa Unity SDK, the `/kinoa` skill (shipped inside
 
 **Unit tests (offline)**: `python -m unittest discover tests` from the repo root — covers the helper CLIs (`kinoa_init`, `kinoa_open_session`, `kinoa_dashboard_event`, `kinoa_dashboard_player_fields`, `kinoa_dashboard_feature_settings`, `kinoa_dashboard_resource_template`, `kinoa_csv_schema_infer`), the sync planner, and the webhook with mocked HTTP; no credentials, no network. `tests/test_boilerplate_consistency.py` is the drift guard for the duplicated helper boilerplate: it asserts `_load_session_env` / `_save_session_env` / `_request` / `_parse_json` stay textually identical across copies and every `urlopen` carries a `timeout` — when you edit boilerplate in one helper, re-copy it to all of them or this test fails. Run the suite after ANY change to a `kinoa_*.py` helper.
 
-**Evals (skill behavior)**: [`skills/kinoa-api-integration/evals/evals.json`](skills/kinoa-api-integration/evals/evals.json) holds the eval cases. Run via the `anthropic-skills:skill-creator` harness (spawns with-skill + baseline subagents per case, generates a review HTML), or invoke any helper directly against a real Kinoa project — every CLI is independently usable. `kinoa-api-integration-workspace/` holds run artifacts; **do not commit it**.
+**Evals (skill behavior)**: two suites, one per consumption mode — [`skills/kinoa-api-integration/evals/evals.json`](skills/kinoa-api-integration/evals/evals.json) (API mode; the orchestrator + its sub-skills) and [`skills/kinoa-sdk-dashboard-sync/evals/evals.json`](skills/kinoa-sdk-dashboard-sync/evals/evals.json) (SDK mode; manifest contract, the ten hard rules, the four synced surfaces, the scoped `reseed` run). Run via the `anthropic-skills:skill-creator` harness (spawns with-skill + baseline subagents per case, generates a review HTML), or invoke any helper directly against a real Kinoa project — every CLI is independently usable. `kinoa-api-integration-workspace/` and `kinoa-sdk-dashboard-sync-workspace/` hold run artifacts; **do not commit them**.
 
 ## File index
 
@@ -210,6 +210,7 @@ For games integrated via the Kinoa Unity SDK, the `/kinoa` skill (shipped inside
 - [`plugin/skills/kinoa-sdk-dashboard-sync/SKILL.md`](plugin/skills/kinoa-sdk-dashboard-sync/SKILL.md) — SDK-mode dashboard sync (manifest contract, phases, hard rules)
 - [`plugin/skills/kinoa-api-integration/HOW-TO.md`](plugin/skills/kinoa-api-integration/HOW-TO.md) — install, token acquisition, walkthrough
 - [`skills/kinoa-api-integration/references/postman-collection.json`](skills/kinoa-api-integration/references/postman-collection.json) — runtime API spec (public hosts only)
-- [`skills/kinoa-api-integration/evals/evals.json`](skills/kinoa-api-integration/evals/evals.json) — eval cases
+- [`skills/kinoa-api-integration/evals/evals.json`](skills/kinoa-api-integration/evals/evals.json) — eval cases (API mode)
+- [`skills/kinoa-sdk-dashboard-sync/evals/evals.json`](skills/kinoa-sdk-dashboard-sync/evals/evals.json) — eval cases (SDK dashboard sync)
 - [`tests/`](tests/) — offline unit tests for the python helpers
 - Each sub-skill's `SKILL.md` documents its specific phases / subcommands / branches

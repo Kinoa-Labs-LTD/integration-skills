@@ -46,12 +46,17 @@ Subcommands (each makes ONE logical operation and prints ONE JSON object:
       --fields-json array (used by the sync workflow after the developer
       confirms the list on the HTML page). TYPE ∈ number, string, boolean,
       date, enumeration; for enumeration EXTRA is the comma-separated allowed
-      values. KEY must match ^[a-zA-Z][a-zA-Z0-9_-]*$.
+      values. KEY must match ^[a-zA-Z][a-zA-Z0-9_-]*$. When fields are given
+      and --body is not, the body is COMPOSED from them as {"<name>": "${<name>}"}
+      per field (the dashboard-UI placeholder shape; the server stores body
+      verbatim and never derives it from fields — live-verified 2026-08-06).
+      An explicit --body always wins; a key-only template ships body {}.
 
   update --id UUID [--name] [--key] [--description] [--status] [--body] [--field ...] [--fields-json]
       Two-step: GET the current template, apply only the provided overrides
       (PUT is a full replace, so unspecified fields are preserved from the
-      current record), PUT .../resource-templates/<id>.
+      current record), PUT .../resource-templates/<id>. Providing fields
+      without --body recomposes the placeholder body from the NEW fields.
 
   activate --id UUID
       POST .../resource-templates/<id>/activate — flips DRAFT -> ACTIVE
@@ -276,6 +281,18 @@ def _collect_fields(args):
         return None, {"error": "invalid_field", "message": str(e)}
 
 
+def _placeholder_body(fields):
+    """Compose the template body from its fields: {name: "${name}"} per field.
+
+    The server stores `body` VERBATIM and does not derive it from `fields`
+    (live-verified 2026-08-06: two sync runs created field-bearing templates
+    whose dashboard body stayed {}). The dashboard UI writes this exact
+    placeholder shape when an operator authors a template, so the helper
+    mirrors it whenever the caller provides fields without an explicit body.
+    """
+    return {f["name"]: "${" + f["name"] + "}" for f in (fields or []) if f.get("name")}
+
+
 def _parse_body(args):
     """Optional --body JSON object. Returns (body_or_None, error_dict_or_None)."""
     raw = getattr(args, "body", None)
@@ -341,7 +358,9 @@ def cmd_create(args):
         "name": args.name,
         "resourceKey": args.key,
         "status": args.status,
-        "body": body_map if body_map is not None else {},
+        # explicit --body wins (operator passthrough); otherwise the body is
+        # composed from the fields — key-only templates keep an empty {}
+        "body": body_map if body_map is not None else _placeholder_body(fields),
         "fields": fields if fields is not None else [],
     }
     if args.description is not None:
@@ -399,6 +418,10 @@ def cmd_update(args):
         merged["body"] = body_map
     if fields is not None:
         merged["fields"] = fields
+        if body_map is None:
+            # fields replaced -> the placeholder body must follow them, or it
+            # keeps ${...} keys for fields that no longer exist
+            merged["body"] = _placeholder_body(fields)
 
     put_status, put_raw = _request("PUT", f"{RESOURCE_TEMPLATES_URL}/{args.id}", headers=_admin_headers(), body=merged)
     print(json.dumps({
