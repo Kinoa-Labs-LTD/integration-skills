@@ -49,8 +49,8 @@ Subcommands (each makes ONE logical operation and prints ONE JSON object:
       values. KEY must match ^[a-zA-Z][a-zA-Z0-9_-]*$. When fields are given
       and --body is not, the body is COMPOSED from them as {"<name>": "${<name>}"}
       per field (the dashboard-UI placeholder shape; the server stores body
-      verbatim and never derives it from fields — live-verified 2026-08-06).
-      An explicit --body always wins; a key-only template ships body {}.
+      verbatim and never derives it from fields). An explicit --body always
+      wins; a key-only template ships body {}.
 
   update --id UUID [--name] [--key] [--description] [--status] [--body] [--field ...] [--fields-json]
       Two-step: GET the current template, apply only the provided overrides
@@ -284,11 +284,10 @@ def _collect_fields(args):
 def _placeholder_body(fields):
     """Compose the template body from its fields: {name: "${name}"} per field.
 
-    The server stores `body` VERBATIM and does not derive it from `fields`
-    (live-verified 2026-08-06: two sync runs created field-bearing templates
-    whose dashboard body stayed {}). The dashboard UI writes this exact
-    placeholder shape when an operator authors a template, so the helper
-    mirrors it whenever the caller provides fields without an explicit body.
+    The server stores `body` VERBATIM and does not derive it from `fields`.
+    The dashboard UI writes this exact placeholder shape when an operator
+    authors a template, so the helper mirrors it whenever the caller provides
+    fields without an explicit body.
     """
     return {f["name"]: "${" + f["name"] + "}" for f in (fields or []) if f.get("name")}
 

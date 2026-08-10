@@ -124,7 +124,15 @@ PAGES = {
             {"id": 1, "name": "Police Booster", "key": "police", "existing": True,
              "description": "In-game booster granted as a prize.", "source": "RewardType.cs:10",
              "fields": [{"name": "duration_sec", "field_type": "number", "default": "30",
-                         "enumeration_values": [], "description": "active time"}]}]},
+                         "enumeration_values": [], "description": "active time"}]},
+            # date default is dashboard-side: the page renders no input and ships none,
+            # even when the payload carries a value
+            {"id": 2, "name": "Season Pass", "key": "season_pass", "existing": False,
+             "source": "SeasonPass.cs:12",
+             "fields": [{"name": "starts_at", "field_type": "date", "default": "2026-01-01",
+                         "enumeration_values": [], "description": ""},
+                        {"name": "tier_count", "field_type": "number", "default": "10",
+                         "enumeration_values": [], "description": ""}]}]},
     "e2e-mismatch.html": {
         "payload_version": 2, "generated_at": TS, "game_id": GAME,
         "events": [{"id": 1, "kind": "custom", "name": "x", "existing": False, "params": []}]},

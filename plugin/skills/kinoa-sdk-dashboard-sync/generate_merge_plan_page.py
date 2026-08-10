@@ -1711,12 +1711,21 @@ function renderResources() {{
                + "and a code doc-block token)"],
             ], "maximum 100 characters")}})));
         tr.appendChild(td(kindSelect(RESOURCE_FIELD_TYPES, f.field_type, v => f.field_type = v, "r" + i + "-f" + j + "-k")));
-        tr.appendChild(td(textInput(f.default, "r" + i + "-f" + j + "-d", v => f.default = v,
-          {{placeholder: "default", size: 10, bad: resDefaultBad(f),
-            title: firstBad([
-              [f.field_type === "enumeration",
-               "the default must be one of the enumeration values"],
-            ], "must match the field type (number/boolean/date)")}})));
+        if (f.field_type === "date") {{
+          // date defaults are dashboard-side: no input, and the export ships none
+          const dd = document.createElement("span"); dd.className = "muted";
+          dd.textContent = "server-managed (creation time)";
+          dd.title = "date defaults are set dashboard-side — the server fills the creation "
+                   + "timestamp; adjust on the dashboard afterwards";
+          tr.appendChild(td(dd));
+        }} else {{
+          tr.appendChild(td(textInput(f.default, "r" + i + "-f" + j + "-d", v => f.default = v,
+            {{placeholder: "default", size: 10, bad: resDefaultBad(f),
+              title: firstBad([
+                [f.field_type === "enumeration",
+                 "the default must be one of the enumeration values"],
+              ], "must match the field type (number/boolean)")}})));
+        }}
         if (f.field_type === "enumeration") {{
           const enumRaw = f._enumRaw !== undefined ? f._enumRaw : (f.enumeration_values || []).join(", ");
           tr.appendChild(td(textInput(enumRaw, "r" + i + "-f" + j + "-e",
@@ -1790,6 +1799,7 @@ function exportJson() {{
   }};
   const cleanField = f => {{
     const {{_enumRaw, included, ...rest}} = f;
+    if (rest.field_type === "date") delete rest.default;  // dashboard-side value
     return rest.field_type === "enumeration" ? rest : {{...rest, enumeration_values: []}};
   }};
   // Select-first: unticked rows are simply absent from the hand-back (same semantics

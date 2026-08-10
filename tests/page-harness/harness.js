@@ -821,6 +821,26 @@ function testResources(file) {
   check("resources: existing row echoed verbatim",
         deepEq(echoed, exR), JSON.stringify({ echoed, exR }));
 
+  // ---- date defaults are dashboard-side: no input, note instead, none shipped
+  clickPencil(w, "resources", "SeasonPass.cs:12");
+  const spRow = [...w.document.querySelectorAll("#resources .row")]
+    .find(d => d.textContent.includes("SeasonPass.cs:12"));
+  check("resources: date field renders the server-managed note instead of a default input",
+        spRow.textContent.includes("server-managed (creation time)"));
+  check("resources: date field has NO default input while number sibling keeps one",
+        (() => {
+          const inputs = [...spRow.querySelectorAll("input[type=text]")].map(i => i.value);
+          return !inputs.includes("2026-01-01") && inputs.includes("10");
+        })());
+  check("resources: export ships no default for the date field, keeps the number one",
+        (() => {
+          const sp = exportPlan(w).resources.find(r => r.key === "season_pass");
+          const byName = Object.fromEntries(sp.fields.map(f => [f.name, f]));
+          return !("default" in byName.starts_at) && byName.tier_count.default === "10";
+        })());
+
+  spRow.querySelector("button.pencil").click();   // ✓ done — collapse back
+
   // add resource + field; type enum values CHAR BY CHAR including commas
   w.document.getElementById("add-res").click();
   const keyInp = [...w.document.querySelectorAll("#resources input[type=text]")]
