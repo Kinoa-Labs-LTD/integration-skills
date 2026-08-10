@@ -17,7 +17,7 @@ import unittest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT_PATH = os.path.join(
-    REPO_ROOT, "skills", "kinoa-dashboard-resource-template",
+    REPO_ROOT, "plugin", "skills", "kinoa-dashboard-resource-template",
     "kinoa_dashboard_resource_template.py",
 )
 
@@ -66,7 +66,7 @@ class ResourceTemplateHelperTests(unittest.TestCase):
 
     def test_field_spec_basic_number(self):
         f = self.mod._parse_field_spec("gold:number")
-        self.assertEqual(f, {"name": "gold", "field_type": "number", "required": False})
+        self.assertEqual(f, {"name": "gold", "field_type": "number", "required": True})
 
     def test_field_spec_all_allowed_types_parse(self):
         for ftype in self.mod.ALLOWED_FIELD_TYPES:
@@ -81,7 +81,7 @@ class ResourceTemplateHelperTests(unittest.TestCase):
     def test_field_spec_enumeration_values(self):
         f = self.mod._parse_field_spec("rarity:enumeration:common,rare,epic")
         self.assertEqual(f["enumeration_values"], ["common", "rare", "epic"])
-        self.assertFalse(f["required"])
+        self.assertTrue(f["required"])  # defaults True (mirrors FS is_required)
 
     def test_field_spec_enumeration_values_and_required(self):
         f = self.mod._parse_field_spec("rarity:enumeration:common,rare:req")
@@ -142,7 +142,8 @@ class ResourceTemplateHelperTests(unittest.TestCase):
         self.assertEqual(body["resourceKey"], "legendary_sword")
         self.assertEqual(body["status"], "draft")
         self.assertEqual(body["description"], "A prize")
-        self.assertEqual(body["body"], {})
+        # body is composed from the fields (server stores it verbatim, never derives)
+        self.assertEqual(body["body"], {"attack": "${attack}", "rarity": "${rarity}"})
         types = {f["name"]: f["field_type"] for f in body["fields"]}
         self.assertEqual(types, {"attack": "number", "rarity": "enumeration"})
         self.assertEqual(self.requests[0]["method"], "POST")
@@ -154,6 +155,20 @@ class ResourceTemplateHelperTests(unittest.TestCase):
         code, _ = self._call(self.mod.cmd_create, ns, [(200, json.dumps({"id": TEMPLATE_ID}))])
         self.assertEqual(code, 0)
         self.assertEqual(self.requests[0]["body"]["fields"], rich)
+
+    def test_create_fields_json_defaults_required_true(self):
+        # The server 422-rejects a field with required missing/null ("must not be null" —
+        # live-verified 2026-07-23); the helper must default it, never forward the omission.
+        ns = argparse.Namespace(name="Chest", key="chest", description=None, status="draft",
+                                body=None, field=[],
+                                fields_json=json.dumps([
+                                    {"name": "capacity", "field_type": "number"},
+                                    {"name": "locked", "field_type": "boolean", "required": True}]))
+        code, _ = self._call(self.mod.cmd_create, ns, [(200, json.dumps({"id": TEMPLATE_ID}))])
+        self.assertEqual(code, 0)
+        sent = self.requests[0]["body"]["fields"]
+        self.assertEqual(sent[0]["required"], True)
+        self.assertEqual(sent[1]["required"], True)
 
     def test_create_with_body_json(self):
         ns = argparse.Namespace(name="Sword", key="sword", description=None, status="draft",
@@ -216,6 +231,36 @@ class ResourceTemplateHelperTests(unittest.TestCase):
         self.assertEqual(self.requests, [])
 
     # ---- update (GET + merged PUT) ----
+
+    def test_create_explicit_body_wins_over_composition(self):
+        ns = argparse.Namespace(name="Sword", key="sword", description=None, status="draft",
+                                body=json.dumps({"custom": "shape"}),
+                                field=["attack:number"], fields_json=None)
+        code, result = self._call(self.mod.cmd_create, ns, [(200, "{}")])
+        self.assertEqual(code, 0)
+        self.assertEqual(self.requests[0]["body"]["body"], {"custom": "shape"})
+
+    def test_create_key_only_template_ships_empty_body(self):
+        ns = argparse.Namespace(name="Coin", key="coin", description=None, status="draft",
+                                body=None, field=[], fields_json=None)
+        code, result = self._call(self.mod.cmd_create, ns, [(200, "{}")])
+        self.assertEqual(code, 0)
+        self.assertEqual(self.requests[0]["body"]["body"], {})
+        self.assertEqual(self.requests[0]["body"]["fields"], [])
+
+    def test_update_fields_without_body_recomposes_placeholders(self):
+        current = {"id": TEMPLATE_ID, "name": "Old", "resourceKey": "old_key", "status": "draft",
+                   "body": {"stale": "${stale}"},
+                   "fields": [{"name": "stale", "field_type": "number", "required": False}]}
+        ns = argparse.Namespace(id=TEMPLATE_ID, name=None, key=None, description=None,
+                                status=None, body=None, field=[],
+                                fields_json=json.dumps([{"name": "fresh", "field_type": "string"}]))
+        code, result = self._call(self.mod.cmd_update, ns,
+                                  [(200, json.dumps(current)), (200, json.dumps({"ok": True}))])
+        self.assertEqual(code, 0)
+        put_body = self.requests[1]["body"]
+        self.assertEqual(put_body["body"], {"fresh": "${fresh}"})
+        self.assertEqual([f["name"] for f in put_body["fields"]], ["fresh"])
 
     def test_update_merges_only_provided_fields(self):
         current = {"id": TEMPLATE_ID, "name": "Old", "resourceKey": "old_key", "status": "draft",

@@ -1,6 +1,6 @@
 ---
 name: kinoa-sync-resource-template-integration
-description: Internal sub-skill of kinoa-api-integration — do NOT trigger directly. Invoked as the orchestrator's `sync-resource-template-integration` dispatch. Owns the resource-registration workflow: discover which sellable / awardable items (resources — NOT internal currency) the game defines, propose them on an INTERACTIVE HTML confirmation page the developer edits (rename, retype, delete proposals, add missed ones), then register the confirmed list on the Kinoa dashboard as resource templates (create DRAFT → activate) by delegating admin calls to kinoa-dashboard-resource-template, generate a KinoaResources data class of the confirmed keys, and verify. When the user wants to register game resources / sellable items / prize items with Kinoa, mirror shop or reward catalogues, generate KinoaResources, or sync resource templates, route via kinoa-api-integration sync-resource-template-integration.
+description: Internal sub-skill of kinoa-api-integration — do NOT trigger directly. Invoked as the orchestrator's `sync-resource-template-integration` dispatch. Owns the resource-registration workflow: discover which sellable / awardable items the game defines (incl. currency/consumable items it sells or awards; balances stay player fields), propose them on an INTERACTIVE HTML confirmation page the developer edits (rename, retype, delete proposals, add missed ones), then register the confirmed list on the Kinoa dashboard as resource templates (create DRAFT → activate) by delegating admin calls to kinoa-dashboard-resource-template, generate a KinoaResources data class of the confirmed keys, and verify. When the user wants to register game resources / sellable items / prize items with Kinoa, mirror shop or reward catalogues, generate KinoaResources, or sync resource templates, route via kinoa-api-integration sync-resource-template-integration.
 argument-hint: [optional: app source path]
 allowed-tools: Bash(python *) Bash(cat *) Read Write Edit Glob Grep AskUserQuestion
 ---
@@ -11,7 +11,7 @@ Requires `KINOA_BEARER_TOKEN` and `KINOA_GAME_ID` in `~/.kinoa/session.env`. If 
 
 ## What a "resource" is (and is not)
 
-A **resource** is any item that can be **sold or awarded as a prize** — weapons, armor, boosters, chests, cosmetics, event rewards, IAP goods. It is registered on Kinoa as a **resource template**: a typed definition with a `name`, a `resourceKey`, a lifecycle `status` (`DRAFT → ACTIVE → DEPRECATED`), an optional `description`, and typed `fields` (parameters). Resources are **not internal/soft currency** (gold, gems, energy) — those are modelled elsewhere (player fields), so do not propose currency counters as resources.
+A **resource** is any item that can be **sold or awarded as a prize** — weapons, armor, boosters, chests, cosmetics, event rewards, IAP goods. It is registered on Kinoa as a **resource template**: a typed definition with a `name`, a `resourceKey`, a lifecycle `status` (`DRAFT → ACTIVE → DEPRECATED`), an optional `description`, and typed `fields` (parameters). Soft currency and consumables (coins, lives, energy) ARE resources when the game sells or awards them — the catalogue registers the awardable ITEM, while the player's BALANCE is modelled as a player field; carry currency candidates flagged and let the developer decide on the confirmation page.
 
 ## Security boundary — admin vs runtime
 
@@ -55,7 +55,7 @@ Use `Glob` and `Grep` to find where the game defines sellable / awardable items.
 
 For each candidate capture: a human **name**, a proposed **resourceKey** (slug of the id/name, must match `^[a-zA-Z][a-zA-Z0-9_-]*$`), a short **description**, the **source** location (`path:line` — provenance the developer can verify), and the **fields** (parameters) you can infer from the item's attributes (e.g. an item with `attack`, `rarity`, `tradable` → number / enumeration / boolean fields).
 
-**Exclude internal currency.** Gold/gems/energy counters are player state, not resources — don't propose them. If unsure whether something is a resource or currency, keep it but flag it so the developer can drop it on the confirmation page.
+**Currency IS a valid candidate** when the game sells or awards it — always carry it to the page flagged (*"currency — the balance itself lives in player state"*) and let the developer decide; never silently drop it.
 
 **Do NOT ask the developer to confirm the findings in the terminal.** The interactive confirmation page (6.3.3) **is** the review step — it can rename, retype, drop, and add resources, so a terminal `AskUserQuestion` before it ("register these N items?") is a redundant gate that must never replace or precede the page. When discovery finds candidates — even from an unusual source (achievements, quest payouts) or with low confidence — carry them straight into 6.2 → 6.3 and let the developer edit them on the page; flag doubtful ones in their `description` so they're easy to drop there. The **only** case where you stop and ask via `AskUserQuestion` is when discovery found **nothing at all** — then ask the developer to point you at the item/shop/reward definitions (or to confirm the game genuinely has no resources, which skips the phase).
 
@@ -87,10 +87,10 @@ Record `kinoa_resources_path` in run state.
 ### 6.3.1 Fetch existing resource templates
 
 ```
-python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-resource-template/kinoa_dashboard_resource_template.py" list --rows 200
+python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-resource-template/kinoa_dashboard_resource_template.py" list --rows 200 --statuses DRAFT,ACTIVE,DEPRECATED
 ```
 
-The response is `{ http_status, ok, response: { totalCount, elements: [...] } }` (verified live 2026-07-09). **Truncation guard:** if `totalCount > elements.length`, re-run with `--rows <totalCount or more>` before building the map — a truncated listing misclassifies existing keys as 🔵 CREATE and produces duplicate DRAFTs (whose only cleanup is the hard delete). Each element has `id`, `name`, `key`, `status`, `fields`, `availableActions`. `status` comes back **lowercase** in the JSON (`draft`/`active`/`deprecated`) — compare it case-insensitively; the `--statuses` filter accepts either case. Build a map `key → {id, status}` of what's already on the dashboard.
+**`--statuses` is mandatory here** — the server's DEFAULT listing (no `--statuses`) EXCLUDES DEPRECATED templates (live-verified 2026-07-23); without it a retired key looks absent, the diff proposes 🔵 CREATE instead of 🟠 REVIEW, and the create then 422s with "key already exists". The response is `{ http_status, ok, response: { totalCount, elements: [...] } }` (verified live 2026-07-09). **Truncation guard:** if `totalCount > elements.length`, re-run with `--rows <totalCount or more>` before building the map — a truncated listing misclassifies existing keys as 🔵 CREATE and produces duplicate DRAFTs (whose only cleanup is the hard delete). Each element has `id`, `name`, `key`, `status`, `fields`, `availableActions`. `status` comes back **lowercase** in the JSON (`draft`/`active`/`deprecated`) — compare it case-insensitively; the `--statuses` filter accepts either case. Build a map `key → {id, status}` of what's already on the dashboard.
 
 ### 6.3.2 Compute the diff
 

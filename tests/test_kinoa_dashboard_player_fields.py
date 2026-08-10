@@ -15,7 +15,7 @@ import tempfile
 import unittest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRIPT_PATH = os.path.join(REPO_ROOT, "skills", "kinoa-dashboard-player-fields",
+SCRIPT_PATH = os.path.join(REPO_ROOT, "plugin", "skills", "kinoa-dashboard-player-fields",
                            "kinoa_dashboard_player_fields.py")
 
 FIELD_ID = "33333333-3333-3333-3333-333333333333"

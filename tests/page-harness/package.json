@@ -1,0 +1,8 @@
+{
+  "name": "kinoa-merge-plan-page-harness",
+  "private": true,
+  "description": "jsdom interaction harness for generate_merge_plan_page.py — run via ../test_page_interactions.py",
+  "devDependencies": {
+    "jsdom": "^30.0.0"
+  }
+}

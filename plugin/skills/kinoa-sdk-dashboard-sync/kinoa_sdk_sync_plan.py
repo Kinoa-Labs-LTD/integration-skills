@@ -4,8 +4,9 @@ Kinoa SDK Dashboard Sync — deterministic action planner.
 
 Pure parser/differ: NO API calls, NO session.env access. Consumes the
 kinoa-dashboard-manifest.json produced by the /kinoa SDK integration skill
-plus the raw JSON outputs of the kinoa-dashboard-event and
-kinoa-dashboard-player-fields list subcommands, and emits an action plan.
+plus the raw JSON outputs of the kinoa-dashboard-event,
+kinoa-dashboard-player-fields, kinoa-dashboard-feature-settings, and
+kinoa-dashboard-resource-template list subcommands, and emits an action plan.
 
 The plan NEVER contains delete actions. Soft-deleted dashboard records that
 match a manifest entry are planned as publish (events) / activate (fields) —
@@ -20,12 +21,28 @@ soft-delete and a caller feeds a real deleted listing. A hard-deleted custom
 event is simply absent from every listing -> planned as create, the correct
 and only recovery.
 
+Resource templates (manifest schema_version 3): diffed by resourceKey against
+the kinoa-dashboard-resource-template `list` output fetched with
+`--statuses DRAFT,ACTIVE,DEPRECATED` — the server's DEFAULT listing (no
+--statuses param) EXCLUDES DEPRECATED templates (live-verified 2026-07-23), and
+a listing without them makes a deprecated key look absent -> a spurious create
+(rejected 422 "key already exists", but noise). Absent ->
+create DRAFT + activate; existing DRAFT -> activate (fields updated first when
+they differ — a DRAFT is unpublished and mutable); existing ACTIVE with a
+differing field shape -> field_conflict (a developer GATE, same discipline as
+the FS version_conflict — a live template may back live bundles/prizes, so the
+sync never edits it unattended); DEPRECATED -> warning, never auto-reactivated
+(there is no un-deprecate endpoint). Resource-template delete is HARD and
+DRAFT-only on the server — the planner never emits it.
+
 Usage:
   python kinoa_sdk_sync_plan.py --manifest kinoa-dashboard-manifest.json \
       --events-predefined ep.json --events-custom ec.json \
       [--events-custom-deleted ecd.json] \
       --fields-predefined fp.json --fields-custom fc.json \
-      [--fields-custom-deleted fcd.json]
+      [--fields-custom-deleted fcd.json] [--fields-calculated fcalc.json] \
+      [--fs-schemas fss.json --fs-settings fst.json] \
+      [--resources rt.json]
 
 Each listing file is the verbatim stdout of the corresponding helper call
 ({"http_status": ..., "ok": ..., "response": ...}). Prints the plan as a
@@ -34,10 +51,12 @@ single JSON object on stdout. Exit codes: 0 plan produced, 2 invalid input.
 
 import argparse
 import json
+import pathlib
+import re
 import sys
 
 PLAN_SCHEMA_VERSION = 1
-SUPPORTED_MANIFEST_VERSIONS = (1, 2)  # 2 adds the feature_settings section
+SUPPORTED_MANIFEST_VERSIONS = (1, 2, 3)  # 2 adds feature_settings; 3 adds resources
 
 EVENT_PARAM_KINDS = ("number", "boolean", "string", "date", "enumeration", "string_array", "number_array")
 FIELD_KINDS = ("number", "boolean", "string", "date", "long_string", "enumeration", "version")
@@ -47,20 +66,41 @@ FIELD_KINDS = ("number", "boolean", "string", "date", "long_string", "enumeratio
 # column down to these 5, and we fold live schema types through the same map before diffing so a code
 # `string` never false-conflicts with a live `date`/`long_string` column.
 FS_COLUMN_KINDS = ("integer", "number", "string", "boolean", "bundle_key")
+# Resource-template field types and the resourceKey pattern — both mirror
+# kinoa_dashboard_resource_template.py (ALLOWED_FIELD_TYPES / RESOURCE_KEY_RE); the server
+# enforces the same key pattern, so a non-matching key can never be created.
+RESOURCE_FIELD_TYPES = ("number", "string", "boolean", "date", "enumeration")
+RESOURCE_KEY_RE = r"^[a-zA-Z][a-zA-Z0-9_-]*$"
 
-# The dashboard auto-attaches these system params to every event. Verified live
+# Reserved system-param names (backend-confirmed 2026-07-29): registering a param with
+# any of these names is REFUSED — 'Parameter name(s) [X] are reserved by system
+# parameters'. The dashboard auto-attaches these system params to every event. Verified live
 # 2026-06-12: a CREATE carrying a same-named operator param silently DISPLACES the
 # system param (the event loses its standard system column); editing a system param
 # via PUT fails with an unhandled 500 (system params are shared template rows).
-SYSTEM_EVENT_PARAM_NAMES = ("device_id", "time", "time_ms")
+SYSTEM_EVENT_PARAM_NAMES = ("device_id", "level", "place", "success", "time", "time_ms", "wifi")
+# The two that ride the event's BASE CLASS via settable properties (SetLevel/SetPlace);
+# `success` is a base field too but READ-ONLY (always true — no setter, verified against
+# SDK sources 2026-08-05), and the other four are composed by the SDK itself — the route
+# advice differs per group (user 2026-08-03; success narrowed 2026-08-05).
+SYSTEM_BASE_PROP_PARAM_NAMES = ("level", "place")
+# Platform-reserved player-field paths (plugin-shipped backend snapshot 2026-08-04;
+# prefix semantics — see reserved-player-field-paths.json).
+RESERVED_PLAYER_FIELD_PATHS = tuple(json.loads(
+    (pathlib.Path(__file__).resolve().parent / "reserved-player-field-paths.json")
+    .read_text(encoding="utf-8"))["reserved"])
+
+
+def _reserved_field_path(path):
+    return any(path == e or path.startswith(e + ".") for e in RESERVED_PLAYER_FIELD_PATHS)
 
 # Entity surfaces this planner knows how to sync. The manifest is designed to grow
 # (feature settings, bundles, translations, ...) — any other top-level section is
 # reported back as unknown so a newer manifest is never silently half-synced.
 KNOWN_MANIFEST_KEYS = (
     "schema_version", "generated_at", "producer", "integration_type", "game_id",
-    "sdk_version", "head_sha", "round", "project_root",
-    "events", "player_fields", "feature_settings", "unsupported_by_cli",
+    "sdk_version", "head_sha", "round", "project_root", "scope",
+    "events", "player_fields", "feature_settings", "resources", "unsupported_by_cli",
 )
 
 
@@ -150,7 +190,10 @@ def _validate_params(params, allowed, owner, unsupported):
     for p in params or []:
         kind = (p.get("kind") or "").strip()
         if kind in allowed:
-            ok.append({"name": p.get("name"), "kind": kind, "extra": p.get("extra") or None})
+            item = {"name": p.get("name"), "kind": kind, "extra": p.get("extra") or None}
+            if p.get("system_field"):
+                item["system_field"] = True
+            ok.append(item)
         else:
             unsupported.append({
                 "surface": "event_param",
@@ -208,8 +251,28 @@ def _fs_fields_map(record):
     return out
 
 
+def _rt_status(record):
+    """Resource-template lifecycle status, normalized lower (the live listing returns
+    lowercase draft/active/deprecated; compare case-insensitively)."""
+    return str(record.get("status") or "").strip().lower()
+
+
+def _rt_fields_map(record):
+    """{normalized field name: normalized field_type} of a live resource template.
+    Deliberately compares by field_type ONLY: on read-back the server stores enumeration
+    values as a separate entity (`enumeration_id` set, `enumeration_values: null` —
+    verified live 2026-07-09), so comparing inline values would flag a spurious drift
+    on every re-run."""
+    out = {}
+    for f in record.get("fields") or []:
+        if isinstance(f, dict) and f.get("name"):
+            out[_norm(f["name"])] = str(f.get("field_type") or f.get("fieldType") or "").strip().lower()
+    return out
+
+
 def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_custom, pf_custom_deleted,
-               fs_schemas=None, fs_settings=None):
+               fs_schemas=None, fs_settings=None, resource_templates=None, ev_debug=None,
+               pf_calculated=None):
     plan = {
         "schema_version": PLAN_SCHEMA_VERSION,
         "manifest_schema_version": manifest.get("schema_version"),
@@ -219,23 +282,35 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
         "feature_settings": {"schema_create": [], "schema_publish": [], "setting_create": [],
                              "config_create": [], "config_publish": [], "version_conflict": [],
                              "already_ok": [], "warnings": []},
+        "resources": {"create": [], "update": [], "activate": [], "field_conflict": [],
+                      "already_ok": [], "warnings": []},
         "unsupported": list(manifest.get("unsupported_by_cli") or []),
-        "dashboard_only": {"events": [], "player_fields": [], "feature_schemas": [], "feature_settings": []},
+        "dashboard_only": {"events": [], "player_fields": [], "feature_schemas": [],
+                           "feature_settings": [], "resources": []},
         "unknown_manifest_sections": sorted(set(manifest) - set(KNOWN_MANIFEST_KEYS)),
     }
 
     ev_predef_by_name = _index_by(ev_predef, "name")
+    ev_debug_by_name = _index_by(ev_debug or [], "name")
     ev_custom_by_name = _index_by(ev_custom, "name")
     ev_deleted_by_name = _index_by(ev_custom_deleted, "name")
     pf_predef_by_path = _index_by(pf_predef, "path")
     pf_custom_by_path = _index_by(pf_custom, "path")
     pf_deleted_by_path = _index_by(pf_custom_deleted, "path")
+    # CALCULATED fields come from their own listing (types=CALCULATED) — the
+    # per-record `calculated` flag is dead (always false, live-verified 2026-08-04).
+    pf_calc_by_path = _index_by(pf_calculated or [], "path")
 
     events = manifest.get("events") or {}
     fields = manifest.get("player_fields") or {}
 
     manifest_event_names = set()
     manifest_field_paths = set()
+    # Predefined vehicles (ExtendedGameEventData subclasses) are the ONLY ones carrying
+    # level/place — the system-param route advice below branches on this set.
+    predefined_in_use_names = {
+        _norm(e.get("name")) for e in (events.get("predefined_in_use") or [])
+        if isinstance(e, dict) and _norm(e.get("name"))}
 
     # --- Predefined events in use: publish NOT_IMPLEMENTED, diff custom params ---
     for entry in events.get("predefined_in_use") or []:
@@ -310,6 +385,16 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                           "names are byte-for-byte; a hand-normalized manifest would register a dead "
                           "duplicate that never receives events",
             })
+        debug_hit = ev_debug_by_name.get(name) or next(
+            (ev_debug_by_name[k] for k in ev_debug_by_name if k.lower() == name.lower()), None)
+        if debug_hit is not None:
+            plan["events"]["warnings"].append({
+                "name": name, "dashboard_name": debug_hit.get("name"),
+                "reason": "collision with a DEBUG dashboard event (SDK/backend-emitted telemetry, ACTIVE "
+                          "out of the box) — REMOVE this custom event from game code entirely: the "
+                          "SDK/backend logs it itself and it must never be sent by the game. Nothing to "
+                          "publish either (debug events need no registration).",
+            })
         predef_hit = ev_predef_by_name.get(name) or next(
             (ev_predef_by_name[k] for k in ev_predef_by_name if k.lower() == name.lower()), None)
         if predef_hit is not None:
@@ -317,7 +402,10 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                 "name": name, "dashboard_name": predef_hit.get("name"),
                 "reason": "collision with a PREDEFINED dashboard event of the same (or case-variant) name — "
                           "this manifest entry is classified custom; creating it would duplicate the "
-                          "predefined record. Re-check the producer's predefined/custom classification.",
+                          "predefined record. Fix in game code: a GAME-WIRED predefined (payment, level_up, "
+                          "...) -> reclassify to its existing builder (the custom mirror must go); an "
+                          "SDK-AUTOMATIC predefined (install, player_update, *_milestones) -> remove it — "
+                          "the SDK emits it itself.",
             })
         plan["events"]["create"].append({
             "name": name,
@@ -351,6 +439,25 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
         path = _norm(entry.get("path"))
         if not path:
             continue
+        # Registration identity is the path: two properties deriving the same snake path
+        # (e.g. WalletGold and Wallet_Gold) can't both exist — System.Text.Json refuses the
+        # second property at serialization and the second create targets a taken path.
+        if path in manifest_field_paths:
+            plan["player_fields"]["warnings"].append({
+                "path": path, "name": entry.get("property") or path,
+                "reason": "duplicate registered path in the manifest — another entry already derives "
+                          "this snake path; only the first is planned, rename one property in code",
+            })
+            continue
+        node_hit = next((o for o in manifest_field_paths
+                         if o.startswith(path + ".") or path.startswith(o + ".")), None)
+        if node_hit is not None:
+            plan["player_fields"]["warnings"].append({
+                "path": path, "conflicts_with": node_hit,
+                "reason": "leaf/object path conflict: one path sits inside the other "
+                          "(a property cannot be both a value and an object) — real code cannot "
+                          "express this; the manifest looks hand-edited or the producer is broken",
+            })
         manifest_field_paths.add(path)
         kind = (entry.get("kind") or "").strip()
         if kind not in FIELD_KINDS:
@@ -398,6 +505,16 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                           "paths are byte-for-byte; a hand-normalized manifest would register a dead "
                           "duplicate that never receives state",
             })
+        calc_hit = pf_calc_by_path.get(path) or next(
+            (pf_calc_by_path[k] for k in pf_calc_by_path if k.lower() == path.lower()), None)
+        if calc_hit is not None:
+            plan["player_fields"]["warnings"].append({
+                "path": path, "dashboard_path": calc_hit.get("path"),
+                "reason": "path is reserved by a CALCULATED dashboard field (server-computed — the "
+                          "game cannot write it); the create would be rejected ('path is reserved'). "
+                          "Rename the property in code; no create is planned.",
+            })
+            continue
         predef_hit = pf_predef_by_path.get(path) or next(
             (pf_predef_by_path[k] for k in pf_predef_by_path if k.lower() == path.lower()), None)
         if predef_hit is not None:
@@ -407,14 +524,59 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                           "this manifest entry is classified custom; creating it would duplicate the "
                           "predefined record. Re-check the producer's predefined/custom classification.",
             })
+        if _reserved_field_path(path):
+            plan["player_fields"]["warnings"].append({
+                "path": path, "name": entry.get("name") or entry.get("property") or path,
+                "reason": "path is RESERVED by the platform (base player-state namespace, "
+                          "plugin-shipped backend snapshot) — the server refuses the create "
+                          "('path is reserved'); rename the property in code. No create is "
+                          "planned.",
+            })
+            continue
         # default_value is deliberately NOT forwarded: the live API 422-rejects it
         # for non-calculated fields, and manifest fields are code-backed, never calculated.
-        plan["player_fields"]["create"].append({
-            "name": entry.get("name") or entry.get("property") or path,
+        item = {
+            "name": entry.get("dashboard_name") or entry.get("name")
+                    or entry.get("property") or path,
             "path": path,
             "kind": kind,
             "extra": entry.get("extra") or "",
             "reason": "custom field not present on the dashboard",
+        }
+        # Optional, SDK-producer-only (user decision 2026-07-28): measured from the C#
+        # XML-doc summary. Key absent when the manifest carries none — the helper's
+        # --description flag has always existed, so older manifests/flows are unaffected.
+        if entry.get("description"):
+            item["description"] = entry["description"]
+        plan["player_fields"]["create"].append(item)
+
+    # --- Vocabulary-drift detector: LIVE listings carrying a param/field kind outside this
+    #     planner's closed vocabulary mean the BACKEND grew a kind this plugin version doesn't
+    #     know yet. Advisory only — one aggregated warning per surface; the fix is a plugin
+    #     update (helper + planner + page ship together, parity-tested). ---
+    live_unknown_param_kinds = sorted({
+        str(p.get("kind")).strip().lower()
+        for rec in list(ev_predef or []) + list(ev_custom or [])
+        if isinstance(rec, dict)
+        for p in (rec.get("game_event_parameters") or []) if isinstance(p, dict)
+        if p.get("kind") and str(p.get("kind")).strip().lower() not in EVENT_PARAM_KINDS})
+    if live_unknown_param_kinds:
+        plan["events"]["warnings"].append({
+            "unknown_kinds": live_unknown_param_kinds,
+            "reason": "the live dashboard uses event-param kind(s) this plugin version doesn't know — "
+                      "the backend vocabulary grew; update the plugin (/plugin marketplace update kinoa) "
+                      "so the planner, helpers, and merge-plan page learn them",
+        })
+    live_unknown_field_kinds = sorted({
+        str(rec.get("kind")).strip().lower()
+        for rec in list(pf_predef or []) + list(pf_custom or [])
+        if isinstance(rec, dict) and rec.get("kind")
+        and str(rec.get("kind")).strip().lower() not in FIELD_KINDS})
+    if live_unknown_field_kinds:
+        plan["player_fields"]["warnings"].append({
+            "unknown_kinds": live_unknown_field_kinds,
+            "reason": "the live dashboard uses player-field kind(s) this plugin version doesn't know — "
+                      "the backend vocabulary grew; update the plugin (/plugin marketplace update kinoa)",
         })
 
     # --- Publishing replaces the record under a NEW id: flag add_params entries whose
@@ -424,17 +586,57 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
         if _norm(item.get("name")) in published_names:
             item["resolve_id_after_publish"] = True
 
-    # --- System-param collision advisory: warn, never block (manifest is byte-for-byte). ---
+    # --- System params: flagged ones (system_field: true — the value rides the event's
+    # base class / SDK composition) are EXCLUDED from registration payloads; an
+    # unflagged reserved name still warns (the server refuses it), never blocks. ---
     for item in plan["events"]["create"] + plan["events"]["add_params"]:
+        kept = []
         for p in item.get("params") or []:
-            if _norm(p.get("name")) in SYSTEM_EVENT_PARAM_NAMES:
+            if p.get("system_field"):
                 plan["events"]["warnings"].append({
                     "name": item.get("name"), "param": p.get("name"),
-                    "reason": f"system-param collision: '{p.get('name')}' matches a dashboard system "
-                              "event param — on create the server silently drops its system column in "
-                              "favour of this operator param; on add-params the helper skips it as "
-                              "already existing. Rename the param in game code.",
+                    "reason": f"'{p.get('name')}' is a built-in system field — excluded from "
+                              "registration (the value rides the event's base class or the SDK "
+                              "composes it; the column already exists on every event)",
                 })
+                continue
+            if _norm(p.get("name")) in SYSTEM_EVENT_PARAM_NAMES:
+                # Excluded like the flagged case — the server refuses the whole call
+                # otherwise; the warning carries the per-group route (user 2026-08-03).
+                # level/place have NO route on a USER event: CustomEventData is
+                # GameEventData-direct again (SDK revert 2026-08-06), so there is no
+                # SetLevel/SetPlace to move the value to and the reserved name cannot be
+                # registered — the only fix is a rename in game code.
+                if (_norm(p.get("name")) in SYSTEM_BASE_PROP_PARAM_NAMES
+                        and _norm(item.get("name")) not in predefined_in_use_names):
+                    route = (f"NO route on a user event — CustomEventData has no "
+                             f"Set{_norm(p.get('name')).capitalize()}(...) and the reserved name "
+                             f"cannot be registered; rename it in game code "
+                             f"(e.g. {_norm(p.get('name'))}_number)")
+                elif _norm(p.get("name")) in SYSTEM_BASE_PROP_PARAM_NAMES:
+                    route = ("the value rides the event's base class — move it to "
+                             "SetLevel(...)/SetPlace(...) in the builder")
+                elif _norm(p.get("name")) == "success":
+                    route = ("the base field exists on every event but is READ-ONLY — always "
+                             "true in this SDK version, no setter; remove the custom param, "
+                             "nothing to implement")
+                else:
+                    route = ("the SDK composes it automatically — remove the custom param "
+                             "in game code")
+                plan["events"]["warnings"].append({
+                    "name": item.get("name"), "param": p.get("name"),
+                    "reason": f"system-param collision: '{p.get('name')}' is RESERVED by system "
+                              "parameters — the server refuses the registration ('Parameter name(s) "
+                              "[...] are reserved by system parameters', backend-confirmed 2026-07-29); "
+                              f"excluded from this action. Route: {route}; rename the param in "
+                              "game code if it means something else.",
+                })
+                continue
+            kept.append(p)
+        item["params"] = kept
+    # An add-params row whose params were ALL excluded is a no-op — drop it (the
+    # warnings above still tell the story). Creates stay: the event itself is the action.
+    plan["events"]["add_params"] = [i for i in plan["events"]["add_params"] if i.get("params")]
 
     # --- Informational: dashboard ACTIVE entities the manifest doesn't mention. Never deleted. ---
     for name, record in ev_custom_by_name.items():
@@ -453,6 +655,7 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
     manifest_setting_keys = set()
     creating_schema_names = set()
     live_active_version_by_schema = {}
+    live_active_versions_by_schema = {}  # ALL simultaneously-ACTIVE version numbers (backward compat)
     bundle_key_columns_by_schema = {}
 
     def _is_filter_or_placeholder(field_name):
@@ -508,6 +711,12 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
         ver = _fs_latest_version(live)
         if ver is not None and ver.get("version") is not None:
             live_active_version_by_schema[name] = ver.get("version")
+        # Multiple versions of one schema can be ACTIVE at the same time — older published
+        # versions keep resolving at runtime so old game builds stay working (live-verified
+        # 2026-07-28: v1 and v2 of one key both returned status OK with their own configs).
+        live_active_versions_by_schema[name] = sorted(
+            {str(v.get("version")) for v in (live.get("versions") or [])
+             if str(v.get("status") or "").strip().lower() == "active" and v.get("version") is not None})
         item = {"name": name, "id": live.get("id"), "current_status": live.get("status")}
         live_fields = _fs_fields_map(live)
         if live_fields is not None:
@@ -575,13 +784,17 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                 "reason": "the schema is being created this run, so its only version will be 1 — the code "
                           "requests a different version and would get VERSION_NOT_FOUND at runtime",
             })
-        live_ver = live_active_version_by_schema.get(schema_name)
-        if live_ver is not None and version is not None and str(live_ver) != str(version):
+        live_vers = live_active_versions_by_schema.get(schema_name)
+        if live_vers and version is not None and str(version) not in live_vers:
             fsp["warnings"].append({
                 "key": key, "schema_name": schema_name,
-                "requested_version": version, "live_active_version": live_ver,
-                "reason": "the code requests a schema version that is not the live ACTIVE version — runtime would get "
-                          "VERSION_NOT_FOUND; align the code's version or publish the matching schema version",
+                "requested_version": version,
+                "live_active_version": live_active_version_by_schema.get(schema_name),
+                "live_active_versions": live_vers,
+                "reason": "the code requests a schema version that is not among the live ACTIVE versions — runtime "
+                          "would get VERSION_NOT_FOUND (older published versions stay resolvable for backward "
+                          "compatibility, so only versions absent from the live set warn); align the code's "
+                          "version or publish the matching schema version",
             })
         # Bundle dependency: seeded bundle_key values must (1) match the Bundle-key FORMAT — start
         # with a letter, then only letters/digits/_/- (no dots) — and (2) exist as Bundles; the
@@ -609,13 +822,25 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                     "reason": "the live setting is bound to a different schema than the code's schema_name — "
                               "reconcile on the dashboard (the helpers cannot re-bind a setting)",
                 })
+            # Display-name drift is visibility-only (user decision 2026-08-06): the sync
+            # creates and never mutates existing settings — the operator edits if desired.
+            want_name = _norm(st.get("name"))
+            live_name = _norm(live.get("name"))
+            if want_name and live_name and want_name != live_name:
+                fsp["warnings"].append({
+                    "key": key, "code_name": want_name, "live_name": live_name,
+                    "reason": "display name differs from the code carrier — the sync never "
+                              "mutates existing settings; edit on the dashboard if desired",
+                })
             fsp["already_ok"].append({"surface": "setting", "key": key, "id": live.get("id"),
                                       "reason": "feature setting key already exists"})
             # Resume path: a prior partial run may have created the setting but died before its default
             # configuration was created/published. Conditional item — the executor first runs
             # list-configs for this setting and SKIPS when any configuration already exists.
             fsp["config_create"].append({
-                "setting_key": key, "schema_name": schema_name, "default": True,
+                "setting_key": key,
+                "name": _norm(st.get("name")) or _norm(live.get("name")) or key,
+                "schema_name": schema_name, "default": True,
                 "seed_csv": st.get("seed_csv"), "conditional": "only_if_no_configs",
                 "reason": "existing setting — ensure a default configuration exists (create+seed only if the "
                           "setting has zero configurations; otherwise skip)",
@@ -626,11 +851,16 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
             })
             continue
         fsp["setting_create"].append({
-            "key": key, "schema_name": schema_name, "version": version,
+            # name: the dashboard's human label (the server DTO takes key AND name);
+            # older manifests carry none — the executor falls back to the key.
+            "key": key, "name": _norm(st.get("name")) or key,
+            "schema_name": schema_name, "version": version,
             "reason": "feature setting key not present — create (binds the schema by id)",
         })
         fsp["config_create"].append({
-            "setting_key": key, "schema_name": schema_name, "default": True,
+            "setting_key": key,
+            "name": _norm(st.get("name")) or key,
+            "schema_name": schema_name, "default": True,
             "seed_csv": st.get("seed_csv"),
             "reason": "new setting — create a default configuration and seed it from the developer's CSV "
                       "(seed_csv, mirrored values; operator edits afterward), or empty when no seed_csv",
@@ -655,33 +885,237 @@ def build_plan(manifest, ev_predef, ev_custom, ev_custom_deleted, pf_predef, pf_
                           "runtime never resolves for the code's key",
             })
 
+    # --- Resource templates (schema_version 3): diff by resourceKey ---
+    rp = plan["resources"]
+    rt_by_key = _index_by(resource_templates or [], "key")
+    manifest_resource_keys = set()
+
+    for entry in manifest.get("resources") or []:
+        key = _norm(entry.get("key"))
+        if not key:
+            continue
+        if key in manifest_resource_keys:
+            rp["warnings"].append({
+                "key": key,
+                "reason": "duplicate resource key in the manifest — only the first entry is planned; "
+                          "fix the KinoaResources catalogue (one constant per key)",
+            })
+            continue
+        manifest_resource_keys.add(key)
+        # Key-format guard: the helper AND the server reject non-matching keys, so a create
+        # planned for one is unexecutable — warn and plan nothing (the fix is producer-side).
+        if not re.match(RESOURCE_KEY_RE, key):
+            rp["warnings"].append({
+                "key": key,
+                "reason": f"invalid resource key — must match {RESOURCE_KEY_RE}; the helper and the "
+                          "server both reject it, so nothing is planned. Fix the key in the game's "
+                          "resources catalogue and regenerate the manifest",
+            })
+            continue
+        # Field validation: closed 5-type vocabulary; unsupported types are split off to the
+        # unsupported bucket (never silently dropped); enumeration needs its allowed values.
+        want_fields = []
+        for f in entry.get("fields") or []:
+            ftype = str(f.get("field_type") or "").strip().lower()
+            if ftype not in RESOURCE_FIELD_TYPES:
+                plan["unsupported"].append({
+                    "surface": "resource_field",
+                    "owner": key,
+                    "name": f.get("name"),
+                    "kind": ftype,
+                    "reason": f"field_type '{ftype}' is not supported by kinoa_dashboard_resource_template.py "
+                              f"(allowed: {', '.join(RESOURCE_FIELD_TYPES)}) — retype the field in the "
+                              "resources catalogue",
+                })
+                continue
+            item = {"name": f.get("name"), "field_type": ftype,
+                    "required": bool(f.get("required", True))}
+            # default and description are OPTIONAL per field — carried verbatim when present,
+            # never invented (a minimal field is just name + type).
+            if f.get("default") is not None:
+                item["default"] = f.get("default")
+            if f.get("description"):
+                item["description"] = f.get("description")
+            if f.get("enumeration_values"):
+                item["enumeration_values"] = f.get("enumeration_values")
+            elif ftype == "enumeration":
+                rp["warnings"].append({
+                    "key": key, "field": f.get("name"),
+                    "reason": "enumeration field without enumeration_values — the server stores the allowed "
+                              "values as its own entity and needs them at create; fill them in the resources "
+                              "catalogue or retype the field",
+                })
+            want_fields.append(item)
+        record = rt_by_key.get(key)
+        if record is None:
+            ci = next((k for k in rt_by_key if k.lower() == key.lower() and k != key), None)
+            if ci is not None:
+                rp["warnings"].append({
+                    "key": key, "dashboard_key": ci,
+                    "reason": "case-collision: manifest resource key matches a live template except for case — "
+                              "keys are byte-for-byte; the create may collide server-side or register a "
+                              "near-duplicate the game never resolves",
+                })
+            # NAME uniqueness is enforced server-side across ALL statuses, DEPRECATED included
+            # (live-verified 2026-07-23: 422 'Resource Template with [name] name already exists') —
+            # a create whose name is already taken by a DIFFERENT key fails loud at apply. Warn
+            # ahead; the create stays planned (advisory — the checklist decides).
+            want_name = str(entry.get("name") or key)
+            name_hit = next((r for k2, r in rt_by_key.items() if k2 != key
+                             and str(r.get("name") or "").strip().lower() == want_name.strip().lower()), None)
+            if name_hit is not None:
+                rp["warnings"].append({
+                    "key": key, "name": want_name,
+                    "dashboard_key": name_hit.get("key"), "dashboard_status": name_hit.get("status"),
+                    "reason": "name collision: the server enforces template-NAME uniqueness across ALL "
+                              "statuses (a DEPRECATED record still holds its name) — this create will be "
+                              "rejected (422 'name already exists'); rename the resource in the catalogue "
+                              "or reconcile with the existing template",
+                })
+            rp["create"].append({
+                "name": entry.get("name") or key,
+                "key": key,
+                "description": entry.get("description") or None,
+                "fields": want_fields,
+                "reason": "resource template not present on the dashboard — create DRAFT, then activate",
+            })
+            continue
+        status = _rt_status(record)
+        item = {"key": key, "id": record.get("id"), "name": record.get("name"),
+                "current_status": record.get("status")}
+        want_map = {_norm(f["name"]): f["field_type"] for f in want_fields}
+        live_map = _rt_fields_map(record)
+        shape_matches = want_map == live_map
+        if status == "deprecated":
+            # KING-22096: a DEPRECATED template is never auto-reactivated — there is no
+            # un-deprecate endpoint, and retiring it was a deliberate operator decision.
+            rp["warnings"].append(dict(item,
+                reason="resource template is DEPRECATED on the dashboard — the sync never reactivates it "
+                       "(no un-deprecate endpoint; retiring it was an operator decision). Options: rename "
+                       "the key AND the display name in the game's resources catalogue (registers a new "
+                       "template — the deprecated record still holds both its key and its name, and the "
+                       "server enforces uniqueness of each across all statuses), clone the deprecated "
+                       "record on the dashboard, or drop the entry"
+                       + ("" if shape_matches else "; note its live fields also differ from the manifest")))
+            continue
+        if status == "draft":
+            # Extras (default / description / enumeration_values) are NOT comparable against
+            # the listing readback (enum values read back null — live-verified), so a
+            # name→type shape match alone can't prove the DRAFT carries them: update anyway
+            # when the manifest fields bring extras — a DRAFT is mutable and the checklist
+            # gates the call (review finding 2026-07-28: activate-without-update silently
+            # discarded manifest default/description edits).
+            has_extras = any(f.get("default") is not None or f.get("description")
+                             or f.get("enumeration_values") for f in want_fields)
+            if shape_matches and not has_extras:
+                rp["activate"].append(dict(item,
+                    reason="existing DRAFT with matching fields — activate (publishes the template)"))
+            elif shape_matches:
+                rp["update"].append(dict(item, fields=want_fields,
+                    reason="existing DRAFT with matching name→type shape, but the manifest fields carry "
+                           "defaults/descriptions/enum values the listing readback cannot confirm — "
+                           "update (a DRAFT is unpublished and mutable), then activate"))
+                rp["activate"].append(dict(item,
+                    reason="activate after the field update above (publishes the template)"))
+            else:
+                # Name→type shape differs — a DRAFT is unpublished and mutable by definition
+                # (usually a prior partial run's leftover): update the fields, then activate.
+                rp["update"].append(dict(item, fields=want_fields,
+                    reason="existing DRAFT whose fields differ from the manifest — update the fields "
+                           "(a DRAFT is unpublished and mutable), then activate"))
+                rp["activate"].append(dict(item,
+                    reason="activate after the field update above (publishes the template)"))
+            continue
+        if status == "active":
+            if shape_matches:
+                rp["already_ok"].append(dict(item,
+                    reason="resource template already ACTIVE with matching fields"))
+            else:
+                # Same discipline as the FS version_conflict: a live template may back live
+                # bundles/prizes, so the sync never edits it unattended — developer GATE.
+                rp["field_conflict"].append(dict(item,
+                    code_only_fields=sorted(k for k in want_map if k not in live_map),
+                    dashboard_only_fields=sorted(k for k in live_map if k not in want_map),
+                    type_changed_fields=sorted(k for k in want_map
+                                               if k in live_map and want_map[k] != live_map[k]),
+                    reason="manifest fields differ from the live ACTIVE template — a live template may back "
+                           "live bundles/prizes, so the sync never edits it unattended (same discipline as "
+                           "the FS version_conflict gate). The developer decides: update the template in an "
+                           "operator session via the resource-template helper, align the game's resources "
+                           "catalogue to the live shape, or register under a new key"))
+            continue
+        rp["warnings"].append(dict(item,
+            reason=f"unrecognized resource template status {record.get('status')!r} — no action planned; "
+                   "inspect the record on the dashboard"))
+
+    for key, record in rt_by_key.items():
+        if key not in manifest_resource_keys and _rt_status(record) == "active":
+            plan["dashboard_only"]["resources"].append(
+                {"key": key, "id": record.get("id"), "name": record.get("name")})
+
     return plan
 
 
 def main(argv):
     parser = argparse.ArgumentParser(prog="kinoa_sdk_sync_plan", description=__doc__)
     parser.add_argument("--manifest", required=True)
-    parser.add_argument("--events-predefined", required=True)
-    parser.add_argument("--events-custom", required=True)
+    # Every listing is optional at the CLI level; the fail-closed rule below makes each one
+    # MANDATORY whenever the manifest carries content for its section. This enables SCOPED
+    # manifests (e.g. a resources-only sync: other sections empty -> their listings not fetched)
+    # while still refusing to plan a populated section against "not fetched".
+    parser.add_argument("--events-predefined", default=None)
+    parser.add_argument("--events-custom", default=None)
     parser.add_argument("--events-custom-deleted", default=None)
-    parser.add_argument("--fields-predefined", required=True)
-    parser.add_argument("--fields-custom", required=True)
+    parser.add_argument("--events-debug", default=None,
+                        help="Live DEBUG events listing (list-debug) — optional; lets the planner warn "
+                             "when a manifest custom event collides with SDK/backend-emitted telemetry.")
+    parser.add_argument("--fields-predefined", default=None)
+    parser.add_argument("--fields-custom", default=None)
     parser.add_argument("--fields-custom-deleted", default=None)
+    parser.add_argument("--fields-calculated", default=None,
+                        help="list-calculated output — reserved server-computed paths.")
     parser.add_argument("--fs-schemas", default=None,
                         help="Live feature schemas (list-schemas, ideally enriched with get-schema "
                              "records so versions[].tableFields are present for the column diff).")
     parser.add_argument("--fs-settings", default=None, help="Live feature settings (list-settings).")
+    parser.add_argument("--resources", default=None,
+                        help="Live resource templates (kinoa_dashboard_resource_template.py list "
+                             "--statuses DRAFT,ACTIVE,DEPRECATED — the server's default listing "
+                             "EXCLUDES DEPRECATED, hiding retired keys from the diff).")
     args = parser.parse_args(argv)
 
     manifest = _load_json(args.manifest, "manifest")
-    # A v2 manifest with FS content but NO live FS listings would make the planner mistake
-    # "not fetched" for "nothing on the dashboard" and plan duplicate creates. Fail closed.
+    # Fail-closed rule, one per section: a manifest that CARRIES content for a section must be
+    # planned against that section's live listing — "not fetched" mistaken for "nothing on the
+    # dashboard" plans duplicate creates. Empty sections (scoped manifests) need no listings.
+    ev_section = manifest.get("events") or {}
+    if (ev_section.get("predefined_in_use") or ev_section.get("custom")) \
+            and not (args.events_predefined and args.events_custom):
+        _fail("missing_events_listings",
+              "the manifest carries events but --events-predefined/--events-custom listings were "
+              "not supplied — fetch list-predefined and list-custom first (planning without them "
+              "would plan duplicate creates against a dashboard that already has these events)")
+    pf_section = manifest.get("player_fields") or {}
+    if (pf_section.get("predefined_in_use") or pf_section.get("custom")) \
+            and not (args.fields_predefined and args.fields_custom):
+        _fail("missing_fields_listings",
+              "the manifest carries player_fields but --fields-predefined/--fields-custom listings "
+              "were not supplied — fetch them first (planning without them would plan duplicate "
+              "creates against a dashboard that already has these fields)")
     fs_section = manifest.get("feature_settings") or {}
     if (fs_section.get("schemas") or fs_section.get("settings")) and not (args.fs_schemas and args.fs_settings):
         _fail("missing_fs_listings",
               "the manifest carries feature_settings but --fs-schemas/--fs-settings listings were not "
               "supplied — fetch list-schemas and list-settings first (planning without them would plan "
               "duplicate creates against a dashboard that already has these entities)")
+    # Same fail-closed rule for resources: a v3 manifest with resources but no live listing
+    # would mistake "not fetched" for "absent" and plan duplicate DRAFT creates — whose only
+    # cleanup is the operator-facing HARD delete.
+    if (manifest.get("resources") or []) and not args.resources:
+        _fail("missing_resources_listing",
+              "the manifest carries resources but no --resources listing was supplied — fetch the "
+              "resource-template list first (--statuses DRAFT,ACTIVE,DEPRECATED; planning without it "
+              "would plan duplicate DRAFT creates against a dashboard that already has these templates)")
     if manifest.get("schema_version") not in SUPPORTED_MANIFEST_VERSIONS:
         _fail("unsupported_manifest_version",
               f"manifest schema_version {manifest.get('schema_version')!r} not in {SUPPORTED_MANIFEST_VERSIONS}")
@@ -691,16 +1125,25 @@ def main(argv):
               "this planner only serves SDK-integrated games")
 
     listings = {
-        "events-predefined": _extract_items(_load_json(args.events_predefined, "events-predefined"), "events-predefined"),
-        "events-custom": _extract_items(_load_json(args.events_custom, "events-custom"), "events-custom"),
+        "events-predefined": _extract_items(_load_json(args.events_predefined, "events-predefined"), "events-predefined")
+        if args.events_predefined else [],
+        "events-custom": _extract_items(_load_json(args.events_custom, "events-custom"), "events-custom")
+        if args.events_custom else [],
         "events-custom-deleted": _extract_items(_load_json(args.events_custom_deleted, "events-custom-deleted"), "events-custom-deleted")
         if args.events_custom_deleted else [],
-        "fields-predefined": _extract_items(_load_json(args.fields_predefined, "fields-predefined"), "fields-predefined"),
-        "fields-custom": _extract_items(_load_json(args.fields_custom, "fields-custom"), "fields-custom"),
+        "events-debug": _extract_items(_load_json(args.events_debug, "events-debug"), "events-debug")
+        if args.events_debug else [],
+        "fields-predefined": _extract_items(_load_json(args.fields_predefined, "fields-predefined"), "fields-predefined")
+        if args.fields_predefined else [],
+        "fields-custom": _extract_items(_load_json(args.fields_custom, "fields-custom"), "fields-custom")
+        if args.fields_custom else [],
         "fields-custom-deleted": _extract_items(_load_json(args.fields_custom_deleted, "fields-custom-deleted"), "fields-custom-deleted")
         if args.fields_custom_deleted else [],
+        "fields-calculated": _extract_items(_load_json(args.fields_calculated, "fields-calculated"), "fields-calculated")
+        if args.fields_calculated else [],
         "fs-schemas": _extract_items(_load_json(args.fs_schemas, "fs-schemas"), "fs-schemas") if args.fs_schemas else [],
         "fs-settings": _extract_items(_load_json(args.fs_settings, "fs-settings"), "fs-settings") if args.fs_settings else [],
+        "resources": _extract_items(_load_json(args.resources, "resources"), "resources") if args.resources else [],
     }
 
     # Cross-game backstop: every listing record carries the game it belongs to
@@ -728,6 +1171,9 @@ def main(argv):
         listings["fields-custom-deleted"],
         listings["fs-schemas"],
         listings["fs-settings"],
+        listings["resources"],
+        listings["events-debug"],
+        pf_calculated=listings["fields-calculated"],
     )
     print(json.dumps(plan, indent=2))
     return 0

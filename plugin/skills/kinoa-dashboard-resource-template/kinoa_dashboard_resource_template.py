@@ -26,8 +26,11 @@ Subcommands (each makes ONE logical operation and prints ONE JSON object:
       Returns SummaryListDto { totalCount, elements:[{id,name,key,status,fields,...}] }.
       `status` values come back lowercase (draft/active/deprecated) — compare
       case-insensitively. --statuses filters by lifecycle status (accepted in
-      either case); repeatable via comma. Use it as the closest analogue to a
-      state probe (resource templates have no soft-delete — see delete below).
+      either case); repeatable via comma. NOTE (live-verified 2026-07-23): the
+      DEFAULT listing (no --statuses) EXCLUDES DEPRECATED templates — pass
+      --statuses DRAFT,ACTIVE,DEPRECATED for a full-state probe (sync flows
+      MUST, or retired keys look absent). Resource templates have no
+      soft-delete — see delete below.
 
   get --id UUID
       GET .../resource-templates/<id>  — full ResourceTemplateDto incl. fields.
@@ -35,17 +38,25 @@ Subcommands (each makes ONE logical operation and prints ONE JSON object:
   create --name NAME --key KEY [--description D] [--status draft|active|deprecated]
          [--body JSON] [--field SPEC ...] [--fields-json JSON]
       POST .../resource-templates — creates a template (defaults to DRAFT so a
-      later `activate` publishes it). Provide fields either as repeatable
+      later `activate` publishes it). BOTH the key AND the name are unique
+      across ALL statuses, DEPRECATED included (live-verified 2026-07-23:
+      422 "key already exists" / "[NAME] name already exists") — a retired
+      template still occupies its key and name. Provide fields either as repeatable
       --field NAME:TYPE[:EXTRA][:req] specs (quick CLI use) or as a single
       --fields-json array (used by the sync workflow after the developer
       confirms the list on the HTML page). TYPE ∈ number, string, boolean,
       date, enumeration; for enumeration EXTRA is the comma-separated allowed
-      values. KEY must match ^[a-zA-Z][a-zA-Z0-9_-]*$.
+      values. KEY must match ^[a-zA-Z][a-zA-Z0-9_-]*$. When fields are given
+      and --body is not, the body is COMPOSED from them as {"<name>": "${<name>}"}
+      per field (the dashboard-UI placeholder shape; the server stores body
+      verbatim and never derives it from fields). An explicit --body always
+      wins; a key-only template ships body {}.
 
   update --id UUID [--name] [--key] [--description] [--status] [--body] [--field ...] [--fields-json]
       Two-step: GET the current template, apply only the provided overrides
       (PUT is a full replace, so unspecified fields are preserved from the
-      current record), PUT .../resource-templates/<id>.
+      current record), PUT .../resource-templates/<id>. Providing fields
+      without --body recomposes the placeholder body from the NEW fields.
 
   activate --id UUID
       POST .../resource-templates/<id>/activate — flips DRAFT -> ACTIVE
@@ -212,9 +223,9 @@ def _parse_field_spec(spec):
     """
     Parse "name:type[:extra][:req]" -> a ResourceTemplateDto field object.
     Examples:
-      'gold:number'                          -> {name, field_type: number, required: False}
+      'gold:number'                          -> {name, field_type: number, required: True}
       'title:string:req'                     -> {name, field_type: string, required: True}
-      'rarity:enumeration:common,rare,epic'  -> {name, field_type: enumeration, required: False,
+      'rarity:enumeration:common,rare,epic'  -> {name, field_type: enumeration, required: True,
                                                   enumeration_values: [common, rare, epic]}
       'rarity:enumeration:common,rare:req'   -> ... required: True
     Trailing 'req'/'required' token marks the field required. For enumeration
@@ -227,7 +238,8 @@ def _parse_field_spec(spec):
     if ftype not in ALLOWED_FIELD_TYPES:
         raise ValueError(f"field type must be one of {ALLOWED_FIELD_TYPES}, got {ftype!r}")
     flags = parts[2:]
-    required = any(f.lower() in ("req", "required") for f in flags)
+    # Default TRUE (mirroring FS is_required; 'req' token stays accepted, now redundant).
+    required = True
     enum_values = None
     for f in flags:
         if f.lower() in ("req", "required"):
@@ -244,12 +256,21 @@ def _parse_field_spec(spec):
 
 def _collect_fields(args):
     """Build the fields list from --fields-json (takes precedence) or repeatable
-    --field specs. Returns (fields_list_or_None, error_dict_or_None)."""
+    --field specs. Returns (fields_list_or_None, error_dict_or_None).
+    fields-json items get required=True defaulted in (mirroring FS is_required —
+    user decision 2026-07-28): the server rejects a field
+    with required missing/null (422 'fields[0].required: must not be null' —
+    live-verified 2026-07-23), and 'not required' is the only sane default."""
     fields_json = getattr(args, "fields_json", None)
     if fields_json:
         parsed = _parse_json(fields_json)
         if not isinstance(parsed, list):
             return None, {"error": "invalid_fields_json", "message": "--fields-json must be a JSON array of field objects"}
+        for item in parsed:
+            # get() is None covers BOTH a missing key and an explicit null — the server
+            # 422s on either ('fields[0].required: must not be null', live-verified).
+            if isinstance(item, dict) and item.get("required") is None:
+                item["required"] = True
         return parsed, None
     specs = getattr(args, "field", None) or []
     if not specs:
@@ -258,6 +279,17 @@ def _collect_fields(args):
         return [_parse_field_spec(s) for s in specs], None
     except ValueError as e:
         return None, {"error": "invalid_field", "message": str(e)}
+
+
+def _placeholder_body(fields):
+    """Compose the template body from its fields: {name: "${name}"} per field.
+
+    The server stores `body` VERBATIM and does not derive it from `fields`.
+    The dashboard UI writes this exact placeholder shape when an operator
+    authors a template, so the helper mirrors it whenever the caller provides
+    fields without an explicit body.
+    """
+    return {f["name"]: "${" + f["name"] + "}" for f in (fields or []) if f.get("name")}
 
 
 def _parse_body(args):
@@ -325,7 +357,9 @@ def cmd_create(args):
         "name": args.name,
         "resourceKey": args.key,
         "status": args.status,
-        "body": body_map if body_map is not None else {},
+        # explicit --body wins (operator passthrough); otherwise the body is
+        # composed from the fields — key-only templates keep an empty {}
+        "body": body_map if body_map is not None else _placeholder_body(fields),
         "fields": fields if fields is not None else [],
     }
     if args.description is not None:
@@ -383,6 +417,10 @@ def cmd_update(args):
         merged["body"] = body_map
     if fields is not None:
         merged["fields"] = fields
+        if body_map is None:
+            # fields replaced -> the placeholder body must follow them, or it
+            # keeps ${...} keys for fields that no longer exist
+            merged["body"] = _placeholder_body(fields)
 
     put_status, put_raw = _request("PUT", f"{RESOURCE_TEMPLATES_URL}/{args.id}", headers=_admin_headers(), body=merged)
     print(json.dumps({
