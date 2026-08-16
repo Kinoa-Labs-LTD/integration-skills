@@ -252,6 +252,46 @@ class FeatureSettingsHelperTests(unittest.TestCase):
         self.assertEqual(body["settings"][0]["version"], "1")
         self.assertFalse(body["settings"][0]["getDefault"])
 
+    # ---- auto-pagination ----
+
+    def test_list_schemas_merges_all_pages(self):
+        ns = argparse.Namespace(rows=1)
+        responses = [(200, json.dumps({"totalCount": 2, "elements": [{"id": "s1"}]})),
+                     (200, json.dumps({"totalCount": 2, "elements": [{"id": "s2"}]}))]
+        code, result = self._call(self.mod.cmd_list_schemas, ns, responses)
+        self.assertEqual(code, 0)
+        self.assertTrue(result["ok"])
+        self.assertEqual([e["id"] for e in result["response"]["elements"]], ["s1", "s2"])
+        self.assertEqual(result["response"]["totalCount"], 2)
+        self.assertEqual(result["pages_fetched"], 2)
+        self.assertIn("page=0", self.requests[0]["url"])
+        self.assertIn("page=1", self.requests[1]["url"])
+        # --rows stays the page size on every request.
+        self.assertIn("rows=1", self.requests[1]["url"])
+
+    def test_list_configs_paginates_under_the_setting(self):
+        setting_id = "66666666-6666-6666-6666-666666666666"
+        ns = argparse.Namespace(setting_id=setting_id, rows=1)
+        responses = [(200, json.dumps({"totalCount": 2, "elements": [{"id": "c1"}]})),
+                     (200, json.dumps({"totalCount": 2, "elements": [{"id": "c2"}]}))]
+        code, result = self._call(self.mod.cmd_list_configs, ns, responses)
+        self.assertEqual(code, 0)
+        self.assertEqual(result["setting_id"], setting_id)
+        self.assertEqual([e["id"] for e in result["response"]["elements"]], ["c1", "c2"])
+        for req in self.requests:
+            self.assertIn(f"/settings/{setting_id}/configurations?", req["url"])
+
+    def test_list_settings_mid_page_failure_fails_closed(self):
+        # A partial merge must never be presented as a complete listing.
+        ns = argparse.Namespace(rows=1)
+        code, result = self._call(self.mod.cmd_list_settings, ns,
+                                  [(200, json.dumps({"totalCount": 2, "elements": [{"id": "s1"}]})),
+                                   (500, "boom")])
+        self.assertEqual(code, 1)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["http_status"], 500)
+        self.assertEqual(result["failed_page"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

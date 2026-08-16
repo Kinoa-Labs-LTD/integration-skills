@@ -154,6 +154,48 @@ class PlayerFieldsHelperTests(unittest.TestCase):
         self.assertEqual(json.loads(out.getvalue())["error"], "session_game_mismatch")
         self.assertEqual(self.requests, [])
 
+    # ---- auto-pagination ----
+
+    def test_list_merges_all_pages(self):
+        ns = argparse.Namespace(states="active", rows=1)
+        responses = [(200, json.dumps({"totalCount": 2, "elements": [{"path": "a"}]})),
+                     (200, json.dumps({"totalCount": 2, "elements": [{"path": "b"}]}))]
+        code, result = self._call(self.mod.cmd_list_custom, ns, responses)
+        self.assertEqual(code, 0)
+        self.assertEqual([e["path"] for e in result["response"]["elements"]], ["a", "b"])
+        self.assertEqual(result["response"]["totalCount"], 2)
+        self.assertEqual(result["pages_fetched"], 2)
+        self.assertIn("page=0", self.requests[0]["url"])
+        self.assertIn("page=1", self.requests[1]["url"])
+        # The filters ride along on every page request; --rows stays the page size.
+        for req in self.requests:
+            self.assertIn("types=USER", req["url"])
+            self.assertIn("states=active", req["url"])
+            self.assertIn("rows=1", req["url"])
+
+    def test_list_mid_page_failure_fails_closed(self):
+        # A partial merge must never be presented as a complete listing.
+        ns = argparse.Namespace(states="active", rows=1)
+        code, result = self._call(self.mod.cmd_list_custom, ns,
+                                  [(200, json.dumps({"totalCount": 2, "elements": [{"path": "a"}]})),
+                                   (502, "bad gateway")])
+        self.assertEqual(code, 1)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["http_status"], 502)
+        self.assertEqual(result["failed_page"], 1)
+
+    def test_list_empty_page_before_total_flags_truncated(self):
+        # totalCount stays the server-reported value so downstream
+        # totalCount > elements.length backstops (SDK planner) still fire.
+        ns = argparse.Namespace(states="active", rows=1)
+        code, result = self._call(self.mod.cmd_list_custom, ns,
+                                  [(200, json.dumps({"totalCount": 5, "elements": [{"path": "a"}]})),
+                                   (200, json.dumps({"totalCount": 5, "elements": []}))])
+        self.assertEqual(code, 0)
+        self.assertTrue(result["truncated"])
+        self.assertEqual(result["response"]["totalCount"], 5)
+        self.assertEqual(len(result["response"]["elements"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

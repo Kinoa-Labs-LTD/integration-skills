@@ -21,9 +21,16 @@ Security boundary — ADMIN surface, skill-only:
 Subcommands (each makes ONE logical operation and prints ONE JSON object:
 { http_status, ok, response | request_body, ...context }):
 
-  list [--rows N] [--statuses S1,S2] [--name SUBSTR] [--sort-by F] [--order asc|desc]
+  list [--rows N] [--page N] [--statuses S1,S2] [--name SUBSTR] [--sort-by F] [--order asc|desc]
       GET https://gate.kinoa.io/bundle/resource-templates
       Returns SummaryListDto { totalCount, elements:[{id,name,key,status,fields,...}] }.
+      Auto-paginates: --rows is the PAGE SIZE, not a global limit — when
+      totalCount exceeds one page, the next pages are requested and merged so
+      the printed response carries the FULL listing; the output gains
+      pages_fetched (plus truncated:true / count_mismatch:true when the merge
+      could not assemble a consistent listing — re-run it; a non-2xx page
+      instead fails closed with ok:false + failed_page). An explicit --page N
+      bypasses this and fetches exactly that page.
       `status` values come back lowercase (draft/active/deprecated) — compare
       case-insensitively. --statuses filters by lifecycle status (accepted in
       either case); repeatable via comma. NOTE (live-verified 2026-07-23): the
@@ -149,6 +156,70 @@ def _parse_json(raw):
         return json.loads(raw) if raw else None
     except json.JSONDecodeError:
         return None
+
+
+def _get_all_pages(url, params, headers):
+    """GET a paginated listing page by page and merge the elements.
+
+    `params` is a list of (key, value) query pairs without a page entry — the
+    page number is appended here, starting at 0; `rows` in `params` is the
+    page size. A first page that is not {"totalCount": int, "elements": list}
+    is returned untouched after that single request (legacy single-call).
+
+    Returns output keys for the caller's JSON envelope:
+      status         HTTP status of the last request
+      response       merged {..., totalCount, elements} | untouched body
+      pages_fetched  page requests made
+      failed_page    non-2xx page index — caller derives ok:false, the
+                     partial merge is discarded
+      truncated      merge stopped early (no-progress page or the page cap);
+                     totalCount stays server-reported
+      count_mismatch merge ended with more elements than totalCount — the
+                     listing is unreliable, re-run it instead of diffing
+    """
+    merged = []
+    total = None
+    first_body = None
+    page = 0
+    while True:
+        qs = urllib.parse.urlencode(params + [("page", str(page))])
+        status, raw = _request("GET", f"{url}?{qs}", headers=headers)
+        body = _parse_json(raw)
+        body = body if body is not None else raw
+        if not (200 <= status < 300):
+            return {"status": status, "response": body,
+                    "pages_fetched": page + 1, "failed_page": page}
+        if page == 0:
+            if not (isinstance(body, dict)
+                    and isinstance(body.get("totalCount"), int)
+                    and isinstance(body.get("elements"), list)):
+                return {"status": status, "response": body, "pages_fetched": 1}
+            first_body = body
+        elements = body.get("elements") if isinstance(body, dict) else None
+        if isinstance(elements, list):
+            merged.extend(elements)
+        # Later pages may report a fresher totalCount (concurrent creates or
+        # deletes) — trust the newest value the server sent.
+        if isinstance(body, dict) and isinstance(body.get("totalCount"), int):
+            total = body["totalCount"]
+        page += 1
+        if len(merged) >= total:
+            break
+        # No-progress stop: a page that contributed nothing (empty, missing, or
+        # non-list elements — the isinstance matters: a truthy non-list value
+        # would otherwise re-request with zero progress until the cap) ends the
+        # merge; the page cap is the backstop for servers that keep feeding
+        # non-empty pages while inflating totalCount.
+        if not (isinstance(elements, list) and elements) or page >= 1000:
+            return {"status": status,
+                    "response": dict(first_body, totalCount=total, elements=merged),
+                    "pages_fetched": page, "truncated": True}
+    result = {"status": status,
+              "response": dict(first_body, totalCount=total, elements=merged),
+              "pages_fetched": page}
+    if len(merged) > total:
+        result["count_mismatch"] = True
+    return result
 
 
 def _response_body(raw):
@@ -305,7 +376,6 @@ def _parse_body(args):
 
 def cmd_list(args):
     params = [
-        ("page", str(args.page)),
         ("rows", str(args.rows)),
         ("sortBy", args.sort_by),
         # Order is a plain Java enum (ASC/DESC) with no case-insensitive converter,
@@ -319,14 +389,23 @@ def cmd_list(args):
             s = s.strip()
             if s:
                 params.append(("statuses", s.upper()))
-    qs = urllib.parse.urlencode(params)
-    status, raw = _request("GET", f"{RESOURCE_TEMPLATES_URL}?{qs}", headers=_admin_headers())
-    print(json.dumps({
-        "http_status": status,
-        "ok": 200 <= status < 300,
-        "response": _response_body(raw),
-    }, indent=2))
-    return 0 if 200 <= status < 300 else 1
+    if args.page is not None:
+        # Legacy single-page mode: an explicit --page means the caller wants
+        # exactly that page, so auto-pagination is bypassed.
+        qs = urllib.parse.urlencode([("page", str(args.page))] + params)
+        status, raw = _request("GET", f"{RESOURCE_TEMPLATES_URL}?{qs}", headers=_admin_headers())
+        print(json.dumps({
+            "http_status": status,
+            "ok": 200 <= status < 300,
+            "response": _response_body(raw),
+        }, indent=2))
+        return 0 if 200 <= status < 300 else 1
+    result = _get_all_pages(RESOURCE_TEMPLATES_URL, params, _admin_headers())
+    status = result.pop("status")
+    payload = {"http_status": status, "ok": 200 <= status < 300}
+    payload.update(result)
+    print(json.dumps(payload, indent=2))
+    return 0 if payload["ok"] else 1
 
 
 def cmd_get(args):
@@ -513,8 +592,8 @@ def main(argv):
                        help="Cross-game backstop: abort unless session.env's KINOA_GAME_ID equals this UUID.")
 
     p_list = sub.add_parser("list", help="GET resource templates (summaries).")
-    p_list.add_argument("--rows", type=int, default=100, help="Page size. Default: 100.")
-    p_list.add_argument("--page", type=int, default=0, help="Page index. Default: 0.")
+    p_list.add_argument("--rows", type=int, default=100, help="Page size — every page is fetched and merged (auto-pagination). Default: 100.")
+    p_list.add_argument("--page", type=int, default=None, help="Fetch ONLY this page (legacy single-page mode, bypasses auto-pagination). Default: fetch all pages.")
     p_list.add_argument("--statuses", default=None, help="Comma-separated status filter: DRAFT,ACTIVE,DEPRECATED.")
     p_list.add_argument("--name", default=None, help="Optional name substring filter.")
     p_list.add_argument("--sort-by", default="updated_at", help="Sort field. Default: updated_at.")

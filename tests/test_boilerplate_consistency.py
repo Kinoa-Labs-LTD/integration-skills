@@ -112,6 +112,13 @@ class BoilerplateIdentityTests(unittest.TestCase):
         found = self._collect("_parse_json", exclude_basenames={WEBHOOK_BASENAME})
         self._assert_identical(found, "_parse_json")
 
+    def test_get_all_pages_copies_identical(self):
+        # The auto-pagination loop is boilerplate like _request —
+        # a fix landing in one dashboard helper must land in all four.
+        found = self._collect("_get_all_pages", exclude_basenames={WEBHOOK_BASENAME})
+        self.assertEqual(len(found), 4, "expected _get_all_pages in the four kinoa-dashboard-* helpers")
+        self._assert_identical(found, "_get_all_pages")
+
 
 if __name__ == "__main__":
     unittest.main()

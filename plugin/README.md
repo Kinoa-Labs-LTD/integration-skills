@@ -119,7 +119,7 @@ Player-fields, events, feature-settings, and resources each split along **two ax
 
 Workflows delegate every admin call to their sibling helper via `${CLAUDE_SKILL_DIR}/../kinoa-dashboard-<X>/kinoa_dashboard_<X>.py`, so siblings must be co-installed (the plugin ships the whole `skills/` tree together, so this always holds).
 
-**Python helpers are self-contained** — no cross-skill imports, no shared library. Boilerplate is deliberately duplicated so any sub-skill can be installed in isolation. Each helper auto-loads `~/.kinoa/session.env` at import; each subcommand makes one HTTP call and prints one JSON object. HTTP errors are serialized to stdout, never raised.
+**Python helpers are self-contained** — no cross-skill imports, no shared library. Boilerplate is deliberately duplicated so any sub-skill can be installed in isolation. Each helper auto-loads `~/.kinoa/session.env` at import; each subcommand performs one logical operation (list subcommands auto-paginate through as many page requests as `totalCount` requires) and prints one JSON object. HTTP errors are serialized to stdout, never raised.
 
 **Architecture modes** (`kinoa-init` asks up front, persists `KINOA_ARCHITECTURE`): **SINGLE** (one app), **MONOREPO** (services under one root; each workflow scopes to its `service_root`), **MULTI_REPO** (each service is its own checkout; state + registry per repo, mirrored to a machine-local central index).
 

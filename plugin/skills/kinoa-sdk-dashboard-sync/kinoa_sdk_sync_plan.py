@@ -137,6 +137,15 @@ def _extract_items(listing, label):
                   f"{label}: the helper reported a failed fetch (ok={listing.get('ok')}, "
                   f"http_status={http}) — re-run the listing; planning against a failed fetch would "
                   "mistake an empty/error body for 'nothing on the dashboard'")
+        # The helpers flag a page merge they could not assemble consistently:
+        # truncated (stopped before totalCount) or count_mismatch (more elements
+        # than totalCount). Honor the flag even when ok is true — the listing
+        # may be missing records.
+        if listing.get("truncated") is True or listing.get("count_mismatch") is True:
+            _fail("listing_unreliable",
+                  f"{label}: the helper flagged this listing (truncated/count_mismatch) — "
+                  "the page merge could not assemble a consistent complete listing. "
+                  "Re-run the fetch and re-plan; never plan against a partial listing.")
     payload = listing.get("response", listing) if isinstance(listing, dict) else listing
     if isinstance(payload, list):
         return payload
@@ -146,17 +155,19 @@ def _extract_items(listing, label):
         for key in ("elements", "data", "items", "content", "rows", "game_events", "player_fields"):
             if isinstance(payload.get(key), list):
                 items = payload[key]
-                # Pagination guard: the helpers fetch a single page (page=0, --rows N) and
-                # never loop. If the server holds more than one page, a truncated listing would
-                # make the planner mistake on-later-pages entities for "absent" and plan a
-                # duplicate create. totalCount is right here — fail closed when it exceeds what
-                # we got, so the developer re-fetches with a higher --rows.
+                # Pagination backstop: the dashboard helpers auto-paginate, so
+                # a complete listing always has totalCount ==
+                # elements.length. A gap means the listing is stale/hand-built or
+                # the helper flagged truncated:true (empty page before totalCount,
+                # or the page-safety cap) — planning against it would mistake the
+                # unfetched entities for "absent" and plan duplicate creates.
                 total = payload.get("totalCount")
                 if isinstance(total, int) and total > len(items):
                     _fail("listing_truncated",
-                          f"{label}: fetched {len(items)} of {total} records — the listing is "
-                          f"paginated and only the first page was returned. Re-fetch with "
-                          f"--rows >= {total} (the helpers do not paginate).")
+                          f"{label}: the listing holds {len(items)} of {total} records — it is "
+                          f"incomplete (stale/hand-assembled file, or the helper reported "
+                          f"truncated:true). Re-run the listing fetch and re-plan; never plan "
+                          f"against a partial listing.")
                 return items
     _fail("unrecognized_listing_shape", f"{label}: could not find an item list")
 
