@@ -325,6 +325,131 @@ class EventHelperTests(unittest.TestCase):
         self.assertEqual(json.loads(out.getvalue())["error"], "session_game_mismatch")
         self.assertEqual(self.requests, [])
 
+    # ---- auto-pagination ----
+
+    def _pages(self, total, *page_names):
+        """One (200, body) response per page; each page holds the given names."""
+        return [(200, json.dumps({"totalCount": total,
+                                  "elements": [{"name": n} for n in names]}))
+                for names in page_names]
+
+    def test_list_merges_all_pages(self):
+        ns = argparse.Namespace(rows=1, states=None)
+        code, result = self._call(self.mod.cmd_list_custom, ns,
+                                  self._pages(3, ["a"], ["b"], ["c"]))
+        self.assertEqual(code, 0)
+        self.assertTrue(result["ok"])
+        self.assertEqual([e["name"] for e in result["response"]["elements"]], ["a", "b", "c"])
+        self.assertEqual(result["response"]["totalCount"], 3)
+        self.assertEqual(result["pages_fetched"], 3)
+        self.assertNotIn("truncated", result)
+        # --rows is the page size on every request; page advances 0,1,2.
+        for i, req in enumerate(self.requests):
+            self.assertIn("rows=1", req["url"])
+            self.assertIn(f"page={i}", req["url"])
+
+    def test_list_single_request_when_total_fits_one_page(self):
+        ns = argparse.Namespace(rows=100, states=None)
+        code, result = self._call(self.mod.cmd_list_custom, ns, self._pages(2, ["a", "b"]))
+        self.assertEqual(code, 0)
+        self.assertEqual(result["pages_fetched"], 1)
+        self.assertEqual(len(self.requests), 1)
+
+    def test_list_grown_total_count_keeps_fetching(self):
+        # totalCount may grow mid-merge (concurrent create) — trust the newest value.
+        ns = argparse.Namespace(rows=1, states=None)
+        responses = [(200, json.dumps({"totalCount": 2, "elements": [{"name": "a"}]})),
+                     (200, json.dumps({"totalCount": 3, "elements": [{"name": "b"}]})),
+                     (200, json.dumps({"totalCount": 3, "elements": [{"name": "c"}]}))]
+        code, result = self._call(self.mod.cmd_list_custom, ns, responses)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(result["response"]["elements"]), 3)
+        self.assertEqual(result["response"]["totalCount"], 3)
+
+    def test_list_mid_page_failure_fails_closed(self):
+        # A partial merge must never be presented as a complete listing.
+        ns = argparse.Namespace(rows=1, states=None)
+        code, result = self._call(self.mod.cmd_list_custom, ns,
+                                  self._pages(3, ["a"]) + [(500, "boom")])
+        self.assertEqual(code, 1)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["http_status"], 500)
+        self.assertEqual(result["failed_page"], 1)
+        self.assertEqual(result["pages_fetched"], 2)
+
+    def test_list_empty_page_before_total_flags_truncated(self):
+        # totalCount stays the server-reported value so downstream
+        # totalCount > elements.length backstops (SDK planner) still fire.
+        ns = argparse.Namespace(rows=1, states=None)
+        code, result = self._call(self.mod.cmd_list_custom, ns, self._pages(5, ["a"], []))
+        self.assertEqual(code, 0)
+        self.assertTrue(result["truncated"])
+        self.assertEqual(result["response"]["totalCount"], 5)
+        self.assertEqual(len(result["response"]["elements"]), 1)
+
+    def test_list_non_paginated_shape_single_legacy_request(self):
+        ns = argparse.Namespace(rows=100, states=None)
+        code, result = self._call(self.mod.cmd_list_custom, ns, [(200, json.dumps({"data": []}))])
+        self.assertEqual(code, 0)
+        self.assertEqual(result["response"], {"data": []})
+        self.assertEqual(result["pages_fetched"], 1)
+        self.assertEqual(len(self.requests), 1)
+
+    def test_list_page0_failure_reports_failed_page_0(self):
+        # The most common live failure: an expired ~24h JWT 401s the FIRST request.
+        ns = argparse.Namespace(rows=100, states=None)
+        code, result = self._call(self.mod.cmd_list_custom, ns, [(401, "")])
+        self.assertEqual(code, 1)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["failed_page"], 0)
+        self.assertEqual(result["pages_fetched"], 1)
+
+    def test_list_truthy_non_list_elements_page_stops_immediately(self):
+        # A later page whose elements is a truthy NON-list contributes nothing;
+        # the no-progress stop must fire instead of spinning to the page cap.
+        ns = argparse.Namespace(rows=1, states=None)
+        code, result = self._call(self.mod.cmd_list_custom, ns,
+                                  [(200, json.dumps({"totalCount": 3, "elements": [{"name": "a"}]})),
+                                   (200, json.dumps({"totalCount": 3, "elements": "ab"}))])
+        self.assertEqual(code, 0)
+        self.assertTrue(result["truncated"])
+        self.assertEqual(result["pages_fetched"], 2)
+        self.assertEqual(len(self.requests), 2)
+
+    def test_list_non_json_later_page_stops_truncated_no_exception(self):
+        # A garbage 200 later page must still yield the one-JSON-object contract.
+        ns = argparse.Namespace(rows=1, states=None)
+        code, result = self._call(self.mod.cmd_list_custom, ns,
+                                  [(200, json.dumps({"totalCount": 3, "elements": [{"name": "a"}]})),
+                                   (200, "<html>gateway error</html>")])
+        self.assertEqual(code, 0)
+        self.assertTrue(result["truncated"])
+        self.assertEqual(len(result["response"]["elements"]), 1)
+
+    def test_list_page_cap_bounds_runaway_server(self):
+        # A server that keeps feeding non-empty pages while inflating totalCount
+        # terminates ONLY via the 1000-page cap — pin the cap so deleting it fails.
+        ns = argparse.Namespace(rows=1, states=None)
+        responses = [(200, json.dumps({"totalCount": 5000, "elements": [{"n": i}]}))
+                     for i in range(1000)]
+        code, result = self._call(self.mod.cmd_list_custom, ns, responses)
+        self.assertEqual(code, 0)
+        self.assertTrue(result["truncated"])
+        self.assertEqual(result["pages_fetched"], 1000)
+        self.assertEqual(len(self.requests), 1000)
+
+    def test_list_overcount_flags_count_mismatch(self):
+        # Overlapping/shifting page windows can merge MORE elements than the
+        # final totalCount — flagged, never presented as a clean complete listing.
+        ns = argparse.Namespace(rows=2, states=None)
+        code, result = self._call(self.mod.cmd_list_custom, ns,
+                                  [(200, json.dumps({"totalCount": 3, "elements": [{"name": "a"}, {"name": "b"}]})),
+                                   (200, json.dumps({"totalCount": 3, "elements": [{"name": "c"}, {"name": "d"}]}))])
+        self.assertEqual(code, 0)
+        self.assertTrue(result["count_mismatch"])
+        self.assertEqual(len(result["response"]["elements"]), 4)
+        self.assertEqual(result["response"]["totalCount"], 3)
+
 
 if __name__ == "__main__":
     unittest.main()

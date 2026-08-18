@@ -1225,6 +1225,24 @@ class CliContractTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 2)
         self.assertEqual(json.loads(out.getvalue())["error"], "listing_truncated")
 
+    def test_main_rejects_helper_flagged_unreliable_listing(self):
+        # The helper's own truncated/count_mismatch flag is honored even with
+        # ok:true and totalCount == len(elements) — the merge was inconsistent.
+        manifest_path = self._write("m.json", _manifest())
+        empty = self._write("e.json", self._listing([]))
+        flagged = self._write("u.json", {
+            "http_status": 200, "ok": True, "count_mismatch": True,
+            "response": {"totalCount": 1, "elements": [{"id": "a", "name": "x"},
+                                                       {"id": "b", "name": "y"}]}})
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as ctx:
+                self.mod.main(["--manifest", manifest_path,
+                               "--events-predefined", flagged, "--events-custom", empty,
+                               "--fields-predefined", empty, "--fields-custom", empty])
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertEqual(json.loads(out.getvalue())["error"], "listing_unreliable")
+
     def test_main_accepts_full_page_when_totalcount_matches(self):
         # Boundary: totalCount == returned count → not truncated, proceeds normally.
         manifest_path = self._write("m.json", _manifest())

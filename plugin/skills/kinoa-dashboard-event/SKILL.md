@@ -16,6 +16,11 @@ Requires `KINOA_BEARER_TOKEN` and `KINOA_GAME_ID` in `~/.kinoa/session.env`. If 
 ```
 python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_event.py" list-predefined [--rows N] [--states s1,s2]
     GET https://dashboard.kinoa.io/gamemetaapi/api/game_events?types=PREDEFINED
+    Auto-paginates: --rows is the PAGE SIZE and every page is
+    fetched and merged, so the response carries the FULL listing; the output
+    gains pages_fetched (plus truncated:true / count_mismatch:true when the
+    merge could not assemble a consistent listing — re-run it; a non-2xx page
+    fails closed with ok:false + failed_page).
 
 python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_event.py" list-custom [--rows N] [--states s1,s2]
     GET https://dashboard.kinoa.io/gamemetaapi/api/game_events?types=USER

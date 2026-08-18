@@ -394,6 +394,57 @@ class ResourceTemplateHelperTests(unittest.TestCase):
         # bundles reads only Game-Id — the gamemetaapi-style `Game` header is not sent here.
         self.assertNotIn("Game", headers)
 
+    # ---- auto-pagination ----
+
+    def test_list_merges_all_pages_when_no_explicit_page(self):
+        ns = argparse.Namespace(rows=1, page=None, statuses=None, name=None,
+                                sort_by="updated_at", order="desc")
+        responses = [(200, json.dumps({"totalCount": 2, "elements": [{"key": "chest"}]})),
+                     (200, json.dumps({"totalCount": 2, "elements": [{"key": "sword"}]}))]
+        code, result = self._call(self.mod.cmd_list, ns, responses)
+        self.assertEqual(code, 0)
+        self.assertEqual([e["key"] for e in result["response"]["elements"]], ["chest", "sword"])
+        self.assertEqual(result["response"]["totalCount"], 2)
+        self.assertEqual(result["pages_fetched"], 2)
+        self.assertIn("page=0", self.requests[0]["url"])
+        self.assertIn("page=1", self.requests[1]["url"])
+        # The query filters ride along on every page request.
+        self.assertIn("order=DESC", self.requests[1]["url"])
+
+    def test_list_explicit_page_bypasses_pagination(self):
+        # Legacy single-page mode: --page N fetches exactly that page, even
+        # when totalCount says there is more.
+        ns = argparse.Namespace(rows=100, page=2, statuses=None, name=None,
+                                sort_by="updated_at", order="desc")
+        code, result = self._call(self.mod.cmd_list, ns,
+                                  [(200, json.dumps({"totalCount": 500, "elements": [{"key": "x"}]}))])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(self.requests), 1)
+        self.assertIn("page=2", self.requests[0]["url"])
+        self.assertNotIn("pages_fetched", result)
+        self.assertEqual(len(result["response"]["elements"]), 1)
+
+    def test_list_mid_page_failure_fails_closed(self):
+        # A partial merge must never be presented as a complete listing.
+        ns = argparse.Namespace(rows=1, page=None, statuses=None, name=None,
+                                sort_by="updated_at", order="desc")
+        code, result = self._call(self.mod.cmd_list, ns,
+                                  [(200, json.dumps({"totalCount": 2, "elements": [{"key": "chest"}]})),
+                                   (500, "boom")])
+        self.assertEqual(code, 1)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["failed_page"], 1)
+
+    def test_main_list_defaults_to_auto_pagination(self):
+        # CLI wiring: without --page the default is None → paginate-all path.
+        self._mock_request([(200, json.dumps({"totalCount": 0, "elements": []}))])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = self.mod.main(["list"])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(self.requests), 1)
+        self.assertEqual(json.loads(out.getvalue())["pages_fetched"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
