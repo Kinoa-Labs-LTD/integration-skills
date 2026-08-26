@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "source_image": { "path": "one_cta_tip.png", "width": 706, "height": 898 },
+  "template": { "suggested_name": "One CTA Offer", "suggested_key": "one_cta_offer" },
+  "feature": { "type": "standard", "confidence": 0.95, "evidence": "single CTA, no progress bar, no task list" },
+  "elements": [
+    { "role": "background_image", "bbox": { "x": 0.2, "y": 0.06, "w": 0.57, "h": 0.7 }, "confidence": 0.95 },
+    { "role": "close_button", "bbox": { "x": 0.72, "y": 0.04, "w": 0.09, "h": 0.07 }, "observed_text": "X", "confidence": 0.97 },
+    { "role": "header", "bbox": { "x": 0.28, "y": 0.11, "w": 0.42, "h": 0.05 }, "observed_text": "HEADER", "confidence": 0.96 },
+    { "role": "upper_text", "bbox": { "x": 0.33, "y": 0.18, "w": 0.31, "h": 0.04 }, "observed_text": "UPPER TEXT", "confidence": 0.94 },
+    { "role": "resource_badge", "bbox": { "x": 0.22, "y": 0.46, "w": 0.16, "h": 0.11 }, "observed_text": "RESOURCE BADGE", "confidence": 0.88 },
+    { "role": "resource_area", "bbox": { "x": 0.25, "y": 0.5, "w": 0.48, "h": 0.13 }, "observed_text": "RESOURCE AREA", "confidence": 0.9 },
+    { "role": "price_before_sale", "bbox": { "x": 0.33, "y": 0.66, "w": 0.31, "h": 0.04 }, "observed_text": "PRICE BEFORE SALE", "confidence": 0.85 },
+    { "role": "cta_button", "bbox": { "x": 0.34, "y": 0.72, "w": 0.29, "h": 0.07 }, "observed_text": "CTA", "confidence": 0.98 },
+    { "role": "price_cut_badge", "bbox": { "x": 0.65, "y": 0.73, "w": 0.19, "h": 0.06 }, "observed_text": "PRICE CUT BADGE", "confidence": 0.86 },
+    { "role": "timer", "bbox": { "x": 0.4, "y": 0.82, "w": 0.19, "h": 0.03 }, "observed_text": "TIMER", "confidence": 0.92 },
+    { "role": "fine_print", "bbox": { "x": 0.2, "y": 0.86, "w": 0.57, "h": 0.04 }, "observed_text": "FINE PRINT", "confidence": 0.93 },
+    { "role": "toggle_custom", "suggested_key": "show_resource_area", "suggested_name": "Show Resource Area", "kind": "boolean", "notes": "Operator switch for the resource area", "confidence": 0.6 }
+  ]
+}

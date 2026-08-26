@@ -1,0 +1,8 @@
+# Local-only development data — never committed, never distributed.
+# The marketplace clones the WHOLE repo to client machines, and runs/ +
+# manifest.json describe third-party games' offer designs.
+/gallery/
+/runs/
+/manifest.json
+/triage-notes.md
+/index_corpus.py
