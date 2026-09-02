@@ -24,33 +24,6 @@ covers your designs, which is why existing templates are checked first and reuse
 is proposed whenever one already fits. Each run delivers a template registered as
 a **draft** on the Dashboard, plus a local JSON copy of its shape.
 
-## Prerequisites
-
-**1. Claude Code with the Kinoa plugin.** Two commands, run once per machine:
-
-```bash
-claude plugin marketplace add Kinoa-Labs-LTD/integration-skills
-claude plugin install kinoa-dashboard@kinoa
-```
-
-Restart Claude Code afterwards. Commands are namespaced with the plugin name,
-e.g. `/kinoa-dashboard:kinoa-inapp-template-from-image`. For automatic updates,
-open `/plugin` → **Marketplaces** → `kinoa` → **Enable auto-update**.
-
-**2. Kinoa credentials.** Take the **game ID**, **game secret** and a **session
-token** from your Kinoa Dashboard under **Integration**, and configure them once
-with `/kinoa-dashboard:kinoa-api-integration init`. If your game is integrated
-through the Kinoa Unity SDK rather than the direct API, say so — the init step
-validates the game's integration type and needs to know it is an SDK game. The
-session token is short-lived — roughly **24 hours**; when it expires, Dashboard
-calls fail with `401` and you re-run `init` with a fresh token.
-
-**3. A mockup image.** PNG or JPEG (GIF and WebP also work), given as a local
-file **or a URL** — a link to the image on your wiki, CDN or file share works as
-well as a path; it is downloaded for the analysis. Finished art and abstract
-wireframes are both valid — if a wireframe's boxes are labelled ("Background",
-"Header", "CTA"), those labels are read as the element roles.
-
 ## How to run it
 
 ```
@@ -60,7 +33,11 @@ wireframes are both valid — if a wireframe's boxes are labelled ("Background",
 
 `--name` is optional. What happens next:
 
-**1. The image is read.** One image produces one template. If you supply several,
+**1. The image is read** — a local PNG/JPEG (GIF and WebP also work) or a URL:
+a link to the image on your wiki, CDN or file share works as well as a path.
+Finished art and abstract wireframes are both valid — if a wireframe's boxes are
+labelled ("Background", "Header", "CTA"), those labels are read as the element
+roles. One image produces one template. If you supply several,
 one is chosen as the structural source; true alternate states of the same pop-up
 serve as corroboration, while a *different layout* of the same offer (a compact
 banner for a shop row) is reported separately — a template is one fixed layout.
@@ -234,9 +211,9 @@ one that live campaigns may come to depend on.
 ## FAQ and troubleshooting
 
 **A Dashboard call failed with `401`.** Your session token expired — it lasts
-about 24 hours. Fetch a new one from Dashboard → **Integration**, re-run
-`/kinoa-dashboard:kinoa-api-integration init`, then re-run the template command.
-Nothing else needs redoing.
+about 24 hours. Fetch a new one from Dashboard → **Integration**, re-run your
+integration flow's init with it, then re-run the template command. Nothing else
+needs redoing.
 
 **My mockup is a shop screen — can I still get a template?** No, and that is the
 right answer: a shop is your app's own UI, not an in-app pop-up, and Kinoa has no
