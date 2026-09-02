@@ -45,14 +45,17 @@ validates the game's integration type and needs to know it is an SDK game. The
 session token is short-lived — roughly **24 hours**; when it expires, Dashboard
 calls fail with `401` and you re-run `init` with a fresh token.
 
-**3. A mockup image.** PNG or JPEG (GIF and WebP also work). Finished art and
-abstract wireframes are both valid — if a wireframe's boxes are labelled
-("Background", "Header", "CTA"), those labels are read as the element roles.
+**3. A mockup image.** PNG or JPEG (GIF and WebP also work), given as a local
+file **or a URL** — a link to the image on your wiki, CDN or file share works as
+well as a path; it is downloaded for the analysis. Finished art and abstract
+wireframes are both valid — if a wireframe's boxes are labelled ("Background",
+"Header", "CTA"), those labels are read as the element roles.
 
 ## How to run it
 
 ```
 /kinoa-dashboard:kinoa-inapp-template-from-image path/to/mockup.png --name "Summer Bundle"
+/kinoa-dashboard:kinoa-inapp-template-from-image https://wiki.example.com/mockups/summer-bundle.png
 ```
 
 `--name` is optional. What happens next:
@@ -65,7 +68,11 @@ banner for a shop row) is reported separately — a template is one fixed layout
 **2. The mockup is decomposed** into elements — **Images**, **Buttons**,
 **Texts** and **Custom Elements** — and a **feature type** is chosen:
 `standard` (no progression), `mission` (a list of discrete tasks) or `milestone`
-(one progress bar with checkpoints and a prize per checkpoint). Display order,
+(one progress bar with checkpoints and a prize per checkpoint). For mission and
+milestone templates the progression's own CTA menus (what a completed task or a
+reached checkpoint lets the operator offer) are read off the art when the
+buttons are legible — a "Claim" button becomes `collect_resource`, a price
+becomes `billing`. When nothing is legible, nothing is invented. Display order,
 element keys and slot defaults are all derived deterministically, so the same
 mockup always yields the same structure.
 
@@ -79,14 +86,26 @@ template at all. Partial matches are listed with their missing elements.
 HTML page opens: the mockup with a labelled box per detected element on one side,
 the editable structure on the other. Rename elements, change their type, move
 them between buckets, correct click actions, delete wrong guesses, add whatever
-was missed. Anything uncertain is flagged for your decision — a low-confidence
-detection, or a struck-through price that could be either a real text slot or a
-client-rendered one. Nothing is created before you confirm.
+was missed. Mission and milestone templates additionally show pickers for the
+progression CTA menus, pre-selected with whatever was read off the art. What
+you see on the page is the whole structure: a field is either visible there or
+required by the API — nothing else is silently added. Anything uncertain is
+flagged for your decision — a low-confidence detection, or a struck-through
+price that could be either a real text slot or a client-rendered one. Nothing
+is created before you confirm.
+
+Your corrections on the page — elements the analysis missed, boxes you moved,
+false positives you un-ticked — are recorded to improve future detection. Only
+the corrections and a fingerprint of the image travel; the mockup itself never
+leaves your machine.
 
 **5. The template is created as a draft**, and you get its `id`, the element count
-per bucket, the feature type and anything still flagged. The confirmed payload is
-written next to the mockup as JSON — keep it in your project as the canonical copy
-of the template's shape and the base for any later revision.
+per bucket, the feature type and anything still flagged. The mockup itself is
+attached as the template's **tip image** — its face in the Dashboard constructor,
+so operators picking a template see the design it came from (say so if you'd
+rather skip that). The confirmed payload is written next to the mockup as JSON —
+keep it in your project as the canonical copy of the template's shape and the
+base for any later revision.
 
 Two deliberate boundaries:
 
@@ -235,6 +254,14 @@ orphans every in-app message built from it, historical ones included. Removal is
 deliberate Dashboard action, taken only when nothing references the template — and
 the tooling can tell you whether a template still has related in-app messages
 before you change or retire it.
+
+**The Dashboard highlights CTA fields in red when I open my milestone template.**
+That is intended, not a defect. Progression CTA menus are only filled in when
+they could be read off your mockup; when they couldn't, the choice is left to
+the operator rather than guessed — and the Dashboard marks the decision still
+to be made ("At least one CTA must be selected") on the template's first save.
+Mission templates always carry at least `close` as the completion CTA, because
+the API requires one there.
 
 **Why is my template still a draft?** Because that is this workflow's finished
 state. Activation happens in the Dashboard (*Game Settings → In-Apps*) when the

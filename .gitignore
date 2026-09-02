@@ -1,3 +1,7 @@
+# Local-only development tree — corpus of third-party mockup analyses, generated
+# galleries/previews, maintainer tooling. Never committed, never distributed.
+dev/
+
 # Eval run artifacts (per CLAUDE.md)
 kinoa-api-integration-workspace/
 kinoa-sdk-dashboard-sync-workspace/
