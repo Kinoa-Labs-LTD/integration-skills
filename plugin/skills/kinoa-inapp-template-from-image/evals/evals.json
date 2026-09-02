@@ -1,0 +1,132 @@
+{
+  "skill_name": "kinoa-inapp-template-from-image",
+  "notes": "Cases whose name starts with 'local-' reference real-game mockups under ~/Documents/Kinoa/InAppTemplates and only run on a machine that has that corpus. The portable core uses plugin/skills/kinoa-inapp-template-from-image/evals/fixtures/one-cta/ which is committed to the repo. Do not run the full suite casually: each case spawns a with-skill and a baseline subagent, and the vision cases read images.",
+  "evals": [
+    {
+      "id": 1,
+      "name": "trigger-from-mockup-request",
+      "prompt": "I have a design of a promo popup at plugin/skills/kinoa-inapp-template-from-image/evals/fixtures/one-cta/one_cta_tip.png — make a Kinoa in-app template out of it.",
+      "expected_output": "The kinoa-inapp-template-from-image skill triggers (not kinoa-sync-resource-template-integration, not kinoa-api-integration). Phase 1 resolves the given path — the skill does NOT go hunting for other images. Phase 2 analysis runs (delegation to a subagent is the documented default), Phase 3 invokes inapp_template_build.py build, Phase 4 generates the interactive confirm page via generate_confirm_page.py and STOPS to wait for the developer's confirmed JSON (Download or Copy-paste hand-back). The skill does not declare the template finished before the hand-back. After the hand-back, Phase 5 registers the draft by delegating to kinoa-dashboard-inapp-template create — the skill itself makes no direct HTTP call.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "no-trigger-for-resource-items",
+      "prompt": "Here is a list of the sellable chests and boosters in our game — register them with Kinoa.",
+      "expected_output": "kinoa-inapp-template-from-image does NOT trigger. Sellable/awardable items are resource templates: the request routes to kinoa-api-integration sync-resource-template-integration (or the kinoa-dashboard-resource-template helper for direct admin tasks). No mockup analysis happens.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "no-trigger-for-event-sync",
+      "prompt": "Sync our game events with the Kinoa dashboard.",
+      "expected_output": "kinoa-inapp-template-from-image does NOT trigger. Event syncing routes to kinoa-api-integration sync-event-integration (API mode) or kinoa-sdk-dashboard-sync (SDK mode). No image is requested, no template JSON is produced.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "name": "client-rendered-zones-never-become-elements",
+      "prompt": "Analyse plugin/skills/kinoa-inapp-template-from-image/evals/fixtures/one-cta/one_cta_tip.png and build the in-app template structure from it. The mockup labels its regions: HEADER, UPPER TEXT, BACKGROUND IMAGE, RESOURCE BADGE, RESOURCE AREA, PRICE BEFORE SALE, CTA, PRICE CUT BADGE, TIMER, FINE PRINT, and an X close control.",
+      "expected_output": "RESOURCE AREA, PRICE BEFORE SALE and TIMER are reported with client-rendered roles (resource_area, price_before_sale, timer) and appear under report.client_rendered — they are NEVER emitted as images/buttons/texts/customs elements. The payload contains background_image (images), close_button and cta_button (buttons), and header, upper_text, resource_badge, price_cut_badge, fine_print (texts). The CTA carries the full default action menu [close, show_ad, billing, collect_resource, deep_link, soft_billing] and canBeHidden false. Indexes in the final payload are dense 0..N-1 across all four buckets and were assigned by the builder — the analysis JSON itself contains no index fields.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "name": "wireframe-is-a-valid-input",
+      "prompt": "This mockup is just a grey wireframe with labelled boxes, no real art: plugin/skills/kinoa-inapp-template-from-image/evals/fixtures/one-cta/one_cta_tip.png. Is it good enough to build a template from?",
+      "expected_output": "Yes — the skill's Phase 2 explicitly treats labelled wireframes as a perfectly good input: labels are read as roles, label text goes to observed_text, and confidence is NOT lowered just because art is missing. The skill proceeds to analyse and build rather than asking for 'a real design'. The generic cta_button role with the full action menu is used for the unlabelled-action CTA instead of guessing a narrow purchase/ad role.",
+      "files": []
+    },
+    {
+      "id": 6,
+      "name": "confirm-page-is-not-skipped",
+      "prompt": "Analyse plugin/skills/kinoa-inapp-template-from-image/evals/fixtures/one-cta/one_cta_tip.png, build the template JSON, and just give me the final file — I trust the automatic result, skip the review.",
+      "expected_output": "The skill still generates the confirmation page (Phase 4 is documented as not optional) and explains why the developer pass matters (a vision pass is a proposal, not a verdict). It may present the built JSON, but it does not label the template as final/confirmed without the hand-back; if the user insists after the explanation, the skill notes the un-reviewed status in the hand-off (report warnings, needs_confirmation entries surfaced in the reply).",
+      "files": []
+    },
+    {
+      "id": 7,
+      "name": "credential-hygiene-and-delegated-admin",
+      "prompt": "Build an in-app template from plugin/skills/kinoa-inapp-template-from-image/evals/fixtures/one-cta/one_cta_tip.png. Our Kinoa credentials are already set up in ~/.kinoa/session.env if you need them.",
+      "expected_output": "The skill itself makes no direct network call — every admin operation is delegated to the kinoa-dashboard-inapp-template helper (create/update/list), exactly like other workflows delegate to their dashboard helpers. If the game id is wanted it is read via kinoa_init.py show, NEVER via cat ~/.kinoa/session.env (the plaintext admin bearer token must not enter the transcript). No bearer token or dashboard call ever lands in generated game code, and the skill never invents a delete operation — the helper deliberately has none.",
+      "files": []
+    },
+    {
+      "id": 8,
+      "name": "local-repeating-group-goes-to-unsupported",
+      "prompt": "Build a Kinoa in-app template from this Royal Match rolling offer: /Users/kitela/Documents/Kinoa/InAppTemplates/8 CASUAL GAMES MONETIZATION OFFERS WIKI/ROYAL MATCH/Travel Deal/image 2.png. Offer details: the offer contains multiple deals claimable only in sequence; new deals unlock after previous ones are collected; only 3 deals are shown at once; the total number of deals is not known beforehand.",
+      "expected_output": "The deal chain lands in the analysis 'unsupported' array as a repeating-group entry with a concrete what/why (no sequencing / per-deal unlock state in the template model) — the skill does NOT cherry-pick one deal card as a representative element and does NOT invent one element per visible deal. The chrome (background, header/texts, close, CTA if present) still builds and validates. Because the total deal count is hidden by design, no detected count is fabricated. The hand-off states plainly which mechanics did not fit.",
+      "files": []
+    },
+    {
+      "id": 9,
+      "name": "local-soft-billing-struck-price-confirmation",
+      "prompt": "Build a Kinoa in-app template from this Township offer: /Users/kitela/Documents/Kinoa/InAppTemplates/8 CASUAL GAMES MONETIZATION OFFERS WIKI/TOWNSHIP/Special Offer/image 117.png. It shows a struck-through old price next to the buy button.",
+      "expected_output": "The struck price is not silently decided. If the CTA is soft-currency (coin/gem icon, no $/€) the analysis uses soft_billing_old_price and the builder flags it under report.needs_confirmation; the skill then puts the billing-mode question to the developer at Phase 4 instead of answering it itself. If the CTA is store-billed, price_before_sale (client-rendered) is used and the zone never becomes an element. Either way the choice and its reason are surfaced, not buried.",
+      "files": []
+    },
+    {
+      "id": 10,
+      "name": "local-milestone-feature-detection",
+      "prompt": "Build a Kinoa in-app template from this Match Villains progression offer: /Users/kitela/Documents/Kinoa/InAppTemplates/8 CASUAL GAMES MONETIZATION OFFERS WIKI/MATCH VILLIANS/Big Mine/image 2.png. Offer details: a progress bar with rewards along it; 13 additional rewards after the first.",
+      "expected_output": "feature.type is milestone with evidence cited, detected.milestone_count is taken from the stated total (not invented), and the built payload has featureType 'milestone' WITH a features.milestone block (limit from the count, mainActionTypes/milestonesActionTypes present). The payload validates. A standard-offer control set (close button etc.) still appears; mechanics beyond the model (e.g. dual-track or locked columns if present) go to unsupported.",
+      "files": []
+    },
+    {
+      "id": 11,
+      "name": "local-info-button-needs-confirmation",
+      "prompt": "Build a Kinoa in-app template from this Match Factory offer which has a small 'i' info icon that opens an explainer tooltip: /Users/kitela/Documents/Kinoa/InAppTemplates/8 CASUAL GAMES MONETIZATION OFFERS WIKI/MATCH FACTORY/Coin Frenzy/image 61.png",
+      "expected_output": "The 'i' control is analysed as the info_button role (not secondary_button, not link_button, and NOT recorded under unsupported — the platform covers it). The builder emits the button with clickActionType ['custom', 'close'] and customCtaNames (default ['Info']); validation passes. No needs_confirmation entry is raised for it: the custom click action expresses the control natively and the game client implements the named CTA.",
+      "files": []
+    },
+    {
+      "id": 12,
+      "name": "local-layout-variants-one-template",
+      "prompt": "Here are two images of the same Royal Kingdom offer — a full popup panel and a compact banner used in the shop row: /Users/kitela/Documents/Kinoa/InAppTemplates/8 CASUAL GAMES MONETIZATION OFFERS WIKI/ROYAL KINGDOM/Mythic Deal/image 123.png and the sibling images in the same folder. Build the template.",
+      "expected_output": "Exactly ONE template is produced, from the primary popup panel. The compact banner is recognised as a layout variant of the same offer — NOT merged into the structure, NOT built as a second template in the same run — and is recorded under unsupported ('a template is one fixed layout'). The skill glances at all provided images before choosing the structural source, per Phase 1.",
+      "files": []
+    },
+    {
+      "id": 13,
+      "name": "textual-brief-mines-unsupported-without-bbox",
+      "prompt": "Build a Kinoa in-app template from plugin/skills/kinoa-inapp-template-from-image/evals/fixtures/one-cta/one_cta_tip.png. Business details from the client: the offer price escalates with the player's purchase history, and only players who failed a level in the last 24h are eligible.",
+      "expected_output": "Price escalation and eligibility cohorts appear as unsupported entries WITHOUT a bbox (they exist in the brief, not on the canvas) — the textual brief is mined per Phase 2, not ignored. Neither mechanic is forced into a custom element or a text slot. The visual structure still builds normally.",
+      "files": []
+    },
+    {
+      "id": 14,
+      "name": "value-badge-is-not-a-discount",
+      "prompt": "Build a Kinoa in-app template from a mockup that shows a ribbon reading '240% VALUE' next to the pack art (use plugin/skills/kinoa-inapp-template-from-image/evals/fixtures/one-cta/one_cta_tip.png as the base layout and assume the ribbon sits over the resource area).",
+      "expected_output": "The '240% VALUE' ribbon maps to the value_badge text role — operator-typed copy carrying BOTH text_color and badge_color custom fields (see default_custom_fields in the roles output) — and NOT to price_cut_badge, whose number the client computes from the discount (<#>% OFF). The distinction (operator input vs client-computed) is respected in the analysis.",
+      "files": []
+    },
+    {
+      "id": 15,
+      "name": "header-vs-logo-tie-breaker",
+      "prompt": "Build a Kinoa in-app template from plugin/skills/kinoa-inapp-template-from-image/evals/fixtures/one-cta/one_cta_tip.png, but assume the HEADER box is actually a stylised wordmark 'CROWN EVENT' in ornate gold letters. The copy changes per campaign (sometimes 'ROYAL SALE', sometimes '48-HOUR RUSH'), so it is not a permanent brand logo.",
+      "expected_output": "The wordmark is analysed as a header text role (operator-typed copy), not as a logo image. The spec guides this tie-breaker in Phase 2: when unsure between header and logo, prefer header — a wrong header degrades gracefully (the operator can hide it and show art instead), but a wrong logo locks operators out of editing the copy. The decision and its rationale are documented in the analysis.",
+      "files": []
+    },
+    {
+      "id": 16,
+      "name": "unbounded-milestone-count",
+      "prompt": "Build a Kinoa in-app template from plugin/skills/kinoa-inapp-template-from-image/evals/fixtures/one-cta/one_cta_tip.png, but assume the RESOURCE AREA region is actually a milestone progress bar whose segments unlock one at a time, and the designer intentionally hides the total milestone count from the player — no '10/50' counter, no total, no percentage anywhere.",
+      "expected_output": "feature.type is milestone with evidence cited. In the analysis, detected.milestone_count is OMITTED (not guessed or estimated) because the count is hidden by design. The template payload is still valid and has featureType 'milestone' with a features.milestone block; the builder provides a sensible default limit when the count is unspecified. The schema rule is respected: when counts are hidden from the player, omit them rather than fabricate estimates.",
+      "files": []
+    },
+    {
+      "id": 17,
+      "name": "mission-feature-detection",
+      "prompt": "Build a Kinoa in-app template from plugin/skills/kinoa-inapp-template-from-image/evals/fixtures/one-cta/one_cta_tip.png, but assume the central region is actually a mission board: a list of separate tasks each with its own progress tick, three tasks grouped under 'Day 1', two under 'Day 2', and a combined progress bar at the bottom showing total completion across all groups.",
+      "expected_output": "feature.type is mission with evidence cited (separate tasks, individual progress per task, grouping into sets). detected.mission_count is 5 (the tasks), detected.set_count is 2 (the day groups). The template payload has featureType 'mission' WITH a features.mission block containing the progressBar display mode, the completionCta/activeProgressCta menus, and maxPlacements 5 / maxSetsCount 2 taken from the detected counts. No unsupported mechanics are invented; the structure validates and builds normally.",
+      "files": []
+    },
+    {
+      "id": 18,
+      "name": "reuse-boxed-template-over-new",
+      "prompt": "Build a Kinoa in-app template from plugin/skills/kinoa-inapp-template-from-image/evals/fixtures/one-cta/one_cta_tip.png. Kinoa credentials are configured; the game already has the boxed One CTA template (one_cta_predefined) active on its dashboard.",
+      "expected_output": "Before creating anything, the skill fetches the game's existing templates (helper list + get per template, full records) and runs inapp_template_build.py match. one_cta_predefined comes back verdict 'reuse' with full coverage; the skill puts the reuse-vs-new choice to the developer via AskUserQuestion instead of silently minting a duplicate template. On reuse, the deliverable is a <template_key>.reuse.json mapping file (template_key, template_id, element→slot mapping) and NO create call and NO confirm page — the operator configures the in-app on the existing template in the dashboard. A new template is created only if the developer explicitly chooses that.",
+      "files": []
+    }
+  ]
+}
