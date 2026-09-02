@@ -33,8 +33,11 @@ field-by-field model before doing anything non-obvious.
 
 ## Phase 1 — Ingest
 
-1. Resolve the image path from the argument. If none was given, ask for one —
-   do not go hunting through the filesystem for "some mockup".
+1. Resolve the mockup from the argument — a **local path or a URL** are both
+   valid. A URL is downloaded to a working file for the analysis (keep the
+   original URL: it becomes the template's `tipImageUrl` at Phase 5). If
+   nothing was given, ask — do not go hunting through the filesystem for
+   "some mockup".
 2. Confirm the file exists and is a PNG/JPEG/GIF/WebP. Note its pixel size:
 
    ```bash
@@ -195,6 +198,14 @@ nowhere on the canvas. They become `unsupported` entries without a `bbox`.
 
 For `milestone` count the markers into `feature.detected.milestone_count`; for
 `mission` count the rows into `mission_count` and the groups into `set_count`.
+
+**Read the progression CTAs off the art too, when they are legible** — these
+feed the feature's CTA menus, and anything you cannot read is simply omitted
+(never guess a menu): a task's claim/buy control wording → mission
+`detected.completion_actions` (e.g. "Claim" → `collect_resource`, a price →
+`billing`); the bar's main button during progression → milestone
+`detected.main_actions`; claim buttons on the markers → milestone
+`detected.milestone_actions`. Same wording→action mapping as regular buttons.
 Milestone scores in Kinoa are **aggregated**, not per-step: markers at 50 / 100 /
 170 mean the bar shows 0/50, then 0/50, then 0/70.
 
@@ -284,13 +295,22 @@ guesses and adds whatever was missed.
 
 The browser cannot write to disk, so the page hands the result back two ways —
 a **Download JSON** button, or **Copy to clipboard**. Ask which they used, then
-read the confirmed payload back in. Do not proceed on the un-confirmed payload:
+read the confirmed result back in. Do not proceed on the un-confirmed payload:
 a vision pass is a proposal, not a verdict.
 
-Re-validate whatever comes back:
+What comes back is an **envelope**: `{confirmed_at, page_generated_at,
+corrections, payload}`. Check freshness first — `page_generated_at` must match
+the page you generated in THIS run; a mismatch means the developer handed back
+a stale file from an earlier session, so regenerate the page and ask again.
+`corrections` is the developer's verdict on the vision pass — `missed`
+(elements the model did not see, hand-placed on the mockup), `adjusted`
+(boxes the developer moved/resized, with originals), `excluded` (the model's
+false positives, un-ticked on the page; they stay recoverable page-side).
+Elements un-ticked are simply absent from `payload`. Then unwrap and
+re-validate:
 
 ```bash
-python "${CLAUDE_SKILL_DIR}/inapp_template_build.py" validate --payload confirmed.json
+python "${CLAUDE_SKILL_DIR}/inapp_template_build.py" validate --payload confirmed_payload.json
 ```
 
 ## Phase 5 — Register on the dashboard
@@ -304,9 +324,29 @@ python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-inapp-template/kinoa_dashboard_in
   create --payload <template_key>.template.json
 ```
 
+**Attach the source mockup as the template's tip image by default** — it
+becomes the template's face in the dashboard constructor. Mockup given as a
+URL → add `--tip-image-url <url>`; local file → add `--tip-image-file <path>`
+(the helper uploads it as a separate image-only PATCH after the create; blobs
+are not accepted inside the JSON body). This is the client's own dashboard, so
+there is no confidentiality concern; still, skip it if the developer asks.
+
 The server answers with the full record and `status: "draft"` — report the new
 template `id` back to the developer, together with element counts per bucket,
 the feature type, and anything the confirmation page left flagged.
+
+**Ship the corrections to telemetry** (they are how the vision instructions
+get better): write the envelope's `corrections` object to a temp file and post
+it via the sibling webhook helper —
+
+```bash
+python "${CLAUDE_SKILL_DIR}/../kinoa-api-integration/kinoa_webhook.py" qa \
+  --question "vision corrections for <template_key> (missed=X adjusted=Y excluded=Z)" \
+  --answer-file corrections.json
+```
+
+Telemetry never blocks the workflow: the helper always exits 0, and an
+`ok: false` result is simply noted, not retried in a loop.
 
 **Templates stay in `draft` by decision.** Activation is deliberately out of
 this tooling's scope: the operator activates the template on the dashboard
@@ -327,6 +367,15 @@ If the developer only wants the JSON, stop after writing the file — creating
 the draft is the default, not an obligation.
 
 ---
+
+## Telemetry
+
+This skill follows the repo-wide webhook rules
+([`../kinoa-api-integration/references/telemetry.md`](../kinoa-api-integration/references/telemetry.md)):
+fire `phase-start` / `phase-end` for Phases 1–5 via
+`${CLAUDE_SKILL_DIR}/../kinoa-api-integration/kinoa_webhook.py`, `qa` after
+every AskUserQuestion, plus the corrections post above. Disclose telemetry to
+the developer once per run. Failures never abort the workflow.
 
 ## Hard rules
 

@@ -356,6 +356,60 @@ class TestDescriptionLimit(unittest.TestCase):
         self.assertTrue(build_mod.validate_payload(payload)["ok"])
 
 
+class TestMockupDerivedCtaMenus(unittest.TestCase):
+    """Operator decision: CTA menus ship only when read off the mockup; the
+    API-required mission completionCta falls back to ['close'] with a warning."""
+
+    def test_milestone_menus_omitted_when_not_derived(self):
+        payload, report = build_mod.build_payload(
+            analysis([{"role": "header"}], feature={"type": "milestone", "detected": {"milestone_count": 5}})
+        )
+        ms = payload["features"]["milestone"]
+        self.assertNotIn("mainActionTypes", ms)
+        self.assertNotIn("milestonesActionTypes", ms)
+        self.assertEqual(sum("not derivable from the mockup" in w for w in report["warnings"]), 2)
+        self.assertTrue(build_mod.validate_payload(payload)["ok"])
+
+    def test_milestone_menus_present_when_derived(self):
+        payload, report = build_mod.build_payload(
+            analysis([{"role": "header"}], feature={"type": "milestone", "detected": {
+                "milestone_count": 5, "main_actions": ["billing", "close"],
+                "milestone_actions": ["collect_resource"]}})
+        )
+        ms = payload["features"]["milestone"]
+        self.assertEqual(ms["mainActionTypes"], ["billing", "close"])
+        self.assertEqual(ms["milestonesActionTypes"], ["collect_resource"])
+        self.assertFalse(any("not derivable" in w for w in report["warnings"]))
+
+    def test_mission_completion_falls_back_to_close_with_warning(self):
+        payload, report = build_mod.build_payload(
+            analysis([{"role": "header"}], feature={"type": "mission", "detected": {"mission_count": 3}})
+        )
+        self.assertEqual(payload["features"]["mission"]["completionCta"], ["close"])
+        self.assertTrue(any("completionCta not derivable" in w for w in report["warnings"]))
+
+    def test_mission_completion_derived_from_mockup(self):
+        payload, report = build_mod.build_payload(
+            analysis([{"role": "header"}], feature={"type": "mission", "detected": {
+                "mission_count": 3, "completion_actions": ["collect_resource", "billing"]}})
+        )
+        self.assertEqual(payload["features"]["mission"]["completionCta"], ["collect_resource", "billing"])
+        self.assertFalse(any("completionCta not derivable" in w for w in report["warnings"]))
+
+    def test_unknown_actions_are_filtered(self):
+        payload, _ = build_mod.build_payload(
+            analysis([{"role": "header"}], feature={"type": "mission", "detected": {
+                "completion_actions": ["collect_resource", "teleport"]}})
+        )
+        self.assertEqual(payload["features"]["mission"]["completionCta"], ["collect_resource"])
+
+    def test_no_fallback_flag_leaks_into_payload(self):
+        payload, _ = build_mod.build_payload(
+            analysis([{"role": "header"}], feature={"type": "mission"})
+        )
+        self.assertNotIn("_completion_fallback", payload["features"]["mission"])
+
+
 class TestUnsupportedMechanics(unittest.TestCase):
     """Real offers out-run the template model. The portable part must still
     build, and what did not fit must survive into the report."""
@@ -392,6 +446,37 @@ class TestUnsupportedMechanics(unittest.TestCase):
     def test_absent_unsupported_yields_an_empty_list(self):
         _, report = build_mod.build_payload(copy.deepcopy(ONE_CTA))
         self.assertEqual(report["unsupported"], [])
+
+
+class TestCustomFieldValidation(unittest.TestCase):
+    """Custom FIELDS (attached to elements) vs custom ELEMENTS are distinct:
+    fields allow kind image and must have unique keys within their element."""
+
+    def test_duplicate_field_key_within_one_element_is_an_error(self):
+        payload, _ = build_mod.build_payload(
+            analysis([{"role": "header", "custom_fields": [
+                {"key": "c", "kind": "string"}, {"key": "c", "kind": "boolean"}]}])
+        )
+        # builder de-duplicates on build; force the duplicate to test the validator
+        payload["texts"][0]["customFields"][1]["key"] = payload["texts"][0]["customFields"][0]["key"]
+        result = build_mod.validate_payload(payload)
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("duplicate custom field key" in e for e in result["errors"]))
+
+    def test_same_field_key_on_two_elements_is_fine(self):
+        payload, _ = build_mod.build_payload(
+            analysis([{"role": "header"}, {"role": "upper_text"}])
+        )
+        # both carry text_color — legal per the observed contract
+        self.assertTrue(build_mod.validate_payload(payload)["ok"])
+
+    def test_enumeration_field_without_values_warns(self):
+        payload, _ = build_mod.build_payload(
+            analysis([{"role": "header", "custom_fields": [{"key": "e", "kind": "enumeration"}]}])
+        )
+        result = build_mod.validate_payload(payload)
+        self.assertTrue(result["ok"])
+        self.assertTrue(any("without enumValues" in w for w in result["warnings"]))
 
 
 class TestValidation(unittest.TestCase):

@@ -46,7 +46,7 @@ Server-owned, never sent on create: `id`, `createdAt`, `updatedAt`, `status`,
 | Field | Notes |
 |---|---|
 | `key` | Observed values are snake_case, but `Monster_v2` proves uppercase is accepted. The builder emits `^[a-zA-Z][a-zA-Z0-9_]*$`. |
-| `tipImageBlob` | Base64 PNG of the template's anatomy diagram. This is where the source mockup naturally belongs once create exists. |
+| `tipImageBlob` / `tipImageUrl` | The template's face in the dashboard. **Verified contract:** `tipImageUrl` goes as a plain string in the JSON body; a blob is NOT accepted via JSON (500) — it is uploaded by a separate image-only `PATCH {base}/{id}` with `multipart/form-data`, single part `tip_image_blob` (binary, snake_case field name even under Key-Inflection), which leaves the rest of the record untouched. The workflow attaches the source mockup here by default. |
 | `status` | Observed only as `"active"`. No DRAFT/ACTIVE/DEPRECATED ladder has been seen — do not assume the resource-template lifecycle applies here. |
 | `availableActions` | Observed: `show`, `clone`, `deprecate`, `export_to_game`, `hide`. The `system` template omits `deprecate`/`export_to_game`. |
 
@@ -77,10 +77,10 @@ should be read as `false`.
   "description": "", "canBeHidden": true, "customFields": [] }
 ```
 
-`size` is absent on `One CTA`'s image and present on the newer records.
-`maxSize` is 16000 on images, 10000 on button backgrounds — units unknown.
-**(wiki)** Art is supplied by the operator as a **URL**, never uploaded into
-the template.
+`size` is optional — create accepts an image without it and the echo carries
+none (verified live 2026-08-31); operators set real dimensions on the
+dashboard. **The generator never invents it.** **(wiki)** Art is supplied by
+the operator as a **URL**, never uploaded into the template.
 
 ### `buttons`
 
@@ -95,7 +95,10 @@ the template.
 `clickActionType` is the **menu of actions the operator may choose from**, not
 a single wired action — hence the six-entry array on a single CTA.
 `requiredItemsCount` appears only alongside `collect_resource` and
-`promise_rewards`.
+`promise_rewards`. `textLimit` and `backgroundImg` are optional (create
+accepts buttons without them, verified live) — **the generator never invents
+them**; a field is either confirmed on the page or set by the operator on the
+dashboard.
 
 ### `texts`
 
@@ -167,7 +170,22 @@ enumerations. Mission features additionally use `scope` ∈ `PER_MISSION`,
   "milestonesActionTypes": [ …all nine click actions… ] } }
 ```
 
-`limit` is the number of milestones the template supports. **(wiki)** Scores
+`limit` is the number of milestones the template supports. Feature-level
+`customFields` here carry **no `scope`** (unlike missions' PER_MISSION /
+PER_SET) — live capture 2026-08-31.
+
+**CTA menus — required-ness verified live (API + UI, 2026-08-31):**
+`mainActionTypes`/`milestonesActionTypes` are optional for the create API
+(200 without them; nothing substituted server-side) but the dashboard refuses
+to SAVE without them ("At least one CTA must be selected"). The generator
+therefore sends them **only when derived from the mockup** (the bar's main
+button; claim buttons on markers) and otherwise omits them — the red highlight
+on the dashboard is the intended "operator chooses consciously" flow. Mission
+`completionCta` + `progressBar` are hard-required by the API (422:
+"missing required keys: completion_cta, progress_bar"); `completionCta` is
+mockup-derived with a neutral `["close"]` fallback (flagged in the build
+report). `activeProgressCta` and `missionLayout` are optional; the server
+stores no defaults for them. **(wiki)** Scores
 are **aggregated, not per-step**: markers at 50 / 100 / 170 display as 0/50,
 0/50, 0/70. The bar always starts at 0. One reward shows directly; two or more
 collapse into a client-provided chest with a tooltip. The last milestone's
@@ -185,9 +203,19 @@ reward is echoed in a client-rendered grand-prize area.
   "maxPlacements": 10, "maxSetsCount": 7, "minPlacements": 1, "minSetsCount": 1 } }
 ```
 
-Missions are **absent from the wiki entirely** — everything above comes from
-`Mission v1_2` alone. `show_for_all_sets_combined` is the only observed
-`progressBar.display` value; assume others exist.
+Live-verified additions (dashboard PATCH captures, 2026-08-27):
+**`missionLayout` ∈ `parallel` | `sequential`** is a template-level field —
+parallel activates every placement in a set at once; sequential unlocks
+placements one at a time (the client receives upcoming ones as locked
+previews). `progressBar.display` has (at least) two values:
+`show_for_all_sets_combined` (with `completionBarCta` and an optional
+**`maxMilestones`** number) and **`dont_show_at_all`** (empty
+`completionBarCta`). Feature-level `customFields` carry `scope` `PER_MISSION`
+or `PER_SET` (live-verified; fields OUTSIDE the feature are implicitly global —
+same value on every row). The dashboard UI also sends `showActiveProgressCTA`
+and per-field `id`/`new`/`index` junk in requests — the server strips them;
+never rely on them. `enumValues` are normalised on write ("Apple, orange" →
+"Apple,orange") and enumerations get server-assigned `enumerationId`s.
 
 ## Client-rendered zones — never template elements
 

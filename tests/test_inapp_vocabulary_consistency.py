@@ -51,10 +51,13 @@ class TestVocabularyMirrors(unittest.TestCase):
     def test_bucket_labels_cover_every_bucket(self):
         self.assertEqual(set(page_mod.BUCKET_LABELS), set(build_mod.BUCKETS))
 
-    def test_element_defaults(self):
-        self.assertEqual(page_mod.DEFAULT_IMAGE_SIZE, build_mod.DEFAULT_IMAGE_SIZE)
-        self.assertEqual(page_mod.DEFAULT_BUTTON_BG, build_mod.DEFAULT_BUTTON_BG)
-        self.assertEqual(page_mod.DEFAULT_TEXT_LIMIT, build_mod.DEFAULT_TEXT_LIMIT)
+    def test_invented_defaults_stay_gone(self):
+        # Operator decision (2026-08-31): a field is either on the page or
+        # required by the API — the builder must NOT resurrect these constants.
+        for name in ("DEFAULT_IMAGE_SIZE", "DEFAULT_BUTTON_BG", "DEFAULT_TEXT_LIMIT"):
+            self.assertFalse(hasattr(build_mod, name), name)
+            # the confirm page mirrored them, so it must not resurrect them either
+            self.assertFalse(hasattr(page_mod, name), "page_mod." + name)
 
     def test_key_patterns(self):
         self.assertEqual(page_mod.ELEMENT_KEY_RE, build_mod.KEY_RE.pattern)
@@ -65,11 +68,15 @@ class TestFeatureSeedsMirror(unittest.TestCase):
     """The page seeds a feature block when the developer switches featureType.
     Those seeds must be what the builder would have produced."""
 
+    @staticmethod
+    def _public(block):
+        return {k: v for k, v in block.items() if not k.startswith("_")}
+
     def test_mission_seed(self):
-        self.assertEqual(page_mod.MISSION_DEFAULTS, build_mod._mission_feature({}))
+        self.assertEqual(page_mod.MISSION_DEFAULTS, self._public(build_mod._mission_feature({})))
 
     def test_milestone_seed(self):
-        self.assertEqual(page_mod.MILESTONE_DEFAULTS, build_mod._milestone_feature({}))
+        self.assertEqual(page_mod.MILESTONE_DEFAULTS, self._public(build_mod._milestone_feature({})))
 
 
 if __name__ == "__main__":

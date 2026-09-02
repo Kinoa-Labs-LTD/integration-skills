@@ -1,6 +1,7 @@
 # Eval run artifacts (per CLAUDE.md)
 kinoa-api-integration-workspace/
 kinoa-sdk-dashboard-sync-workspace/
+plugin/skills/kinoa-inapp-template-from-image-workspace/
 
 # IDE
 .idea/

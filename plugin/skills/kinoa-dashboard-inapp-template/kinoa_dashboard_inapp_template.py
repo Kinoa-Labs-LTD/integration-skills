@@ -49,6 +49,27 @@ GET /{id} returns the FULL stored record — buttons with clickActionType,
   understand, and it is the safe base when the stored record itself is
   incomplete (a legacy draft created without the header).
 
+Tip images — TWO DIFFERENT TRANSPORTS (verified live on production):
+  * A URL is an ordinary field: `tipImageUrl` as a plain string in the JSON
+    create/update body is accepted and stored. Use --tip-image-url; it costs no
+    extra call.
+  * A BLOB IS NOT ACCEPTED THROUGH JSON — raw base64 and a data: URI both 500.
+    The working path is a SECOND, image-only request: PATCH {base}/{id} with
+    Content-Type: multipart/form-data carrying exactly ONE part —
+      Content-Disposition: form-data; name="tip_image_blob"; filename="<name>"
+      Content-Type: image/<ext>
+      <raw bytes>
+    Note the part name stays snake_case (`tip_image_blob`) even though
+    Key-Inflection: camel rides along — multipart field names are not inflected.
+    That PATCH is PARTIAL: it updates only the image and leaves the template
+    body (buttons, texts, …) untouched. Use --tip-image-file; the content type
+    comes from the file's MAGIC BYTES (png/jpeg/gif/webp), not its extension,
+    and anything else is refused before a single HTTP call goes out.
+  The upload fires only after the main create/update SUCCEEDED, and its outcome
+  is reported as `tip_image: {mode, http_status, ok, ...}` next to the main
+  result. A failed upload never masks a successful main call — the top-level
+  `ok` and the exit code track the MAIN call, so check `tip_image.ok` too.
+
 Security boundary — ADMIN surface, skill-only:
   Auth is Authorization: Bearer <token> + Game: <uuid> + Game-Id: <uuid> —
   the same admin-tier credentials as the other kinoa-dashboard-* helpers.
@@ -77,7 +98,8 @@ Subcommands (each makes ONE HTTP call and prints ONE JSON object:
       with a camelCase body reads back looking sparse because those fields were
       never stored — that is the silent drop, not a trimmed response.
 
-  create --payload FILE|-  [--expect-game UUID]
+  create --payload FILE|-  [--tip-image-url URL | --tip-image-file PATH]
+         [--expect-game UUID]
       POST {base} — creates the template. Server-side it lands as
       status "draft" with its own id/createdAt. The payload is the create body
       produced by
@@ -91,7 +113,8 @@ Subcommands (each makes ONE HTTP call and prints ONE JSON object:
       echoed as `request_body` in the output.
 
   update --id ID --payload FILE|-  [--allow-referenced] [--allow-slot-removal]
-         [--dry-run] [--expect-game UUID]
+         [--tip-image-url URL | --tip-image-file PATH] [--dry-run]
+         [--expect-game UUID]
       PATCH {base}/<id> — FULL-BODY REPLACE semantics despite the verb: send a
       complete template body, not a sparse diff, or the omitted slots are lost.
       Same normalizations as create, no case conversion. Prefer the LOCAL
@@ -115,7 +138,11 @@ Subcommands (each makes ONE HTTP call and prints ONE JSON object:
            --allow-slot-removal. The per-bucket added/removed keys are ALWAYS
            reported, refusal or not.
       --dry-run runs the whole ladder and prints
-      { ok, dry_run, guards, slot_diff, would_send } without PATCHing.
+      { ok, dry_run, guards, slot_diff, tip_image_plan, would_send } without
+      PATCHing — tip_image_plan says which image action WOULD happen (mode,
+      file, size) and no image bytes are sent either.
+      A --tip-image-file upload runs only after the guards passed AND the main
+      PATCH succeeded.
       Refusals are serialized, never raised:
       { ok: false, reason, detail, override: "<flag>"|null, ... }, exit 1.
 
@@ -148,6 +175,7 @@ import argparse
 import json
 import os
 import sys
+import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -156,6 +184,12 @@ SESSION_DIR = os.path.expanduser("~/.kinoa")
 SESSION_ENV_PATH = os.path.join(SESSION_DIR, "session.env")
 
 MESSAGE_TEMPLATES_URL = "https://dashboard.kinoa.io/api/message_templates"
+
+# Tip-image magic bytes -> content type. A blob is NOT accepted through the JSON
+# body (raw base64 and data: URIs both 500) — it goes as a separate multipart
+# PATCH, so the content type has to be sniffed here.
+TIP_IMAGE_FIELD = "tip_image_blob"
+TIP_IMAGE_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp")
 
 # The four slot buckets a template declares. Used by the update slot-loss guard:
 # a key that exists in the stored record but not in the new body is a WIPE.
@@ -211,12 +245,42 @@ def _parse_json(raw):
         return None
 
 
+BLOB_KEYS = ("tipImageBlob", "tip_image_blob")
+
+
+def _summarize_blobs(obj):
+    """Replace stored image blobs with a short summary, recursively.
+
+    The server echoes the full record on every write, and a template with a tip
+    image carries ~114KB of base64 in `tipImageBlob`. Emitting that verbatim is
+    hostile to terminals and transcripts alike, and it is never the thing the
+    operator is reading. Everything else survives untouched, so `id`, `status`
+    and the slot buckets stay usable — including for the code that reads `id`
+    out of a create response.
+    """
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            if k in BLOB_KEYS and isinstance(v, str):
+                out[k] = f"<blob: {len(v)} chars>"
+            else:
+                out[k] = _summarize_blobs(v)
+        return out
+    if isinstance(obj, list):
+        return [_summarize_blobs(v) for v in obj]
+    return obj
+
+
 def _response_body(raw):
     """Parsed JSON body, or the raw string when the body isn't JSON. The
     `is not None` check matters: a valid-but-falsy body ({}, [], 0, false)
-    must stay parsed, not be swapped for its raw string."""
+    must stay parsed, not be swapped for its raw string.
+
+    Image blobs are summarized on the way out — see _summarize_blobs. This is
+    the single choke point every subcommand's echoed response passes through,
+    the tip_image sub-result included."""
     parsed = _parse_json(raw)
-    return parsed if parsed is not None else raw
+    return _summarize_blobs(parsed) if parsed is not None else raw
 
 
 def _admin_headers():
@@ -337,6 +401,111 @@ def _normalize_payload(payload):
     return body
 
 
+def _request_bytes(method, url, headers=None, data=None):
+    """Raw-bytes sibling of _request, for the multipart tip-image upload.
+
+    Deliberately a SEPARATE function: _request is shared boilerplate that must
+    stay textually identical across every helper in this repo (the drift guard
+    in tests/test_boilerplate_consistency.py asserts it), and it always
+    JSON-encodes its body. This one sends bytes with a caller-set Content-Type.
+    """
+    req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
+    try:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
+            return resp.status, resp.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8", errors="replace") if e.fp else ""
+        return e.code, raw
+    except urllib.error.URLError as e:
+        return 0, f"URLError: {e.reason}"
+    except TimeoutError as e:
+        return 0, f"Timeout: {e}"
+
+
+def _sniff_image_type(data):
+    """Content type from magic bytes, or None when it is not a supported image.
+    The server needs a real image/* part type, and a mislabelled extension is a
+    routine mistake (a PNG named .jpg), so the bytes decide — never the name."""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def _resolve_tip_image(args):
+    """Validate the tip-image request BEFORE any HTTP happens.
+    Returns (plan_or_None, error_dict_or_None). A plan is either
+    {mode: "url", url} or {mode: "blob", path, filename, content_type, data}."""
+    url = getattr(args, "tip_image_url", None)
+    path = getattr(args, "tip_image_file", None)
+    if url:
+        return {"mode": "url", "url": url}, None
+    if not path:
+        return None, None
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError as e:
+        return None, {"error": "tip_image_read_failed", "path": path, "message": str(e)}
+    content_type = _sniff_image_type(data)
+    if content_type is None:
+        return None, {
+            "error": "unsupported_tip_image_type",
+            "path": path,
+            "message": f"tip image must be one of {list(TIP_IMAGE_TYPES)} "
+                       "(detected from magic bytes, not the file extension)",
+        }
+    return {"mode": "blob", "path": path, "filename": os.path.basename(path),
+            "content_type": content_type, "data": data}, None
+
+
+def _upload_tip_image(template_id, plan):
+    """The image-only follow-up: PATCH {base}/{id} as multipart/form-data with a
+    SINGLE part named `tip_image_blob`. The part name stays snake_case even
+    though Key-Inflection: camel rides along — multipart field names are not
+    inflected. This is a PARTIAL patch: it touches only the image and leaves the
+    template body (buttons, texts, …) untouched."""
+    boundary = "----KinoaTipImage" + uuid.uuid4().hex
+    head = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="{TIP_IMAGE_FIELD}"; '
+        f'filename="{plan["filename"]}"\r\n'
+        f'Content-Type: {plan["content_type"]}\r\n\r\n'
+    ).encode("utf-8")
+    tail = f"\r\n--{boundary}--\r\n".encode("utf-8")
+    headers = _admin_headers()
+    headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
+    status, raw = _request_bytes(
+        "PATCH", f"{MESSAGE_TEMPLATES_URL}/{template_id}",
+        headers=headers, data=head + plan["data"] + tail)
+    return {
+        "mode": "blob",
+        "filename": plan["filename"],
+        "content_type": plan["content_type"],
+        "bytes": len(plan["data"]),
+        "http_status": status,
+        "ok": 200 <= status < 300,
+        "response": _response_body(raw),
+    }
+
+
+def _tip_image_plan_summary(plan):
+    """What a --dry-run reports instead of doing the upload."""
+    if plan is None:
+        return None
+    if plan["mode"] == "url":
+        return {"mode": "url", "url": plan["url"],
+                "detail": "tipImageUrl would be injected into the JSON body"}
+    return {"mode": "blob", "path": plan["path"], "filename": plan["filename"],
+            "content_type": plan["content_type"], "bytes": len(plan["data"]),
+            "detail": "would be uploaded as a separate image-only multipart PATCH"}
+
+
 def _slot_keys(record):
     """{bucket: [element keys]} for the four slot buckets of a template body or
     a stored record. Missing/malformed buckets read as empty, never raise."""
@@ -422,20 +591,67 @@ def cmd_get(args):
     return 0 if 200 <= status < 300 else 1
 
 
+def _apply_tip_image(image, main_status, main_ok, main_response, template_id=None):
+    """Post-process the tip image after the main JSON call.
+
+    url mode needs no extra call (the field rode along in the body). blob mode
+    fires the image-only multipart PATCH, but only when the main call SUCCEEDED
+    — there is nothing to attach an image to otherwise. A failed upload is
+    reported here and never masks the successful main call: the caller's overall
+    `ok` stays the main call's.
+    """
+    if image is None:
+        return None
+    if image["mode"] == "url":
+        return {
+            "mode": "url",
+            "url": image["url"],
+            "http_status": main_status,
+            "ok": main_ok,
+            "detail": "tipImageUrl sent inline in the JSON body — no extra call",
+        }
+    if not main_ok:
+        return {"mode": "blob", "ok": False, "http_status": None,
+                "detail": "skipped — the main call did not succeed"}
+    resolved = template_id
+    if resolved is None and isinstance(main_response, dict):
+        resolved = main_response.get("id")
+    if not resolved:
+        return {"mode": "blob", "ok": False, "http_status": None,
+                "detail": "skipped — could not resolve the template id from the response"}
+    return _upload_tip_image(resolved, image)
+
+
 def cmd_create(args):
     payload, err = _read_payload(args.payload)
     if err:
         print(json.dumps(err, indent=2))
         return 2
+    # Tip-image validation happens BEFORE any HTTP: an unreadable or non-image
+    # file must not leave a created template behind.
+    image, err = _resolve_tip_image(args)
+    if err:
+        print(json.dumps(err, indent=2))
+        return 2
     body = _normalize_payload(payload)
+    if image is not None and image["mode"] == "url":
+        body["tipImageUrl"] = image["url"]
     status, raw = _request("POST", MESSAGE_TEMPLATES_URL, headers=_admin_headers(), body=body)
-    print(json.dumps({
+    response = _response_body(raw)
+    main_ok = 200 <= status < 300
+    out = {
         "http_status": status,
-        "ok": 200 <= status < 300,
+        "ok": main_ok,
         "request_body": body,
-        "response": _response_body(raw),
-    }, indent=2))
-    return 0 if 200 <= status < 300 else 1
+        "response": response,
+    }
+    tip = _apply_tip_image(image, status, main_ok, response, template_id=None)
+    if tip is not None:
+        out["tip_image"] = tip
+    print(json.dumps(out, indent=2))
+    # The exit code tracks the MAIN call — a template was created either way.
+    # Check tip_image.ok separately for the image.
+    return 0 if main_ok else 1
 
 
 def cmd_update(args):
@@ -458,7 +674,13 @@ def cmd_update(args):
     if err:
         print(json.dumps(err, indent=2))
         return 2
+    image, err = _resolve_tip_image(args)
+    if err:
+        print(json.dumps(err, indent=2))
+        return 2
     body = _normalize_payload(payload)
+    if image is not None and image["mode"] == "url":
+        body["tipImageUrl"] = image["url"]
 
     # ---- pre-flight: the stored record is what the guards judge against ----
     get_status, get_raw = _request(
@@ -555,23 +777,31 @@ def cmd_update(args):
             "name": name,
             "guards": guards,
             "slot_diff": diff,
+            "tip_image_plan": _tip_image_plan_summary(image),
             "would_send": body,
         }, indent=2))
         return 0
 
     status, raw = _request(
         "PATCH", f"{MESSAGE_TEMPLATES_URL}/{args.id}", headers=_admin_headers(), body=body)
-    print(json.dumps({
+    main_ok = 200 <= status < 300
+    out = {
         "http_status": status,
-        "ok": 200 <= status < 300,
+        "ok": main_ok,
         "id": args.id,
         "name": name,
         "guards": guards,
         "slot_diff": diff,
         "request_body": body,
         "response": _response_body(raw),
-    }, indent=2))
-    return 0 if 200 <= status < 300 else 1
+    }
+    # The image-only PATCH runs only after the guards passed AND the main PATCH
+    # succeeded.
+    tip = _apply_tip_image(image, status, main_ok, out["response"], template_id=args.id)
+    if tip is not None:
+        out["tip_image"] = tip
+    print(json.dumps(out, indent=2))
+    return 0 if main_ok else 1
 
 
 def cmd_has_related(args):
@@ -638,6 +868,15 @@ def main(argv):
                        help="Run every guard and report the slot diff + the body that would "
                             "be sent, without PATCHing.")
     p_upd.set_defaults(func=cmd_update)
+
+    for p_img in (p_cre, p_upd):
+        tip = p_img.add_mutually_exclusive_group()
+        tip.add_argument("--tip-image-url", default=None,
+                         help="Set tipImageUrl inline in the JSON body (no extra call).")
+        tip.add_argument("--tip-image-file", default=None,
+                         help="Attach a tip image from disk. Sent AFTER the main call as a "
+                              "separate image-only multipart PATCH (a blob is rejected by the "
+                              "JSON body). png/jpeg/gif/webp, detected from magic bytes.")
 
     p_rel = sub.add_parser("has-related",
                            help="GET whether in-app messages still reference this template.")

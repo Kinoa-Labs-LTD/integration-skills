@@ -71,7 +71,7 @@ python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_inapp_template.py" get --id ID
     timestamps. A record that reads back sparse was written without the header,
     so those fields were never stored — see the section above.
 
-python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_inapp_template.py" create --payload FILE|- [--expect-game UUID]
+python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_inapp_template.py" create --payload FILE|- [--tip-image-url URL | --tip-image-file PATH] [--expect-game UUID]
     POST {base} — creates the template; it lands server-side as status "draft"
     with its own id/createdAt. The payload is the create body produced by
     kinoa-inapp-template-from-image's
@@ -81,7 +81,7 @@ python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_inapp_template.py" create --payload 
     through byte-for-byte apart from the normalizations below. Pass a path, or
     '-' to read the body from stdin.
 
-python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_inapp_template.py" update --id ID --payload FILE|- [--allow-referenced] [--allow-slot-removal] [--dry-run] [--expect-game UUID]
+python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_inapp_template.py" update --id ID --payload FILE|- [--allow-referenced] [--allow-slot-removal] [--tip-image-url URL | --tip-image-file PATH] [--dry-run] [--expect-game UUID]
     PATCH {base}/<id> — FULL-BODY REPLACE semantics despite the verb. Send a
     complete template body, not a sparse diff, or the omitted slots are lost.
     Prefer the LOCAL PAYLOAD FILE as the source of truth: edit it and re-send —
@@ -129,6 +129,42 @@ Every subcommand makes **one HTTP call** and prints a single JSON object:
 HTTP errors are caught and serialized — never raised onto stdout. A transport failure (DNS, timeout) comes back as `http_status: 0` with the reason in `response`; treat it as *unknown outcome* and re-check with `list`/`get` before retrying a mutation. Exit codes: `0` on 2xx, `1` on any non-2xx or transport failure, `2` on a local guard failure (missing credentials, unreadable/invalid payload, game mismatch) — where no request is sent at all.
 
 **Cross-game backstop (`--expect-game UUID`)** — accepted by the *mutating* subcommands (`create`, `update`). When passed, the helper aborts with `error: session_game_mismatch` (exit 2) *before* any state change unless `session.env`'s `KINOA_GAME_ID` equals the given UUID — guarding against a stale session from another game creating or rewriting a template on the **wrong** game's dashboard. Orchestrators should always pass the intended game id; omitting it preserves the previous behavior.
+
+## Tip images — two different transports
+
+A template's tip image can arrive two ways, and they are **not** interchangeable. Both flags are available on `create` and `update`, and they are mutually exclusive (argparse enforces it).
+
+| Flag | Transport | Calls |
+|---|---|---|
+| `--tip-image-url URL` | ordinary JSON field — `tipImageUrl` as a plain string in the create/update body. Verified: 200, stored. | none extra |
+| `--tip-image-file PATH` | a **second, image-only** `PATCH {base}/{id}` with `Content-Type: multipart/form-data` | +1 |
+
+⚠️ **A blob cannot go through the JSON body.** Verified on production: raw base64 **and** a `data:` URI both return **500**. Do not retry them, and do not invent a third encoding.
+
+The multipart request carries exactly **one** part:
+
+```
+Content-Disposition: form-data; name="tip_image_blob"; filename="<name>"
+Content-Type: image/<ext>
+
+<raw bytes>
+```
+
+Two details that matter:
+
+- **The part name stays snake_case** (`tip_image_blob`) even though `Key-Inflection: camel` rides along on the same request — multipart field names are not inflected.
+- **That PATCH is partial.** It updates only the image; the template body survives untouched (verified: buttons intact afterwards). It is not a full-body replace, unlike the JSON `update`.
+
+The content type is sniffed from the file's **magic bytes** (`png`/`jpeg`/`gif`/`webp`), never from its extension — a PNG named `.jpg` uploads correctly, and a non-image is refused with `unsupported_tip_image_type` **before any HTTP call**, so a bad file can never leave a half-created template behind.
+
+The upload fires only after the main create/update **succeeded** (and, for `update`, after every guard passed). Its outcome is reported alongside the main result:
+
+```json
+"tip_image": { "mode": "blob", "filename": "tip.png", "content_type": "image/png", "bytes": 20481, "http_status": 200, "ok": true, "response": { … } }
+"tip_image": { "mode": "url", "url": "https://…", "http_status": 200, "ok": true, "detail": "tipImageUrl sent inline in the JSON body — no extra call" }
+```
+
+**A failed image upload never masks a successful main call**: the top-level `ok` and the exit code track the **main** call (the template was created/updated either way), so check `tip_image.ok` separately. Under `--dry-run` no image bytes are sent at all — the output carries `tip_image_plan` describing what would happen (mode, file, size).
 
 ## `update` guard ladder (load-bearing)
 

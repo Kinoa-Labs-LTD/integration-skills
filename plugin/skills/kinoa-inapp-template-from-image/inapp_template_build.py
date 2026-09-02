@@ -64,9 +64,12 @@ MISSION_FIELD_SCOPES = ("PER_MISSION", "PER_SET", "PER_PROGRESS_BAR", "PER_MILES
 
 BUCKETS = ("images", "buttons", "texts", "customs")
 
-DEFAULT_IMAGE_SIZE = {"width": 10000, "height": 10000, "maxSize": 16000}
-DEFAULT_BUTTON_BG = {"width": 10000, "height": 10000, "maxSize": 10000}
-DEFAULT_TEXT_LIMIT = 255
+# Operator decision (2026-08-31): a field is either visible on the confirm
+# page or required by the API — otherwise it is NOT emitted at all. The old
+# invented defaults (textLimit 255, size {10000,10000,16000}, backgroundImg
+# {10000,10000,10000}) are gone: the create API accepts elements without
+# textLimit / size / backgroundImg (verified live), and operators set them on
+# the dashboard when they need them.
 
 # Server-enforced (observed 422 on create): the TEMPLATE-level description is
 # capped at 50 chars. Element descriptions are not — the observed PATCH
@@ -220,7 +223,6 @@ ROLES = {
         "bucket": "buttons",
         "name": "Close",
         "actions": ["close"],
-        "text_limit": 100,
         "hint": "The 'X' / dismiss control, usually a corner circle.",
     },
     "purchase_button": {
@@ -464,7 +466,6 @@ def _build_image(el, key, index, spec):
     node = {
         "key": key,
         "name": el.get("suggested_name") or spec.get("name") or key.replace("_", " ").title(),
-        "size": dict(DEFAULT_IMAGE_SIZE),
         "index": index,
         "description": el.get("notes") or "",
         "canBeHidden": bool(el.get("can_be_hidden", spec.get("can_be_hidden", True))),
@@ -479,13 +480,13 @@ def _build_button(el, key, index, spec):
         "key": key,
         "name": el.get("suggested_name") or spec.get("name") or key.replace("_", " ").title(),
         "index": index,
-        "textLimit": int(el.get("text_limit", spec.get("text_limit", DEFAULT_TEXT_LIMIT))),
         "description": el.get("notes") or "",
         "canBeHidden": bool(el.get("can_be_hidden", spec.get("can_be_hidden", True))),
         "customFields": _custom_fields(el.get("custom_fields")),
-        "backgroundImg": dict(DEFAULT_BUTTON_BG),
         "clickActionType": actions,
     }
+    if "text_limit" in el:  # only when the analysis explicitly carries one
+        node["textLimit"] = int(el["text_limit"])
     if any(a in ITEM_BEARING_ACTIONS for a in actions):
         node["requiredItemsCount"] = int(el.get("required_items_count", 1))
     if "custom" in actions:
@@ -523,11 +524,12 @@ def _build_text(el, key, index, spec):
         "name": el.get("suggested_name") or spec.get("name") or key.replace("_", " ").title(),
         "index": index,
         "nullable": bool(el.get("nullable", spec.get("nullable", True))),
-        "textLimit": int(el.get("text_limit", spec.get("text_limit", DEFAULT_TEXT_LIMIT))),
         "description": el.get("notes") or "",
         "canBeHidden": bool(el.get("can_be_hidden", spec.get("can_be_hidden", True))),
         "customFields": _text_fields(el, spec),
     }
+    if "text_limit" in el:
+        node["textLimit"] = int(el["text_limit"])
     return node
 
 
@@ -564,38 +566,71 @@ BUILDERS = {
 # --------------------------------------------------------------------------
 
 
+def _detected_actions(detected, key):
+    """CTA actions the vision pass read off the mockup, filtered to the vocabulary."""
+    raw = detected.get(key) or []
+    return [a for a in raw if a in CLICK_ACTIONS]
+
+
 def _mission_feature(detected):
     placements = int(detected.get("mission_count") or 3)
     sets = int(detected.get("set_count") or 1)
-    return {
-        "key": "missions",
-        "name": "Missions",
-        "description": "",
-        "progressBar": {
+    # Vision-derivable knobs (live dashboard contract): padlocked/greyed steps
+    # on the mockup mean sequential unlocking; a visible combined bar means the
+    # progress bar is shown, and its milestone markers give maxMilestones.
+    layout = detected.get("layout") if detected.get("layout") in ("parallel", "sequential") else "parallel"
+    if detected.get("progress_bar") is False:
+        progress_bar = {"display": "dont_show_at_all", "completionBarCta": []}
+    else:
+        progress_bar = {
             "display": "show_for_all_sets_combined",
             "completionBarCta": ["collect_resource"],
-        },
-        "customFields": [],
-        "completionCta": ["close", "collect_resource", "billing", "web_link", "deep_link", "show_ad"],
+        }
+        if detected.get("milestone_count"):
+            progress_bar["maxMilestones"] = max(int(detected["milestone_count"]), 1)
+    # Lean per live probes (2026-08-31): completionCta + progressBar are
+    # API-required (422 without them); activeProgressCta / description /
+    # customFields are optional AND the dashboard saves cleanly without them —
+    # the operator adds an active-progress CTA via the UI checkbox if wanted.
+    completion = _detected_actions(detected, "completion_actions")
+    block = {
+        "key": "missions",
+        "name": "Missions",
+        "missionLayout": layout,
+        "progressBar": progress_bar,
+        # API-required. Mockup-derived when the vision pass could read the
+        # task/claim controls; the neutral ["close"] fallback otherwise — the
+        # build report warns so the operator sets the real menu on the
+        # dashboard.
+        "completionCta": completion or ["close"],
         "maxPlacements": max(placements, 1),
         "maxSetsCount": max(sets, 1),
         "minPlacements": 1,
         "minSetsCount": 1,
-        "activeProgressCta": ["close", "web_link", "deep_link", "show_ad"],
     }
+    block["_completion_fallback"] = not completion
+    return block
 
 
 def _milestone_feature(detected):
     limit = int(detected.get("milestone_count") or 3)
-    every = list(CLICK_ACTIONS)
-    return {
+    # Operator decision (2026-08-31): CTA menus are sent ONLY when the vision
+    # pass derived them from the mockup (the bar's main button; claim buttons
+    # on markers). Blanket defaults are wrong; omitted menus are fine for the
+    # create API, and the dashboard highlights them red on save — that red is
+    # the intended UX for "operator, choose consciously".
+    block = {
         "key": "main_progressbar",
         "name": "Main Progressbar",
         "limit": max(limit, 1),
-        "description": "",
-        "mainActionTypes": every,
-        "milestonesActionTypes": every,
     }
+    main = _detected_actions(detected, "main_actions")
+    marks = _detected_actions(detected, "milestone_actions")
+    if main:
+        block["mainActionTypes"] = main
+    if marks:
+        block["milestonesActionTypes"] = marks
+    return block
 
 
 # --------------------------------------------------------------------------
@@ -693,9 +728,22 @@ def build_payload(analysis, game_id=None, name=None, key=None, description=None)
         payload["gameId"] = game_id
 
     if feature_type == "mission":
-        payload["features"] = {"mission": _mission_feature(feature.get("detected") or {})}
+        mission_block = _mission_feature(feature.get("detected") or {})
+        if mission_block.pop("_completion_fallback", False):
+            warnings.append(
+                "mission completionCta not derivable from the mockup — sent the neutral "
+                "['close'] (API requires the field); set the real menu on the dashboard"
+            )
+        payload["features"] = {"mission": mission_block}
     elif feature_type == "milestone":
-        payload["features"] = {"milestone": _milestone_feature(feature.get("detected") or {})}
+        milestone_block = _milestone_feature(feature.get("detected") or {})
+        for menu in ("mainActionTypes", "milestonesActionTypes"):
+            if menu not in milestone_block:
+                warnings.append(
+                    f"milestone {menu} not derivable from the mockup — omitted; the dashboard "
+                    "will require a conscious choice on save"
+                )
+        payload["features"] = {"milestone": milestone_block}
 
     # Mechanics the mockup shows but the template model cannot express. These
     # are never a build failure — the portable part still ships — but they must
@@ -781,9 +829,17 @@ def validate_payload(payload):
             else:
                 seen_index[idx] = f"{bucket}.{key}"
 
+            field_keys = set()
             for cf in item.get("customFields") or []:
                 if cf.get("kind") not in FIELD_KINDS:
                     errors.append(f"{bucket}.{key}: custom field kind {cf.get('kind')!r} invalid")
+                fk = cf.get("key")
+                if fk in field_keys:
+                    errors.append(f"{bucket}.{key}: duplicate custom field key {fk!r}")
+                elif fk:
+                    field_keys.add(fk)
+                if cf.get("kind") == "enumeration" and not (cf.get("enumValues") or "").strip():
+                    warnings.append(f"{bucket}.{key}.{fk}: enumeration custom field without enumValues")
 
             if bucket == "buttons":
                 actions = item.get("clickActionType")
@@ -1030,7 +1086,12 @@ def cmd_schema(args):
                     "detected": {
                         "mission_count": "int (mission only)",
                         "set_count": "int (mission only)",
-                        "milestone_count": "int (milestone only)",
+                        "layout": "mission only: 'sequential' when steps render locked/padlocked, else 'parallel'",
+                        "progress_bar": "mission only: false when NO combined bar is visible on the mockup",
+                        "milestone_count": "int (milestone; for mission = markers on the combined bar -> maxMilestones)",
+                        "completion_actions": "mission: CTA actions readable on task/claim controls (list of click actions)",
+                        "main_actions": "milestone: actions readable on the bar's main CTA during progression",
+                        "milestone_actions": "milestone: actions readable on marker/claim buttons",
                     },
                 },
                 "elements": [

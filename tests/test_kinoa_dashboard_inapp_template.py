@@ -31,6 +31,9 @@ OTHER_GAME_ID = "99999999-9999-9999-9999-999999999999"
 
 DEFAULT_BASE = "https://dashboard.kinoa.io/api/message_templates"
 
+# Smallest thing that sniffs as a PNG: the 8-byte signature + filler.
+PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"pixel-data"
+
 
 def _load_module():
     spec = importlib.util.spec_from_file_location("kinoa_dashboard_inapp_template_under_test", SCRIPT_PATH)
@@ -112,7 +115,14 @@ class InAppTemplateHelperTests(unittest.TestCase):
             self.requests.append({"method": method, "url": url, "headers": headers, "body": body})
             return queue.pop(0)
 
+        def fake_request_bytes(method, url, headers=None, data=None):
+            # Same recording list, so JSON and multipart calls keep their order.
+            self.requests.append({"method": method, "url": url, "headers": headers,
+                                  "data": data, "multipart": True})
+            return queue.pop(0)
+
         self.mod._request = fake_request
+        self.mod._request_bytes = fake_request_bytes
 
     def _call(self, func, args_ns, responses):
         self._mock_request(responses)
@@ -134,9 +144,21 @@ class InAppTemplateHelperTests(unittest.TestCase):
             json.dump(payload, f)
         return path
 
+    def _create_ns(self, path, **overrides):
+        ns = dict(payload=path, tip_image_url=None, tip_image_file=None)
+        ns.update(overrides)
+        return argparse.Namespace(**ns)
+
+    def _image_file(self, data, name="tip.png"):
+        path = os.path.join(self._tmp.name, name)
+        with open(path, "wb") as f:
+            f.write(data)
+        return path
+
     def _update_ns(self, path, **overrides):
         ns = dict(id=TEMPLATE_ID, payload=path, allow_referenced=False,
-                  allow_slot_removal=False, dry_run=False)
+                  allow_slot_removal=False, dry_run=False,
+                  tip_image_url=None, tip_image_file=None)
         ns.update(overrides)
         return argparse.Namespace(**ns)
 
@@ -459,6 +481,232 @@ class InAppTemplateHelperTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(result["error"], "payload_read_failed")
         self.assertEqual(self.requests, [])
+
+    # ---- tip images ----
+
+    def test_tip_image_url_injected_into_json_body(self):
+        path = self._payload_file(_builder_payload())
+        code, result = self._call(
+            self.mod.cmd_create,
+            self._create_ns(path, tip_image_url="https://cdn.example/tip.png"),
+            [(200, json.dumps({"id": TEMPLATE_ID}))])
+        self.assertEqual(code, 0)
+        # one call only — the URL rides along in the JSON body
+        self.assertEqual(len(self.requests), 1)
+        self.assertEqual(self.requests[0]["body"]["tipImageUrl"], "https://cdn.example/tip.png")
+        self.assertEqual(result["tip_image"]["mode"], "url")
+        self.assertTrue(result["tip_image"]["ok"])
+
+    def test_tip_image_file_triggers_multipart_follow_up(self):
+        raw = PNG_BYTES
+        img = self._image_file(raw)
+        path = self._payload_file(_builder_payload())
+        code, result = self._call(
+            self.mod.cmd_create, self._create_ns(path, tip_image_file=img),
+            [(200, json.dumps({"id": TEMPLATE_ID})), (200, json.dumps({"ok": True}))])
+        self.assertEqual(code, 0)
+        self.assertEqual([r["method"] for r in self.requests], ["POST", "PATCH"])
+        follow = self.requests[1]
+        self.assertTrue(follow["multipart"])
+        # the image-only PATCH goes to the id from the CREATE response
+        self.assertEqual(follow["url"], f"{DEFAULT_BASE}/{TEMPLATE_ID}")
+        self.assertTrue(follow["headers"]["Content-Type"].startswith("multipart/form-data; boundary="))
+        # Key-Inflection still rides along, but the part name is snake_case
+        self.assertEqual(follow["headers"]["Key-Inflection"], "camel")
+        body = follow["data"]
+        self.assertIn(b'name="tip_image_blob"', body)
+        self.assertIn(b'filename="tip.png"', body)
+        self.assertIn(b"Content-Type: image/png", body)
+        self.assertIn(raw, body)  # raw bytes, unencoded
+        self.assertEqual(result["tip_image"]["mode"], "blob")
+        self.assertEqual(result["tip_image"]["content_type"], "image/png")
+        self.assertEqual(result["tip_image"]["bytes"], len(raw))
+        self.assertTrue(result["tip_image"]["ok"])
+        # the JSON body never carries the blob
+        self.assertNotIn("tipImageUrl", self.requests[0]["body"])
+
+    def test_tip_image_file_on_update_runs_after_the_main_patch(self):
+        img = self._image_file(PNG_BYTES)
+        path = self._payload_file(_builder_payload())
+        code, result = self._call(
+            self.mod.cmd_update, self._update_ns(path, tip_image_file=img),
+            self._update_responses() + [(200, "{}")])
+        self.assertEqual(code, 0)
+        self.assertEqual([r["method"] for r in self.requests], ["GET", "GET", "PATCH", "PATCH"])
+        self.assertFalse(self.requests[2].get("multipart"))
+        self.assertTrue(self.requests[3]["multipart"])
+        self.assertTrue(result["tip_image"]["ok"])
+
+    def test_tip_image_url_on_update_injected_no_extra_call(self):
+        path = self._payload_file(_builder_payload())
+        code, result = self._call(
+            self.mod.cmd_update, self._update_ns(path, tip_image_url="https://cdn.example/t.png"),
+            self._update_responses())
+        self.assertEqual(code, 0)
+        self.assertEqual(len(self.requests), 3)
+        self.assertEqual(self.requests[2]["body"]["tipImageUrl"], "https://cdn.example/t.png")
+        self.assertEqual(result["tip_image"]["mode"], "url")
+
+    def test_magic_bytes_win_over_extension(self):
+        # A PNG named .jpg must still upload as image/png.
+        img = self._image_file(PNG_BYTES, name="mislabelled.jpg")
+        path = self._payload_file(_builder_payload())
+        code, result = self._call(
+            self.mod.cmd_create, self._create_ns(path, tip_image_file=img),
+            [(200, json.dumps({"id": TEMPLATE_ID})), (200, "{}")])
+        self.assertEqual(code, 0)
+        self.assertEqual(result["tip_image"]["content_type"], "image/png")
+        self.assertIn(b"Content-Type: image/png", self.requests[1]["data"])
+        self.assertIn(b'filename="mislabelled.jpg"', self.requests[1]["data"])
+
+    def test_sniffer_recognises_every_supported_type(self):
+        cases = {
+            PNG_BYTES: "image/png",
+            b"\xff\xd8\xff\xe0rest": "image/jpeg",
+            b"GIF89a....": "image/gif",
+            b"GIF87a....": "image/gif",
+            b"RIFF" + b"\x00\x00\x00\x00" + b"WEBPVP8 ": "image/webp",
+        }
+        for data, expected in cases.items():
+            with self.subTest(expected=expected):
+                self.assertEqual(self.mod._sniff_image_type(data), expected)
+        self.assertIsNone(self.mod._sniff_image_type(b"just some text"))
+        self.assertIsNone(self.mod._sniff_image_type(b"RIFFxxxxNOPE"))
+
+    def test_non_image_file_rejected_before_any_http(self):
+        bad = self._image_file(b"i am not an image", name="notes.txt")
+        path = self._payload_file(_builder_payload())
+        code, result = self._call(self.mod.cmd_create,
+                                  self._create_ns(path, tip_image_file=bad), [])
+        self.assertEqual(code, 2)
+        self.assertEqual(result["error"], "unsupported_tip_image_type")
+        self.assertEqual(self.requests, [])  # nothing was created
+
+    def test_missing_image_file_rejected_before_any_http(self):
+        path = self._payload_file(_builder_payload())
+        code, result = self._call(
+            self.mod.cmd_create,
+            self._create_ns(path, tip_image_file=os.path.join(self._tmp.name, "gone.png")), [])
+        self.assertEqual(code, 2)
+        self.assertEqual(result["error"], "tip_image_read_failed")
+        self.assertEqual(self.requests, [])
+
+    def test_failed_image_upload_does_not_mask_successful_create(self):
+        img = self._image_file(PNG_BYTES)
+        path = self._payload_file(_builder_payload())
+        code, result = self._call(
+            self.mod.cmd_create, self._create_ns(path, tip_image_file=img),
+            [(200, json.dumps({"id": TEMPLATE_ID})), (500, "boom")])
+        # the template WAS created — main ok and exit code stay clean
+        self.assertEqual(code, 0)
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["tip_image"]["ok"])
+        self.assertEqual(result["tip_image"]["http_status"], 500)
+
+    def test_image_upload_skipped_when_create_fails(self):
+        img = self._image_file(PNG_BYTES)
+        path = self._payload_file(_builder_payload())
+        code, result = self._call(
+            self.mod.cmd_create, self._create_ns(path, tip_image_file=img),
+            [(422, json.dumps({"message": "key exists"}))])
+        self.assertEqual(code, 1)
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["tip_image"]["ok"])
+        self.assertIn("skipped", result["tip_image"]["detail"])
+        self.assertEqual([r["method"] for r in self.requests], ["POST"])
+
+    def test_image_upload_skipped_when_create_response_has_no_id(self):
+        img = self._image_file(PNG_BYTES)
+        path = self._payload_file(_builder_payload())
+        code, result = self._call(
+            self.mod.cmd_create, self._create_ns(path, tip_image_file=img), [(200, "{}")])
+        self.assertEqual(code, 0)
+        self.assertFalse(result["tip_image"]["ok"])
+        self.assertIn("template id", result["tip_image"]["detail"])
+        self.assertEqual([r["method"] for r in self.requests], ["POST"])
+
+    def test_tip_image_flags_are_mutually_exclusive(self):
+        path = self._payload_file(_builder_payload())
+        img = self._image_file(PNG_BYTES)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as cm:
+            self.mod.main(["create", "--payload", path,
+                           "--tip-image-url", "https://x/y.png", "--tip-image-file", img])
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("not allowed with", err.getvalue())
+
+    def test_dry_run_reports_planned_blob_without_http(self):
+        img = self._image_file(PNG_BYTES)
+        path = self._payload_file(_builder_payload())
+        code, result = self._call(
+            self.mod.cmd_update, self._update_ns(path, tip_image_file=img, dry_run=True),
+            self._update_responses())
+        self.assertEqual(code, 0)
+        # only the two read-only guard calls; no PATCH of either kind
+        self.assertEqual([r["method"] for r in self.requests], ["GET", "GET"])
+        self.assertFalse(any(r.get("multipart") for r in self.requests))
+        plan = result["tip_image_plan"]
+        self.assertEqual(plan["mode"], "blob")
+        self.assertEqual(plan["content_type"], "image/png")
+        self.assertEqual(plan["bytes"], len(PNG_BYTES))
+        self.assertEqual(plan["filename"], "tip.png")
+
+    def test_dry_run_reports_planned_url(self):
+        path = self._payload_file(_builder_payload())
+        code, result = self._call(
+            self.mod.cmd_update,
+            self._update_ns(path, tip_image_url="https://cdn.example/t.png", dry_run=True),
+            self._update_responses())
+        self.assertEqual(code, 0)
+        self.assertEqual(result["tip_image_plan"]["mode"], "url")
+        self.assertEqual(result["would_send"]["tipImageUrl"], "https://cdn.example/t.png")
+
+    def test_no_tip_image_means_no_tip_image_key(self):
+        path = self._payload_file(_builder_payload())
+        code, result = self._call(self.mod.cmd_create, self._create_ns(path), [(200, "{}")])
+        self.assertEqual(code, 0)
+        self.assertNotIn("tip_image", result)
+
+    def test_blob_bearing_responses_are_summarized_not_echoed(self):
+        # ~114KB of base64 comes back on every write of a template with a tip
+        # image; emitting it raw is hostile to terminals and transcripts.
+        blob = "A" * 114000
+        record = {"id": TEMPLATE_ID, "name": "Summer Offer", "tipImageBlob": blob,
+                  "buttons": [{"key": "cta_button", "tip_image_blob": blob}]}
+        img = self._image_file(PNG_BYTES)
+        path = self._payload_file(_builder_payload())
+        code, result = self._call(
+            self.mod.cmd_create, self._create_ns(path, tip_image_file=img),
+            [(200, json.dumps(record)), (200, json.dumps(record))])
+        self.assertEqual(code, 0)
+        summary = f"<blob: {len(blob)} chars>"
+        # main echo
+        self.assertEqual(result["response"]["tipImageBlob"], summary)
+        self.assertEqual(result["response"]["buttons"][0]["tip_image_blob"], summary)
+        # tip_image sub-result echo
+        self.assertEqual(result["tip_image"]["response"]["tipImageBlob"], summary)
+        # everything else survives, and the raw base64 appears nowhere
+        self.assertEqual(result["response"]["name"], "Summer Offer")
+        self.assertNotIn(blob, json.dumps(result))
+
+    def test_get_summarizes_blobs(self):
+        blob = "B" * 5000
+        code, result = self._call(
+            self.mod.cmd_get, argparse.Namespace(id=TEMPLATE_ID),
+            [(200, json.dumps({"id": TEMPLATE_ID, "tipImageBlob": blob, "status": "draft"}))])
+        self.assertEqual(code, 0)
+        self.assertEqual(result["response"]["tipImageBlob"], f"<blob: {len(blob)} chars>")
+        self.assertEqual(result["response"]["status"], "draft")
+
+    def test_update_main_echo_summarizes_blobs(self):
+        blob = "C" * 9000
+        path = self._payload_file(_builder_payload())
+        code, result = self._call(
+            self.mod.cmd_update, self._update_ns(path),
+            self._update_responses(patch=(200, json.dumps({"id": TEMPLATE_ID,
+                                                           "tipImageBlob": blob}))))
+        self.assertEqual(code, 0)
+        self.assertEqual(result["response"]["tipImageBlob"], f"<blob: {len(blob)} chars>")
 
     # ---- update guard ladder ----
 
