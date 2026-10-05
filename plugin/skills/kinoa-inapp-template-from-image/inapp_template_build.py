@@ -58,6 +58,9 @@ CLICK_ACTIONS = (
 # Buttons carrying these actions also carry a requiredItemsCount.
 ITEM_BEARING_ACTIONS = ("collect_resource", "promise_rewards")
 
+# Milestone CTA menus accept every click action except `custom`.
+MILESTONE_MENU_ACTIONS = tuple(a for a in CLICK_ACTIONS if a != "custom")
+
 KINDS = ("string", "numeric", "boolean", "enumeration")
 
 # customFields (attached to any element) additionally support image-valued
@@ -572,10 +575,10 @@ BUILDERS = {
 # --------------------------------------------------------------------------
 
 
-def _detected_actions(detected, key):
+def _detected_actions(detected, key, vocabulary=CLICK_ACTIONS):
     """CTA actions the vision pass read off the mockup, filtered to the vocabulary."""
     raw = detected.get(key) or []
-    return [a for a in raw if a in CLICK_ACTIONS]
+    return [a for a in raw if a in vocabulary]
 
 
 def _mission_feature(detected):
@@ -630,8 +633,8 @@ def _milestone_feature(detected):
         "name": "Main Progressbar",
         "limit": max(limit, 1),
     }
-    main = _detected_actions(detected, "main_actions")
-    marks = _detected_actions(detected, "milestone_actions")
+    main = _detected_actions(detected, "main_actions", MILESTONE_MENU_ACTIONS)
+    marks = _detected_actions(detected, "milestone_actions", MILESTONE_MENU_ACTIONS)
     if main:
         block["mainActionTypes"] = main
     if marks:
@@ -1315,6 +1318,11 @@ def remap_record(record, analysis):
     trace.sort(key=lambda t: (t["index"] is None, t["index"]))
 
     warnings = []
+    legacy = (payload.get("features") or {}).get("milestone")
+    if isinstance(legacy, dict):
+        for menu in ("mainActionTypes", "milestonesActionTypes"):
+            if "custom" in (legacy.get(menu) or []):
+                legacy[menu] = [a for a in legacy[menu] if a != "custom"]
     unmatched = [
         f"{bucket}.{item.get('key')}"
         for bucket in BUCKETS
@@ -1436,8 +1444,8 @@ def cmd_schema(args):
                         "progress_bar": "mission only: false when NO combined bar is visible on the mockup",
                         "milestone_count": "int (milestone; for mission = markers on the combined bar -> maxMilestones)",
                         "completion_actions": "mission: CTA actions readable on task/claim controls (list of click actions)",
-                        "main_actions": "milestone: actions readable on the bar's main CTA during progression",
-                        "milestone_actions": "milestone: actions readable on marker/claim buttons",
+                        "main_actions": "milestone: actions readable on the bar's main CTA during progression ('custom' is not accepted in milestone menus)",
+                        "milestone_actions": "milestone: actions readable on marker/claim buttons ('custom' is not accepted in milestone menus)",
                         "area_bbox": "optional, mission/milestone: bbox of the region the progression UI (task list / progress bar) occupies",
                     },
                 },

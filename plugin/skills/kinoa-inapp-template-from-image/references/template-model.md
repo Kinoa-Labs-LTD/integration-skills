@@ -174,6 +174,10 @@ enumerations. Mission features additionally use `scope` ∈ `PER_MISSION`,
 `customFields` here carry **no `scope`** (unlike missions' PER_MISSION /
 PER_SET) — live capture 2026-08-31.
 
+**Menu vocabulary:** milestone menus accept **nine** click actions — every
+action except `custom` (verified live 2026-10-05). Older records may still
+carry `custom`; the builder and page simply drop it.
+
 **CTA menus — required-ness verified live (API + UI, 2026-08-31):**
 `mainActionTypes`/`milestonesActionTypes` are optional for the create API
 (200 without them; nothing substituted server-side) but the dashboard refuses

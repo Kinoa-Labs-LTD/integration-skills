@@ -99,6 +99,10 @@ CLICK_ACTIONS = [
     "update_app_version",
     "soft_billing",
 ]
+
+# Milestone CTA menus accept every click action except `custom` — mirrors
+# MILESTONE_MENU_ACTIONS in inapp_template_build.py (drift-guarded).
+MILESTONE_MENU_ACTIONS = [a for a in CLICK_ACTIONS if a != "custom"]
 ITEM_BEARING_ACTIONS = ["collect_resource", "promise_rewards"]
 KINDS = ["string", "numeric", "boolean", "enumeration"]
 FIELD_KINDS = KINDS + ["image"]
@@ -806,9 +810,12 @@ function featuresOut() {
     if (k in block) block[k] = num(block[k], 1);
   });
   // An emptied milestone menu goes back to "the dashboard chooses": the key is
-  // dropped, never shipped as an empty array.
+  // dropped, never shipped as an empty array. `custom` is filtered out —
+  // milestone menus no longer accept it.
   ["mainActionTypes", "milestonesActionTypes"].forEach(function (k) {
-    if (Array.isArray(block[k]) && !block[k].length) delete block[k];
+    if (!Array.isArray(block[k])) return;
+    block[k] = block[k].filter(function (a) { return C.milestoneMenuActions.indexOf(a) >= 0; });
+    if (!block[k].length) delete block[k];
   });
   // maxMilestones is nested in progressBar and optional: an empty field means
   // "no cap", so the key is dropped rather than coerced to a number.
@@ -1899,7 +1906,7 @@ function chipGroup(opts) {
   chips.className = "chips" + (opts.selected.length ? "" : (opts.badWhenEmpty ? " bad" : ""));
   chips.dataset.fid = opts.fid;
   if (opts.title) chips.title = opts.title;
-  C.clickActions.forEach(function (action) {
+  (opts.menu || C.clickActions).forEach(function (action) {
     var on = opts.selected.indexOf(action) >= 0;
     var chip = document.createElement("label");
     chip.className = "chip" + (on ? " on" : "");
@@ -1924,11 +1931,11 @@ function chipGroup(opts) {
 }
 
 // Rebuilt from the menu each time, so every list follows menu order.
-function withAction(list, action, on) {
+function withAction(list, action, on, menu) {
   var picked = {};
   (list || []).forEach(function (a) { picked[a] = true; });
   if (on) { picked[action] = true; } else { delete picked[action]; }
-  return C.clickActions.filter(function (a) { return picked[a]; });
+  return (menu || C.clickActions).filter(function (a) { return picked[a]; });
 }
 
 function actionsBlock(e, err) {
@@ -2113,7 +2120,7 @@ var CTA_EMPTY_HINT = "nothing selected — you'll choose on the dashboard";
 
 // operator decision: whatever is SENT is visible and editable here. A menu the
 // builder did not derive is NOT offered for editing — the page never invents one.
-function renderFeatureChips(hostId, keys, badWhenEmpty, emptyHint) {
+function renderFeatureChips(hostId, keys, badWhenEmpty, emptyHint, menu) {
   var host = document.getElementById(hostId);
   if (!host) return;
   host.innerHTML = "";
@@ -2126,12 +2133,13 @@ function renderFeatureChips(hostId, keys, badWhenEmpty, emptyHint) {
       fid: "fp-" + key,
       chipFid: function (a) { return "fp-cta-" + key + "-" + a; },
       selected: f[key] || [],
+      menu: menu,
       badWhenEmpty: !!badWhenEmpty,
       emptyHint: emptyHint,
       onToggle: function (action, on) {
         var block = (state.features || {})[state.featureType];
         if (!block) return;
-        block[key] = withAction(block[key], action, on);
+        block[key] = withAction(block[key], action, on, menu);
         fillFeatureInputs();
         refresh();
       }
@@ -2176,7 +2184,8 @@ function fillFeatureInputs() {
     // Both menus are always offered; an empty one is valid and simply ships no
     // key (see featuresOut) — the dashboard then demands the choice.
     renderFeatureChips("fp-milestone-ctas",
-                       ["mainActionTypes", "milestonesActionTypes"], false, CTA_EMPTY_HINT);
+                       ["mainActionTypes", "milestonesActionTypes"], false, CTA_EMPTY_HINT,
+                       C.milestoneMenuActions);
     // operator decision: no note — the chips themselves say everything now
     note.textContent = "";
   }
@@ -2588,6 +2597,7 @@ def render(payload: dict[str, Any], image_data_uri: str | None = None,
     }
     consts = {
         "clickActions": CLICK_ACTIONS,
+        "milestoneMenuActions": MILESTONE_MENU_ACTIONS,
         "itemBearing": ITEM_BEARING_ACTIONS,
         "kinds": KINDS,
         "fieldKinds": FIELD_KINDS,

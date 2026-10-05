@@ -1319,3 +1319,45 @@ class TestLayoutCLI(unittest.TestCase):
         self.assertEqual(code, 0, res)
         self.assertTrue(res["ok"])
         self.assertEqual(res["match"]["verdict"], "reuse")
+
+
+class TestMilestoneMenuVocabulary(unittest.TestCase):
+    """Milestone CTA menus accept nine actions — `custom` is not one of them."""
+
+    def _milestone_analysis(self, detected):
+        return analysis(
+            [{"role": "background_image", "bbox": {"x": 0, "y": 0, "w": 1, "h": 1}},
+             {"role": "close_button", "bbox": {"x": 0.8, "y": 0.02, "w": 0.1, "h": 0.05}}],
+            feature={"type": "milestone", "detected": detected},
+        )
+
+    def test_derived_menus_filter_custom(self):
+        payload, _ = build_mod.build_payload(
+            self._milestone_analysis({"main_actions": ["custom", "billing"],
+                                      "milestone_actions": ["collect_resource"]}))
+        block = payload["features"]["milestone"]
+        self.assertEqual(block["mainActionTypes"], ["billing"])
+        self.assertEqual(block["milestonesActionTypes"], ["collect_resource"])
+
+    def test_custom_only_menu_degrades_to_omitted(self):
+        payload, _ = build_mod.build_payload(
+            self._milestone_analysis({"main_actions": ["custom"]}))
+        self.assertNotIn("mainActionTypes", payload["features"]["milestone"])
+
+    def test_mission_completion_cta_still_accepts_custom(self):
+        ana = analysis(
+            [{"role": "background_image", "bbox": {"x": 0, "y": 0, "w": 1, "h": 1}}],
+            feature={"type": "mission", "detected": {"completion_actions": ["custom"]}},
+        )
+        payload, _ = build_mod.build_payload(ana)
+        self.assertEqual(payload["features"]["mission"]["completionCta"], ["custom"])
+
+    def test_remap_strips_custom_from_a_legacy_record(self):
+        ana = self._milestone_analysis({})
+        payload, _ = build_mod.build_payload(ana)
+        record = dict(payload, id="tpl-legacy", status="active")
+        record["features"] = {"milestone": dict(payload["features"]["milestone"],
+                                                mainActionTypes=["custom", "billing"])}
+        res = build_mod.remap_record(record, ana)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["payload"]["features"]["milestone"]["mainActionTypes"], ["billing"])

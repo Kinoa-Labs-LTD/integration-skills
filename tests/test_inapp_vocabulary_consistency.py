@@ -39,6 +39,12 @@ class TestVocabularyMirrors(unittest.TestCase):
     def test_item_bearing_actions(self):
         self.assertEqual(list(page_mod.ITEM_BEARING_ACTIONS), list(build_mod.ITEM_BEARING_ACTIONS))
 
+    def test_milestone_menu_actions(self):
+        self.assertEqual(list(page_mod.MILESTONE_MENU_ACTIONS), list(build_mod.MILESTONE_MENU_ACTIONS))
+        # the dashboard dropped `custom` from milestone menus (2026-10-05)
+        self.assertNotIn("custom", build_mod.MILESTONE_MENU_ACTIONS)
+        self.assertEqual(len(build_mod.MILESTONE_MENU_ACTIONS), len(build_mod.CLICK_ACTIONS) - 1)
+
     def test_kinds(self):
         self.assertEqual(list(page_mod.KINDS), list(build_mod.KINDS))
 

@@ -2523,6 +2523,38 @@ class ConfirmPageInteractionTests(_PageCase):
         self.assertTrue(got["empty"]["flagged"])
         self.assertEqual(got["fixed"]["cls"], "ok")
 
+    def test_milestone_menus_offer_nine_actions_mission_keeps_ten(self):
+        # dashboard change (2026-10-05): `custom` is gone from milestone menus;
+        # the mission completion picker keeps the full vocabulary.
+        got = self.drive("""
+            H.click("tpl-ed");
+            return { milestoneChipTexts: [...d.querySelectorAll("#fp-milestone-ctas .chip")]
+                       .map(c => c.textContent),
+                     exported: H.exported().features.milestone };
+        """, build=self._milestone_build(main_actions=["close", "show_ad"]))
+        self.assertNotIn("custom", got["milestoneChipTexts"])
+        self.assertEqual(len(set(got["milestoneChipTexts"])), len(self.mod.MILESTONE_MENU_ACTIONS))
+
+        mission = self.drive("""
+            H.click("tpl-ed");
+            return { chips: [...d.querySelectorAll("#fp-mission-ctas .chip")]
+                       .map(c => c.textContent) };
+        """, build=self._mission_build())
+        self.assertIn("custom", mission["chips"])
+
+    def test_legacy_custom_in_milestone_menu_never_ships(self):
+        # a payload created before the change may carry `custom`; the export
+        # must filter it rather than send a menu the dashboard now rejects.
+        build = self._milestone_build()
+        build["payload"]["features"]["milestone"]["mainActionTypes"] = ["custom", "billing"]
+        build["payload"]["features"]["milestone"]["milestonesActionTypes"] = ["custom"]
+        got = self.drive("""
+            return { features: H.exported().features.milestone };
+        """, build=build)
+        self.assertEqual(got["features"].get("mainActionTypes"), ["billing"])
+        # custom-only menu collapses to "dashboard chooses": key dropped
+        self.assertNotIn("milestonesActionTypes", got["features"])
+
     def _milestone_build(self, **detected):
         analysis = json.loads(json.dumps(ANALYSIS))
         base = {"milestone_count": 6}
@@ -2571,7 +2603,8 @@ class ConfirmPageInteractionTests(_PageCase):
         """, build=self._milestone_build())
         # the groups are there even though the mockup showed nothing
         self.assertEqual(undetected["groups"], ["fp-mainActionTypes", "fp-milestonesActionTypes"])
-        self.assertEqual(undetected["chips"], 2 * len(self.mod.CLICK_ACTIONS))
+        # milestone menus offer NINE actions — `custom` left the vocabulary
+        self.assertEqual(undetected["chips"], 2 * len(self.mod.MILESTONE_MENU_ACTIONS))
         self.assertEqual(undetected["hints"],
                          ["nothing selected — you'll choose on the dashboard"] * 2)
         self.assertFalse(undetected["oldNote"])   # the standalone note is gone

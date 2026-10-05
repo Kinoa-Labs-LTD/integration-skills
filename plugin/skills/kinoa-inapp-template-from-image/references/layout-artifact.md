@@ -95,7 +95,10 @@ python inapp_template_build.py layout --envelope confirmed.json \
 Path B — an existing dashboard template with a valid tip image: the record is
 fetched, its tip image analyzed, and `remap` gates the pair (every detected
 element must land on a declared slot — a stale or unrelated image fails with a
-mismatch report, and no layout is derived from it). Its output is
+mismatch report, and no layout is derived from it). The gate is structural, not
+semantic: an image of a *different* design with the same element skeleton
+passes it — catching that is what the confirmation-page overlay (and the
+developer's eyes) are for. Its output is
 page-compatible; after the developer confirms, the same `layout` call above
 produces the artifact with the record's own keys.
 
