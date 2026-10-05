@@ -560,7 +560,8 @@ class ConfirmPageInteractionTests(_PageCase):
                      body: JSON.stringify(env.payload),
                      confirmed: env.confirmed_at, stamped: env.page_generated_at };
         """)
-        self.assertEqual(got["env"], ["confirmed_at", "page_generated_at", "corrections", "payload"])
+        self.assertEqual(got["env"], ["confirmed_at", "page_generated_at", "corrections",
+                                      "geometry", "payload"])
         # a freshly built page has corrected nothing yet, but the arrays are always there
         self.assertEqual(got["corrections"], {"source_image": None, "missed": [],
                                               "adjusted": [], "excluded": []})
@@ -1001,6 +1002,58 @@ class ConfirmPageInteractionTests(_PageCase):
     def test_fingerprint_is_null_without_a_mockup(self):
         got = self.drive("return H.envelope().corrections.source_image;")
         self.assertIsNone(got)
+
+    # ---- geometry: the layout artifact's raw material ---------------------
+    def test_geometry_ships_final_boxes_for_every_included_element(self):
+        self._with_image()
+        got = self.drive("""
+            const env = H.envelope();
+            const p = env.payload;
+            const flat = [].concat(p.images, p.buttons, p.texts, p.customs);
+            return { g: env.geometry, n: flat.length,
+                     payloadStr: JSON.stringify(p) };
+        """)
+        g = got["g"]
+        # one entry per SHIPPED element — same cardinality as the payload
+        self.assertEqual(len(g["elements"]), got["n"])
+        self.assertEqual(g["source_image"]["sha256"], hashlib.sha256(PNG_BYTES).hexdigest())
+        cta = next(e for e in g["elements"] if e["key"] == "cta_button")
+        self.assertEqual(cta["bbox"], {"x": 0.3, "y": 0.7, "w": 0.4, "h": 0.08})
+        self.assertEqual([cta["hand_placed"], cta["adjusted"]], [False, False])
+        self.assertEqual(cta["role"], "cta_button")
+        # a row the vision pass never placed ships bbox null, never dropped
+        banner = next(e for e in g["elements"] if e["key"] == "show_banner")
+        self.assertIsNone(banner["bbox"])
+        # client-rendered zones ride in geometry (for the layout artifact)…
+        self.assertEqual(g["client_rendered"],
+                         [{"role": "timer", "bbox": {"x": 0.4, "y": 0.8, "w": 0.2, "h": 0.03}}])
+        # …but never in the create payload
+        self.assertNotIn("timer", got["payloadStr"])
+
+    def test_geometry_tracks_exclusion_addition_and_drag(self):
+        self._with_image()
+        got = self.drive("""
+            H.stubStage(1000);
+            const off = H.uidOfKey("header");
+            H.tick("inc-" + off, false);                  // exclude a vision row
+            H.addRow("texts", "extra_line");              // add an unplaced row
+            const cta = H.uidOfKey("cta_button");
+            H.mouse(H.box(cta), "pointerdown", 400, 700); // move a detected box
+            H.mouse(d, "pointermove", 500, 750);
+            H.mouse(d, "pointerup", 500, 750);
+            const g = H.envelope().geometry;
+            return { keys: g.elements.map(e => e.key),
+                     extra: g.elements.find(e => e.key === "extra_line"),
+                     cta: g.elements.find(e => e.key === "cta_button") };
+        """)
+        # excluded rows ship nothing in geometry (they are corrections-side only)
+        self.assertNotIn("header", got["keys"])
+        self.assertIsNone(got["extra"]["bbox"])
+        self.assertTrue(got["extra"]["hand_placed"])
+        # a moved box ships its FINAL position, flagged as adjusted
+        self.assertTrue(got["cta"]["adjusted"])
+        self.assertAlmostEqual(got["cta"]["bbox"]["x"], 0.4, places=6)
+        self.assertAlmostEqual(got["cta"]["bbox"]["y"], 0.75, places=6)
 
     # ---- geometry corrections on DETECTED boxes --------------------------
     def test_moving_a_detected_box_is_reported_as_adjusted(self):
@@ -2732,7 +2785,7 @@ class ConfirmPageInteractionTests(_PageCase):
                      boxes: H.count("#overlay .box"),
                      client: H.count("#overlay .box.client"),
                      rows: H.count(".row"),
-                     payload: H.raw() };
+                     payload: JSON.stringify(H.envelope().payload) };
         """)
         self.assertIn("timer", got["list"])
         self.assertEqual(got["client"], 1)

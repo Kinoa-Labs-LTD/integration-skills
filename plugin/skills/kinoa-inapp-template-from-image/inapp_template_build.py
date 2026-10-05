@@ -19,6 +19,10 @@ Subcommands
   build      Analysis -> template payload.
   validate   Check a payload against the template model.
   match      Analysis vs existing templates -> reuse verdicts.
+  layout     Confirmed envelope (or build result) -> layout artifact
+             (`<template_key>.layout.json`) for downstream UI generation.
+  remap      Existing dashboard record + tip-image analysis -> page-ready
+             build result keyed by the record's own slots (layout path B).
 
 Every subcommand prints exactly one JSON object on stdout.
 """
@@ -26,7 +30,9 @@ Every subcommand prints exactly one JSON object on stdout.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import re
 import sys
 
@@ -897,6 +903,10 @@ def _analysis_needs(analysis):
             "role": role,
             "bucket": bucket,
             "key_hint": _slug(el.get("suggested_key") or role, bucket[:-1]),
+            # Geometry riding along lets `remap` hand a matched slot its bbox.
+            "bbox": el.get("bbox"),
+            "observed_text": el.get("observed_text"),
+            "confidence": el.get("confidence"),
         }
         if bucket == "buttons":
             actions, source = _infer_actions(role, el.get("observed_text"), el.get("click_action_types"))
@@ -962,17 +972,20 @@ def match_templates(analysis, templates):
 
         free = {b: list(tpl.get(b) or []) for b in BUCKETS}
         mapping, missing = [], []
-        for need in needs:
+        for need_index, need in enumerate(needs):
             best, best_score = None, -1
             for slot in free[need["bucket"]]:
                 score = _slot_score(need, slot)
                 if score is not None and score > best_score:
                     best, best_score = slot, score
             if best is None:
-                missing.append({"role": need["role"], "bucket": need["bucket"]})
+                missing.append({"need_index": need_index, "role": need["role"],
+                                "bucket": need["bucket"], "key_hint": need["key_hint"]})
             else:
                 free[need["bucket"]].remove(best)
-                mapping.append({"role": need["role"], "bucket": need["bucket"], "slot": best["key"]})
+                mapping.append({"need_index": need_index, "role": need["role"],
+                                "bucket": need["bucket"], "key_hint": need["key_hint"],
+                                "slot": best["key"]})
 
         # Slots the mockup does not use are free to leave unconfigured — unless
         # the template forbids hiding them, in which case they will render
@@ -1018,6 +1031,339 @@ def match_templates(analysis, templates):
         "results": results,
         "best": best,
     }
+
+
+# --------------------------------------------------------------------------
+# layout — the geometry artifact for downstream UI generation
+# --------------------------------------------------------------------------
+# A template payload deliberately carries no coordinates (the dashboard API has
+# none), but the prefab/UI-generation tooling needs to know where every element
+# literally sits. That geometry ships as a separate, versioned artifact —
+# `<template_key>.layout.json` — whose element keys join 1:1 with the payload.
+# Client-rendered zones ride along so the consumer reserves screen space for
+# them without ever turning them into slots. Boxes express layout intent
+# (anchoring, proportions, relative placement), not pixel-perfect UI.
+
+LAYOUT_SCHEMA_VERSION = "1.0"
+
+
+def _bbox_problems(bbox, where):
+    """(errors, warnings) for one normalized bbox."""
+    errors, warnings = [], []
+    if not isinstance(bbox, dict):
+        return [f"{where}: bbox must be an object with x/y/w/h"], warnings
+    for field in ("x", "y", "w", "h"):
+        v = bbox.get(field)
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            errors.append(f"{where}: bbox.{field} must be a number")
+        elif not 0 <= float(v) <= 1:
+            errors.append(f"{where}: bbox.{field} must be within [0, 1] (normalized)")
+    if not errors:
+        if float(bbox["w"]) == 0 or float(bbox["h"]) == 0:
+            errors.append(f"{where}: bbox w/h must be non-zero")
+        elif float(bbox["x"]) + float(bbox["w"]) > 1.0001 or float(bbox["y"]) + float(bbox["h"]) > 1.0001:
+            warnings.append(f"{where}: bbox extends past the image edge (x+w or y+h > 1)")
+    return errors, warnings
+
+
+def _layout_bbox(bbox):
+    return {field: float(bbox[field]) for field in ("x", "y", "w", "h")}
+
+
+def build_layout(payload, geometry, analysis=None):
+    """Join a (confirmed) payload with its geometry into the layout artifact.
+
+    `geometry` is the page hand-back's `geometry` block: `source_image`
+    (fingerprint), `elements` ([{key, bucket, bbox|null, role, ...}]) and
+    `client_rendered`. `analysis` is optional and only fills what geometry
+    cannot know: the source image path/size and `feature.detected.area_bbox`.
+    """
+    errors, warnings, unplaced = [], [], []
+    geometry = geometry or {}
+    analysis = analysis or {}
+
+    by_slot = {}
+    for g in geometry.get("elements") or []:
+        by_slot[(g.get("bucket"), g.get("key"))] = g
+
+    fp = geometry.get("source_image") or {}
+    ana_src = analysis.get("source_image") or {}
+    source_image = {
+        "width": fp.get("width") or ana_src.get("width"),
+        "height": fp.get("height") or ana_src.get("height"),
+        "sha256": fp.get("sha256"),
+        "path": ana_src.get("path") or fp.get("filename"),
+    }
+    if not source_image["sha256"]:
+        warnings.append("source_image.sha256 unavailable — the consumer cannot verify it holds the same image")
+    if not (source_image["width"] and source_image["height"]):
+        warnings.append("source_image pixel size unknown — normalized boxes cannot be converted to pixels")
+
+    elements = []
+    used = set()
+    for bucket in BUCKETS:
+        for item in payload.get(bucket) or []:
+            key = item.get("key")
+            used.add((bucket, key))
+            g = by_slot.get((bucket, key)) or {}
+            entry = {
+                "key": key,
+                "bucket": bucket,
+                "index": item.get("index"),
+                "role": g.get("role") or "",
+            }
+            bbox = g.get("bbox")
+            if bbox:
+                errs, warns = _bbox_problems(bbox, f"{bucket}.{key}")
+                errors.extend(errs)
+                warnings.extend(warns)
+                entry["bbox"] = None if errs else _layout_bbox(bbox)
+            else:
+                entry["bbox"] = None
+            if entry["bbox"] is None:
+                # The story's hard rule: an element with no confirmed position is
+                # flagged, never silently dropped — the consumer must know its
+                # placement is undecided.
+                entry["unplaced"] = True
+                unplaced.append(f"{bucket}.{key}")
+            if g.get("observed_text"):
+                entry["observed_text"] = g["observed_text"]
+            if g.get("confidence") is not None:
+                entry["confidence"] = g["confidence"]
+            if g.get("hand_placed"):
+                entry["hand_placed"] = True
+            if g.get("adjusted"):
+                entry["adjusted"] = True
+            elements.append(entry)
+
+    for (bucket, key) in by_slot:
+        if (bucket, key) not in used:
+            errors.append(f"geometry references {bucket}.{key!r} which is not in the payload")
+    if unplaced:
+        warnings.append("elements with no confirmed position ship with bbox null: " + ", ".join(unplaced))
+    elements.sort(key=lambda e: (e["index"] is None, e["index"]))
+
+    client_rendered = []
+    cr_source = geometry.get("client_rendered")
+    if cr_source is None:
+        cr_source = [
+            {"role": el.get("role"), "bbox": el.get("bbox")}
+            for el in (analysis.get("elements") or [])
+            if el.get("role") in CLIENT_RENDERED
+        ]
+    for c in cr_source or []:
+        cbox = None
+        if c.get("bbox"):
+            errs, warns = _bbox_problems(c["bbox"], f"client_rendered.{c.get('role')}")
+            # Advisory zones: a bad box degrades to null, never fails the build.
+            warnings.extend(errs + warns)
+            cbox = None if errs else _layout_bbox(c["bbox"])
+        client_rendered.append({"role": c.get("role") or "", "bbox": cbox})
+
+    feature = {"type": payload.get("featureType") or "standard"}
+    area = ((analysis.get("feature") or {}).get("detected") or {}).get("area_bbox")
+    if area:
+        errs, warns = _bbox_problems(area, "feature.area_bbox")
+        if errs:
+            warnings.extend(errs)
+            warnings.append("feature.area_bbox dropped — invalid bbox")
+        else:
+            warnings.extend(warns)
+            feature["area_bbox"] = _layout_bbox(area)
+
+    layout = {
+        "schema_version": LAYOUT_SCHEMA_VERSION,
+        "template_key": payload.get("key"),
+        "source_image": source_image,
+        "coordinates": {"space": "normalized", "origin": "top-left"},
+        "elements": elements,
+        "client_rendered": client_rendered,
+        "feature": feature,
+    }
+    return layout, {"errors": errors, "warnings": warnings, "unplaced": unplaced}
+
+
+def validate_layout(layout, payload=None):
+    """Check a layout artifact — optionally against the payload it must join 1:1."""
+    errors, warnings = [], []
+    if not isinstance(layout, dict):
+        return {"ok": False, "errors": ["layout must be a JSON object"], "warnings": []}
+    if layout.get("schema_version") != LAYOUT_SCHEMA_VERSION:
+        warnings.append(
+            f"layout schema_version {layout.get('schema_version')!r} != {LAYOUT_SCHEMA_VERSION!r}"
+        )
+    coords = layout.get("coordinates") or {}
+    if coords.get("space") != "normalized" or coords.get("origin") != "top-left":
+        errors.append("coordinates must declare space 'normalized' and origin 'top-left'")
+
+    seen = {}
+    for el in layout.get("elements") or []:
+        where = f"{el.get('bucket')}.{el.get('key')}"
+        if el.get("bucket") not in BUCKETS:
+            errors.append(f"{where}: unknown bucket {el.get('bucket')!r}")
+            continue
+        k = (el.get("bucket"), el.get("key"))
+        if k in seen:
+            errors.append(f"{where}: duplicate element")
+        seen[k] = el
+        if not isinstance(el.get("index"), int):
+            errors.append(f"{where}: index must be an integer")
+        bbox = el.get("bbox")
+        if bbox is None:
+            if not el.get("unplaced"):
+                warnings.append(f"{where}: bbox is null but the element is not flagged 'unplaced'")
+        else:
+            errs, warns = _bbox_problems(bbox, where)
+            errors.extend(errs)
+            warnings.extend(warns)
+
+    src = layout.get("source_image") or {}
+    if not (src.get("width") and src.get("height")):
+        warnings.append("source_image pixel size missing")
+
+    if payload is not None:
+        want = {}
+        for bucket in BUCKETS:
+            for item in payload.get(bucket) or []:
+                want[(bucket, item.get("key"))] = item.get("index")
+        for bucket, key in sorted(set(want) - set(seen), key=str):
+            errors.append(f"payload element {bucket}.{key!r} has no layout entry")
+        for bucket, key in sorted(set(seen) - set(want), key=str):
+            errors.append(f"layout element {bucket}.{key!r} is not in the payload")
+        for k, el in seen.items():
+            if k in want and el.get("index") != want[k]:
+                errors.append(f"{k[0]}.{k[1]}: layout index {el.get('index')} != payload index {want[k]}")
+        if layout.get("template_key") != payload.get("key"):
+            errors.append("layout.template_key does not match payload.key")
+
+    return {"ok": not errors, "errors": errors, "warnings": warnings}
+
+
+# --------------------------------------------------------------------------
+# remap — layout path B: a template that already exists on the dashboard
+# --------------------------------------------------------------------------
+# The record is the ground truth for keys and structure; a fresh vision pass of
+# its tip image supplies the geometry. The matcher gates the pair: every
+# detected element must land on a declared slot, otherwise the image does not
+# show THIS template and no layout may be derived from it. The reverse is fine:
+# slots not found on the image simply ship with bbox null (flagged) unless the
+# developer places them on the confirmation page.
+
+
+def _record_payload(record):
+    """Normalize a dashboard template record to the create-payload shape."""
+    payload = {
+        "name": record.get("name") or "",
+        "key": record.get("key") or "",
+        "description": record.get("description") or "",
+        "images": record.get("images") or [],
+        "buttons": record.get("buttons") or [],
+        "texts": record.get("texts") or [],
+        "customs": record.get("customs") or [],
+        "featureType": record.get("featureType") or "standard",
+        "features": record.get("features") or {},
+        "tagsIds": record.get("tagsIds") or [],
+    }
+    if payload["featureType"] == "standard":
+        payload["features"] = {}
+    return payload
+
+
+def remap_record(record, analysis):
+    """Match a tip-image analysis onto the record's own slots and synthesize a
+    build-result-shaped object the confirmation page renders unchanged — trace
+    bboxes from the analysis, keys strictly the record's (never minted)."""
+    payload = _record_payload(record)
+    match = match_templates(analysis, [record])
+    entry = match["results"][0] if match["results"] else None
+    if entry is None:
+        return {"ok": False, "reason": "empty record list — nothing to remap", "match": match}
+    if "mapping" not in entry:
+        # Summary record or feature-type mismatch: the matcher already said why.
+        return {"ok": False, "reason": entry.get("reason") or f"verdict {entry['verdict']!r}", "match": entry}
+    if entry.get("missing"):
+        return {
+            "ok": False,
+            "reason": "the image shows elements this template has no slot for — a stale or "
+                      "unrelated tip image; a layout must not be derived from it",
+            "mismatch": entry["missing"],
+            "match": entry,
+        }
+
+    needs, _skipped = _analysis_needs(analysis)
+    slot_index = {}
+    for bucket in BUCKETS:
+        for item in payload.get(bucket) or []:
+            slot_index[(bucket, item.get("key"))] = item.get("index")
+
+    trace, matched = [], set()
+    for m in entry["mapping"]:
+        need = needs[m["need_index"]]
+        k = (m["bucket"], m["slot"])
+        matched.add(k)
+        trace.append(
+            {
+                "index": slot_index.get(k),
+                "bucket": m["bucket"],
+                "key": m["slot"],
+                "role": need.get("role"),
+                "bbox": need.get("bbox"),
+                "observed_text": need.get("observed_text"),
+                "confidence": need.get("confidence"),
+            }
+        )
+    trace.sort(key=lambda t: (t["index"] is None, t["index"]))
+
+    warnings = []
+    unmatched = [
+        f"{bucket}.{item.get('key')}"
+        for bucket in BUCKETS
+        for item in payload.get(bucket) or []
+        if (bucket, item.get("key")) not in matched
+    ]
+    if unmatched:
+        warnings.append(
+            "slots not located on the image — they ship with bbox null unless placed "
+            "on the confirmation page: " + ", ".join(unmatched)
+        )
+
+    client_rendered = [
+        {"role": el.get("role"), "reason": CLIENT_RENDERED[el.get("role")], "bbox": el.get("bbox")}
+        for el in (analysis.get("elements") or [])
+        if el.get("role") in CLIENT_RENDERED
+    ]
+    unsupported = [
+        {"what": item["what"], "why": item.get("why") or "", "bbox": item.get("bbox")}
+        for item in (analysis.get("unsupported") or [])
+        if isinstance(item, dict) and item.get("what")
+    ]
+
+    report = {
+        "counts": {b: len(payload[b]) for b in BUCKETS},
+        "element_count": sum(len(payload[b]) for b in BUCKETS),
+        "feature_type": payload["featureType"],
+        "warnings": warnings,
+        "unmapped": [],
+        "client_rendered": client_rendered,
+        "needs_confirmation": [],
+        "unsupported": unsupported,
+        "elements": trace,
+        "source_image": analysis.get("source_image") or {},
+    }
+    return {
+        "ok": True,
+        "mode": "remap",
+        "payload": payload,
+        "report": report,
+        "validation": validate_payload(payload),
+        "match": {
+            "verdict": entry.get("verdict"),
+            "coverage": entry.get("coverage"),
+            "mapping": entry["mapping"],
+            "unmatched_slots": unmatched,
+        },
+    }
+
 
 
 # --------------------------------------------------------------------------
@@ -1092,6 +1438,7 @@ def cmd_schema(args):
                         "completion_actions": "mission: CTA actions readable on task/claim controls (list of click actions)",
                         "main_actions": "milestone: actions readable on the bar's main CTA during progression",
                         "milestone_actions": "milestone: actions readable on marker/claim buttons",
+                        "area_bbox": "optional, mission/milestone: bbox of the region the progression UI (task list / progress bar) occupies",
                     },
                 },
                 "elements": [
@@ -1126,6 +1473,8 @@ def cmd_schema(args):
                 "backend mechanics (price escalation, eligibility cohorts) have no bbox; omit it.",
                 "When a milestone/mission count is deliberately hidden from the player, OMIT "
                 "detected.*_count rather than fabricate a number — the builder defaults sanely.",
+                "detected.area_bbox never affects the payload — it feeds the layout artifact "
+                "(`layout` subcommand), marking where the progression UI sits on the mockup.",
             ],
         }
     )
@@ -1149,6 +1498,13 @@ def cmd_build(args):
 def cmd_validate(args):
     payload = _read_json(args.payload)
     result = validate_payload(payload)
+    if args.layout:
+        lay = validate_layout(_read_json(args.layout), payload)
+        result = {
+            "ok": result["ok"] and lay["ok"],
+            "errors": result["errors"] + lay["errors"],
+            "warnings": result["warnings"] + lay["warnings"],
+        }
     _emit(result)
     return 0 if result["ok"] else 1
 
@@ -1164,6 +1520,94 @@ def cmd_match(args):
     result["ok"] = True
     _emit(result, args.out)
     return 0
+
+
+def cmd_layout(args):
+    analysis = _read_json(args.analysis) if args.analysis else None
+    pre_confirmation = False
+    if args.envelope:
+        env = _read_json(args.envelope)
+        payload = env.get("payload")
+        geometry = env.get("geometry")
+        if payload is None:
+            _emit({"ok": False, "error": "envelope has no payload"})
+            return 1
+        if geometry is None:
+            _emit({"ok": False, "error": "envelope has no geometry block — the page that produced "
+                                         "it predates the layout contract; regenerate the confirmation "
+                                         "page and re-confirm, or derive from --build"})
+            return 1
+    else:
+        pre_confirmation = True
+        build = _read_json(args.build)
+        payload = build.get("payload")
+        if payload is None:
+            _emit({"ok": False, "error": "build result has no payload"})
+            return 1
+        report = build.get("report") or {}
+        src = report.get("source_image") or {}
+        sha = None
+        path = src.get("path")
+        if path and args.build != "-":
+            for cand in (path, os.path.join(os.path.dirname(os.path.abspath(args.build)), path)):
+                try:
+                    with open(cand, "rb") as fh:
+                        sha = hashlib.sha256(fh.read()).hexdigest()
+                    break
+                except OSError:
+                    continue
+        geometry = {
+            "source_image": {
+                "sha256": sha,
+                "width": src.get("width"),
+                "height": src.get("height"),
+                "filename": os.path.basename(path) if path else None,
+            },
+            "elements": [
+                {
+                    "key": t.get("key"),
+                    "bucket": t.get("bucket"),
+                    "bbox": t.get("bbox"),
+                    "role": t.get("role"),
+                    "observed_text": t.get("observed_text"),
+                    "confidence": t.get("confidence"),
+                }
+                for t in report.get("elements") or []
+            ],
+            "client_rendered": [
+                {"role": c.get("role"), "bbox": c.get("bbox")}
+                for c in report.get("client_rendered") or []
+            ],
+        }
+        if analysis is None and isinstance(build.get("analysis"), dict):
+            analysis = build["analysis"]
+
+    layout, rep = build_layout(payload, geometry, analysis)
+    if pre_confirmation:
+        rep["warnings"].append(
+            "layout derived from the pre-confirmation build — geometry is the raw vision "
+            "pass, not developer-confirmed"
+        )
+    check = validate_layout(layout, payload)
+    errors = rep["errors"] + [e for e in check["errors"] if e not in rep["errors"]]
+    warnings = rep["warnings"] + [w for w in check["warnings"] if w not in rep["warnings"]]
+    ok = not errors
+    written = None
+    if args.out and ok:
+        with open(args.out, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(layout, indent=2, ensure_ascii=False) + "\n")
+        written = args.out
+    _emit({"ok": ok, "errors": errors, "warnings": warnings, "unplaced": rep["unplaced"],
+           "written": written, "layout": layout})
+    return 0 if ok else 1
+
+
+def cmd_remap(args):
+    record = _read_json(args.record)
+    analysis = _read_json(args.analysis)
+    result = remap_record(record, analysis)
+    _emit(result, args.out)
+    return 0 if result["ok"] else 1
 
 
 def main(argv=None):
@@ -1182,8 +1626,9 @@ def main(argv=None):
     p_build.add_argument("--out", help="Also write the result to this path.")
     p_build.set_defaults(func=cmd_build)
 
-    p_val = sub.add_parser("validate", help="Validate a template payload.")
+    p_val = sub.add_parser("validate", help="Validate a template payload (and optionally its layout artifact).")
     p_val.add_argument("--payload", required=True, help="Path to the payload JSON, or '-' for stdin.")
+    p_val.add_argument("--layout", help="Also validate this layout artifact against the payload (1:1 keys).")
     p_val.set_defaults(func=cmd_validate)
 
     p_match = sub.add_parser("match", help="Score existing templates as reuse candidates for an analysis.")
@@ -1191,6 +1636,24 @@ def main(argv=None):
     p_match.add_argument("--templates", required=True, help="JSON array of FULL template records (fetch each via the dashboard helper's `get`).")
     p_match.add_argument("--out", help="Also write the result to this path.")
     p_match.set_defaults(func=cmd_match)
+
+    p_layout = sub.add_parser(
+        "layout",
+        help="Confirmed envelope (or build result) -> layout artifact for UI generation.")
+    src = p_layout.add_mutually_exclusive_group(required=True)
+    src.add_argument("--envelope", help="Confirmed page hand-back ({payload, geometry, ...}) — the normal input.")
+    src.add_argument("--build", help="Pre-confirmation build result — geometry is the raw vision pass.")
+    p_layout.add_argument("--analysis", help="Optional analysis JSON: fills source-image path/size and feature.detected.area_bbox.")
+    p_layout.add_argument("--out", help="Write the bare layout artifact here (<template_key>.layout.json).")
+    p_layout.set_defaults(func=cmd_layout)
+
+    p_remap = sub.add_parser(
+        "remap",
+        help="Dashboard template record + tip-image analysis -> page-ready build keyed by the record's slots.")
+    p_remap.add_argument("--record", required=True, help="FULL template record (dashboard helper `get`), or '-' for stdin.")
+    p_remap.add_argument("--analysis", required=True, help="Vision analysis of the record's tip image.")
+    p_remap.add_argument("--out", help="Also write the result to this path.")
+    p_remap.set_defaults(func=cmd_remap)
 
     args = parser.parse_args(argv)
     return args.func(args)

@@ -80,9 +80,13 @@ leaves your machine.
 per bucket, the feature type and anything still flagged. The mockup itself is
 attached as the template's **tip image** — its face in the Dashboard constructor,
 so operators picking a template see the design it came from (say so if you'd
-rather skip that). The confirmed payload is written next to the mockup as JSON —
-keep it in your project as the canonical copy of the template's shape and the
-base for any later revision.
+rather skip that). Two JSON files are written next to the mockup — keep both in
+your project: the confirmed **template** (the canonical copy of its shape and
+the base for any later revision) and its **layout** (`<key>.layout.json`) —
+where each confirmed element sits on the design, normalized coordinates plus
+the client-rendered zones. The layout file is the input for downstream UI
+generation tooling, such as generating the pop-up's prefab in your game
+project.
 
 Two deliberate boundaries:
 

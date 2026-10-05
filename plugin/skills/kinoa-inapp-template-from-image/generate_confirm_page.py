@@ -18,7 +18,11 @@ a **Download JSON** button, a **Copy** button, and a visible <pre> block the
 developer can select by hand.
 
 The hand-back is stamped: `{"confirmed_at", "page_generated_at", "corrections",
-"payload"}`. `corrections` is page-side feedback for the analysis corpus — what
+"geometry", "payload"}`. `geometry` is the confirmed position of every shipped
+element (final bbox or null, by bucket+key) plus the client-rendered zones and
+the image fingerprint — the input `inapp_template_build.py layout` turns into
+the `<template_key>.layout.json` artifact. `corrections` is page-side feedback
+for the analysis corpus — what
 the human fixed about what the model saw: `missed` (rows added and placed here),
 `adjusted` (vision boxes moved/resized, final + `original_bbox`) and `excluded`
 (vision rows un-ticked — false positives), plus `source_image`: a fingerprint
@@ -826,8 +830,38 @@ function featuresOut() {
 // House hand-back contract: both established pages stamp their export, so a
 // stale file handed back to the skill is detectable.
 // Geometry NEVER enters the template payload — templates have no coordinates.
-// It rides alongside as feedback for the analysis corpus: "the pass missed this
-// element, and here is where it actually sits".
+// It ships in TWO sibling blocks: `geometry` (the confirmed position of every
+// element that ships — the source of the layout artifact) and `corrections`
+// (feedback for the analysis corpus: what the human fixed about what the model
+// saw).
+
+// The layout artifact's raw material: one entry per INCLUDED element, final
+// bbox (or null — placement undecided), in payload key terms. Excluded rows
+// ship nothing here; they are corrections-side only.
+function geometryOut() {
+  var els = [];
+  state.elements.forEach(function (e) {
+    if (!inc(e)) return;
+    els.push({
+      key: String(e.key).trim(),
+      bucket: e.bucket,
+      bbox: e.bbox ? clone(e.bbox) : null,
+      role: e.role || "",
+      observed_text: e.observedText || "",
+      confidence: e.confidence == null ? null : e.confidence,
+      hand_placed: !!e._pageNew,
+      adjusted: !!e._adjusted
+    });
+  });
+  return {
+    source_image: DATA.image_fingerprint || null,
+    elements: els,
+    client_rendered: (REPORT.client_rendered || []).map(function (c) {
+      return { role: c.role || "", bbox: c.bbox ? clone(c.bbox) : null };
+    })
+  };
+}
+
 function correctionsOut() {
   var missed = [], adjusted = [], excluded = [];
   var source = DATA.image_fingerprint || null;
@@ -855,6 +889,7 @@ function buildEnvelope() {
   return { confirmed_at: new Date().toISOString(),
            page_generated_at: DATA.generated_at || "",
            corrections: correctionsOut(),
+           geometry: geometryOut(),
            payload: buildTemplate() };
 }
 
