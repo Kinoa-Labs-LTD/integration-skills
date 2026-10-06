@@ -432,6 +432,12 @@ configuration**:
 
 No create, no update — path B is read-only against the dashboard.
 
+**Next step for Unity games — visualise it.** Keep `<template_key>.layout.json`:
+`kinoa-inapp-template-to-prefab` consumes it as its preferred layout source
+(`plan --layout-artifact`) and builds the prefab + view in the developer's open
+Unity Editor. Mention this in the hand-off when the project is a Unity SDK
+integration.
+
 ---
 
 ## Telemetry
