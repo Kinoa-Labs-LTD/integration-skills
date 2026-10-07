@@ -771,7 +771,9 @@ class TestMatchScoring(unittest.TestCase):
             [{"role": "cta_button", "observed_text": "WATCH AD"}],
             template_record(buttons=[button_slot("cta", ["close", "billing"])]),
         )
-        self.assertEqual(entry["missing"], [{"role": "cta_button", "bucket": "buttons"}])
+        self.assertEqual(
+            entry["missing"],
+            [{"need_index": 0, "role": "cta_button", "bucket": "buttons", "key_hint": "cta_button"}])
         self.assertEqual(entry["mapping"], [])
 
     def test_a_wording_inferred_action_matches_a_slot_offering_it(self):
@@ -779,7 +781,10 @@ class TestMatchScoring(unittest.TestCase):
             [{"role": "cta_button", "observed_text": "WATCH AD"}],
             template_record(buttons=[button_slot("cta", ["show_ad", "close"])]),
         )
-        self.assertEqual(entry["mapping"], [{"role": "cta_button", "bucket": "buttons", "slot": "cta"}])
+        self.assertEqual(
+            entry["mapping"],
+            [{"need_index": 0, "role": "cta_button", "bucket": "buttons",
+              "key_hint": "cta_button", "slot": "cta"}])
         self.assertEqual(entry["missing"], [])
 
     def test_explicitly_declared_actions_must_all_be_offered(self):
@@ -789,7 +794,9 @@ class TestMatchScoring(unittest.TestCase):
             [{"role": "cta_button", "click_action_types": ["show_ad", "billing"]}],
             template_record(buttons=[button_slot("cta", ["show_ad", "close"])]),
         )
-        self.assertEqual(entry["missing"], [{"role": "cta_button", "bucket": "buttons"}])
+        self.assertEqual(
+            entry["missing"],
+            [{"need_index": 0, "role": "cta_button", "bucket": "buttons", "key_hint": "cta_button"}])
         full = self.one(
             [{"role": "cta_button", "click_action_types": ["show_ad", "billing"]}],
             template_record(buttons=[button_slot("cta", ["show_ad", "billing", "close"])]),
@@ -808,14 +815,18 @@ class TestMatchScoring(unittest.TestCase):
             [{"role": "cta_button"}],
             template_record(buttons=[button_slot("updater", ["update_app_version"])]),
         )
-        self.assertEqual(miss["missing"], [{"role": "cta_button", "bucket": "buttons"}])
+        self.assertEqual(
+            miss["missing"],
+            [{"need_index": 0, "role": "cta_button", "bucket": "buttons", "key_hint": "cta_button"}])
 
     def test_a_custom_slot_must_carry_the_same_kind(self):
         wrong_kind = self.one(
             [{"role": "toggle_custom", "suggested_key": "show_area"}],
             template_record(customs=[custom_slot("show_area", "string")]),
         )
-        self.assertEqual(wrong_kind["missing"], [{"role": "toggle_custom", "bucket": "customs"}])
+        self.assertEqual(
+            wrong_kind["missing"],
+            [{"need_index": 0, "role": "toggle_custom", "bucket": "customs", "key_hint": "show_area"}])
         right_kind = self.one(
             [{"role": "toggle_custom", "suggested_key": "show_area"}],
             template_record(customs=[custom_slot("show_area", "boolean")]),
@@ -948,3 +959,405 @@ class TestMatchCLI(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --------------------------------------------------------------------------
+# layout — the geometry artifact (`<template_key>.layout.json`)
+# --------------------------------------------------------------------------
+
+
+def _geometry_for(payload, report, sha="f" * 64):
+    """Envelope-style geometry synthesized from a build result — what the
+    confirmation page's geometryOut() hands back when nothing was touched."""
+    src = report.get("source_image") or {}
+    return {
+        "source_image": {"sha256": sha, "width": src.get("width"),
+                         "height": src.get("height"), "filename": "mockup.png"},
+        "elements": [
+            {"key": t["key"], "bucket": t["bucket"], "bbox": t["bbox"], "role": t["role"],
+             "observed_text": t.get("observed_text"), "confidence": t.get("confidence")}
+            for t in report["elements"]
+        ],
+        "client_rendered": [
+            {"role": c["role"], "bbox": c.get("bbox")} for c in report["client_rendered"]
+        ],
+    }
+
+
+class TestBuildLayout(unittest.TestCase):
+    def setUp(self):
+        ana = copy.deepcopy(ONE_CTA)
+        ana["source_image"] = {"path": "art/mockup.png", "width": 720, "height": 960}
+        self.ana = ana
+        self.payload, self.report = build_mod.build_payload(ana)
+        self.geometry = _geometry_for(self.payload, self.report)
+
+    def test_elements_join_one_to_one_in_index_order(self):
+        layout, rep = build_mod.build_layout(self.payload, self.geometry, self.ana)
+        self.assertEqual(rep["errors"], [])
+        self.assertEqual(rep["unplaced"], [])
+        want = sum(len(self.payload[b]) for b in build_mod.BUCKETS)
+        self.assertEqual(len(layout["elements"]), want)
+        self.assertEqual([e["index"] for e in layout["elements"]], list(range(want)))
+        header = next(e for e in layout["elements"] if e["key"] == "header")
+        self.assertEqual(header["bucket"], "texts")
+        self.assertEqual(header["bbox"], {"x": 0.28, "y": 0.11, "w": 0.42, "h": 0.05})
+        self.assertEqual(header["observed_text"], "HEADER")
+
+    def test_contract_fields(self):
+        layout, _ = build_mod.build_layout(self.payload, self.geometry, self.ana)
+        self.assertEqual(layout["schema_version"], build_mod.LAYOUT_SCHEMA_VERSION)
+        self.assertEqual(layout["template_key"], self.payload["key"])
+        self.assertEqual(layout["coordinates"], {"space": "normalized", "origin": "top-left"})
+        self.assertEqual(layout["source_image"],
+                         {"width": 720, "height": 960, "sha256": "f" * 64, "path": "art/mockup.png"})
+        self.assertEqual(layout["feature"], {"type": "standard"})
+
+    def test_client_rendered_zones_ride_along_but_are_not_elements(self):
+        layout, _ = build_mod.build_layout(self.payload, self.geometry, self.ana)
+        roles = [c["role"] for c in layout["client_rendered"]]
+        self.assertIn("timer", roles)
+        self.assertIn("resource_area", roles)
+        self.assertIn("price_before_sale", roles)
+        element_keys = {e["key"] for e in layout["elements"]}
+        for r in roles:
+            self.assertNotIn(r, element_keys)
+
+    def test_missing_geometry_entry_flags_unplaced_never_drops(self):
+        geometry = copy.deepcopy(self.geometry)
+        geometry["elements"] = [g for g in geometry["elements"] if g["key"] != "header"]
+        layout, rep = build_mod.build_layout(self.payload, geometry, self.ana)
+        header = next(e for e in layout["elements"] if e["key"] == "header")
+        self.assertIsNone(header["bbox"])
+        self.assertTrue(header["unplaced"])
+        self.assertEqual(rep["unplaced"], ["texts.header"])
+        self.assertEqual(rep["errors"], [])
+
+    def test_stray_geometry_row_is_an_error(self):
+        geometry = copy.deepcopy(self.geometry)
+        geometry["elements"].append({"key": "ghost", "bucket": "texts",
+                                     "bbox": {"x": 0.1, "y": 0.1, "w": 0.1, "h": 0.1}})
+        _, rep = build_mod.build_layout(self.payload, geometry, self.ana)
+        self.assertTrue(any("ghost" in e for e in rep["errors"]))
+
+    def test_out_of_range_bbox_is_an_error_and_nulls_the_box(self):
+        geometry = copy.deepcopy(self.geometry)
+        geometry["elements"][0]["bbox"] = {"x": -0.2, "y": 0.1, "w": 0.5, "h": 0.5}
+        layout, rep = build_mod.build_layout(self.payload, geometry, self.ana)
+        self.assertTrue(any("bbox.x" in e for e in rep["errors"]))
+        bad = next(e for e in layout["elements"]
+                   if (e["bucket"], e["key"]) == (geometry["elements"][0]["bucket"],
+                                                  geometry["elements"][0]["key"]))
+        self.assertIsNone(bad["bbox"])
+        self.assertTrue(bad["unplaced"])
+
+    def test_edge_overflow_is_a_warning_not_an_error(self):
+        geometry = copy.deepcopy(self.geometry)
+        geometry["elements"][0]["bbox"] = {"x": 0.6, "y": 0.1, "w": 0.5, "h": 0.5}
+        _, rep = build_mod.build_layout(self.payload, geometry, self.ana)
+        self.assertEqual(rep["errors"], [])
+        self.assertTrue(any("past the image edge" in w for w in rep["warnings"]))
+
+    def test_area_bbox_feeds_feature_when_valid(self):
+        ana = copy.deepcopy(self.ana)
+        ana["feature"] = {"type": "milestone",
+                          "detected": {"milestone_count": 3,
+                                       "area_bbox": {"x": 0.1, "y": 0.4, "w": 0.8, "h": 0.3}}}
+        payload, report = build_mod.build_payload(ana)
+        layout, rep = build_mod.build_layout(payload, _geometry_for(payload, report), ana)
+        self.assertEqual(layout["feature"]["type"], "milestone")
+        self.assertEqual(layout["feature"]["area_bbox"], {"x": 0.1, "y": 0.4, "w": 0.8, "h": 0.3})
+
+    def test_invalid_area_bbox_is_dropped_with_a_warning(self):
+        ana = copy.deepcopy(self.ana)
+        ana["feature"] = {"type": "milestone", "detected": {"area_bbox": {"x": 2, "y": 0, "w": 1, "h": 1}}}
+        payload, report = build_mod.build_payload(ana)
+        layout, rep = build_mod.build_layout(payload, _geometry_for(payload, report), ana)
+        self.assertNotIn("area_bbox", layout["feature"])
+        self.assertTrue(any("area_bbox dropped" in w for w in rep["warnings"]))
+
+    def test_client_rendered_falls_back_to_the_analysis(self):
+        geometry = copy.deepcopy(self.geometry)
+        del geometry["client_rendered"]
+        layout, _ = build_mod.build_layout(self.payload, geometry, self.ana)
+        self.assertIn("timer", [c["role"] for c in layout["client_rendered"]])
+
+    def test_hand_placed_and_adjusted_flags_survive(self):
+        geometry = copy.deepcopy(self.geometry)
+        geometry["elements"][0]["hand_placed"] = True
+        geometry["elements"][1]["adjusted"] = True
+        layout, _ = build_mod.build_layout(self.payload, geometry, self.ana)
+        flags = {(e["bucket"], e["key"]): e for e in layout["elements"]}
+        g0, g1 = geometry["elements"][0], geometry["elements"][1]
+        self.assertTrue(flags[(g0["bucket"], g0["key"])].get("hand_placed"))
+        self.assertTrue(flags[(g1["bucket"], g1["key"])].get("adjusted"))
+
+    def test_missing_fingerprint_and_size_warn(self):
+        geometry = copy.deepcopy(self.geometry)
+        geometry["source_image"] = None
+        ana = copy.deepcopy(self.ana)
+        del ana["source_image"]
+        _, rep = build_mod.build_layout(self.payload, geometry, ana)
+        self.assertTrue(any("sha256" in w for w in rep["warnings"]))
+        self.assertTrue(any("pixel size" in w for w in rep["warnings"]))
+
+
+class TestValidateLayout(unittest.TestCase):
+    def setUp(self):
+        ana = copy.deepcopy(ONE_CTA)
+        ana["source_image"] = {"path": "m.png", "width": 720, "height": 960}
+        self.ana = ana
+        self.payload, report = build_mod.build_payload(ana)
+        self.layout, _ = build_mod.build_layout(
+            self.payload, _geometry_for(self.payload, report), ana)
+
+    def test_built_layout_validates_against_its_payload(self):
+        res = build_mod.validate_layout(self.layout, self.payload)
+        self.assertTrue(res["ok"], res["errors"])
+
+    def test_missing_layout_entry_is_an_error(self):
+        layout = copy.deepcopy(self.layout)
+        layout["elements"] = [e for e in layout["elements"] if e["key"] != "cta_button"]
+        res = build_mod.validate_layout(layout, self.payload)
+        self.assertFalse(res["ok"])
+        self.assertTrue(any("has no layout entry" in e for e in res["errors"]))
+
+    def test_extra_layout_entry_is_an_error(self):
+        layout = copy.deepcopy(self.layout)
+        layout["elements"].append({"key": "ghost", "bucket": "texts", "index": 99,
+                                   "bbox": {"x": 0.1, "y": 0.1, "w": 0.1, "h": 0.1}})
+        res = build_mod.validate_layout(layout, self.payload)
+        self.assertFalse(res["ok"])
+        self.assertTrue(any("not in the payload" in e for e in res["errors"]))
+
+    def test_index_mismatch_is_an_error(self):
+        layout = copy.deepcopy(self.layout)
+        layout["elements"][0]["index"] = 42
+        res = build_mod.validate_layout(layout, self.payload)
+        self.assertFalse(res["ok"])
+        self.assertTrue(any("!= payload index" in e for e in res["errors"]))
+
+    def test_template_key_mismatch_is_an_error(self):
+        layout = copy.deepcopy(self.layout)
+        layout["template_key"] = "other"
+        res = build_mod.validate_layout(layout, self.payload)
+        self.assertTrue(any("template_key" in e for e in res["errors"]))
+
+    def test_wrong_coordinate_convention_is_an_error(self):
+        layout = copy.deepcopy(self.layout)
+        layout["coordinates"] = {"space": "pixels", "origin": "top-left"}
+        res = build_mod.validate_layout(layout)
+        self.assertFalse(res["ok"])
+
+    def test_null_bbox_without_unplaced_flag_warns(self):
+        layout = copy.deepcopy(self.layout)
+        layout["elements"][0]["bbox"] = None
+        res = build_mod.validate_layout(layout)
+        self.assertTrue(any("not flagged 'unplaced'" in w for w in res["warnings"]))
+
+
+# --------------------------------------------------------------------------
+# remap — layout path B (existing dashboard template + tip-image analysis)
+# --------------------------------------------------------------------------
+
+
+class TestRemapRecord(unittest.TestCase):
+    def setUp(self):
+        ana = copy.deepcopy(ONE_CTA)
+        ana["source_image"] = {"path": "tip.png", "width": 720, "height": 960}
+        self.ana = ana
+        payload, _ = build_mod.build_payload(ana)
+        self.record = dict(payload, id="tpl-1", status="draft")
+
+    def test_happy_path_keys_come_from_the_record(self):
+        res = build_mod.remap_record(self.record, self.ana)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["payload"]["key"], self.record["key"])
+        record_keys = {(b, i["key"]) for b in build_mod.BUCKETS for i in self.record[b]}
+        trace_keys = {(t["bucket"], t["key"]) for t in res["report"]["elements"]}
+        self.assertEqual(trace_keys, record_keys)
+        self.assertTrue(all(t["bbox"] for t in res["report"]["elements"]))
+        self.assertEqual(res["match"]["unmatched_slots"], [])
+        self.assertTrue(res["validation"]["ok"])
+
+    def test_remap_feeds_the_layout_pipeline(self):
+        res = build_mod.remap_record(self.record, self.ana)
+        geometry = _geometry_for(res["payload"], res["report"])
+        layout, rep = build_mod.build_layout(res["payload"], geometry, self.ana)
+        self.assertEqual(rep["errors"], [])
+        check = build_mod.validate_layout(layout, res["payload"])
+        self.assertTrue(check["ok"], check["errors"])
+
+    def test_feature_type_mismatch_fails_closed(self):
+        ana = copy.deepcopy(self.ana)
+        ana["feature"] = {"type": "milestone"}
+        res = build_mod.remap_record(self.record, ana)
+        self.assertFalse(res["ok"])
+        self.assertIn("feature type mismatch", res["reason"])
+
+    def test_alien_elements_fail_closed_with_the_mismatch(self):
+        ana = copy.deepcopy(self.ana)
+        ana["elements"] = ana["elements"] + [
+            {"role": "cta_button", "suggested_key": "second_cta", "observed_text": "$9.99",
+             "bbox": {"x": 0.1, "y": 0.9, "w": 0.3, "h": 0.06}},
+        ]
+        res = build_mod.remap_record(self.record, ana)
+        self.assertFalse(res["ok"])
+        self.assertIn("stale or", res["reason"])
+        self.assertEqual(len(res["mismatch"]), 1)
+        self.assertEqual(res["mismatch"][0]["bucket"], "buttons")
+
+    def test_unmatched_slots_warn_and_stay_out_of_the_trace(self):
+        ana = copy.deepcopy(self.ana)
+        ana["elements"] = [el for el in ana["elements"] if el["role"] != "fine_print"]
+        res = build_mod.remap_record(self.record, ana)
+        self.assertTrue(res["ok"], res)
+        self.assertIn("texts.fine_print", res["match"]["unmatched_slots"])
+        self.assertTrue(any("bbox null" in w for w in res["report"]["warnings"]))
+        self.assertNotIn("fine_print", [t["key"] for t in res["report"]["elements"]])
+
+    def test_duplicate_roles_join_their_own_bboxes(self):
+        # Two elements with the SAME role must each land on its own slot with
+        # its own bbox — the need_index join is what prevents the old
+        # role-keyed ambiguity.
+        ana = analysis([
+            {"role": "label_text", "suggested_key": "row_one",
+             "bbox": {"x": 0.1, "y": 0.1, "w": 0.3, "h": 0.05}, "observed_text": "one"},
+            {"role": "label_text", "suggested_key": "row_two",
+             "bbox": {"x": 0.1, "y": 0.3, "w": 0.3, "h": 0.05}, "observed_text": "two"},
+        ])
+        record = template_record(texts=[text_slot("row_one"), text_slot("row_two")])
+        res = build_mod.remap_record(record, ana)
+        self.assertTrue(res["ok"], res)
+        by_key = {t["key"]: t for t in res["report"]["elements"]}
+        self.assertEqual(by_key["row_one"]["bbox"]["y"], 0.1)
+        self.assertEqual(by_key["row_two"]["bbox"]["y"], 0.3)
+
+    def test_summary_record_fails_closed(self):
+        res = build_mod.remap_record({"key": "t", "buttonsCount": 2}, self.ana)
+        self.assertFalse(res["ok"])
+        self.assertIn("summary record", res["reason"])
+
+
+class TestLayoutCLI(unittest.TestCase):
+    def run_cli(self, argv):
+        import io
+        from contextlib import redirect_stdout
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = build_mod.main(argv)
+        return code, json.loads(buf.getvalue())
+
+    def _tmp(self, name, obj):
+        path = os.path.join(self.dir, name)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(obj, fh)
+        return path
+
+    def setUp(self):
+        import tempfile
+
+        self.dir = tempfile.mkdtemp()
+        ana = copy.deepcopy(ONE_CTA)
+        ana["source_image"] = {"path": "mockup.png", "width": 720, "height": 960}
+        self.ana = ana
+        payload, report = build_mod.build_payload(ana)
+        self.payload, self.report = payload, report
+        self.build_path = self._tmp("build.json", {
+            "ok": True, "payload": payload, "report": report,
+            "validation": build_mod.validate_payload(payload)})
+
+    def tearDown(self):
+        import shutil
+
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_layout_from_build_writes_the_bare_artifact(self):
+        out = os.path.join(self.dir, "t.layout.json")
+        code, res = self.run_cli(["layout", "--build", self.build_path,
+                                  "--analysis", self._tmp("a.json", self.ana), "--out", out])
+        self.assertEqual(code, 0, res)
+        self.assertTrue(res["ok"])
+        self.assertTrue(any("pre-confirmation" in w for w in res["warnings"]))
+        with open(out, encoding="utf-8") as fh:
+            artifact = json.load(fh)
+        self.assertEqual(artifact, res["layout"])
+        self.assertEqual(artifact["template_key"], self.payload["key"])
+
+    def test_layout_from_confirmed_envelope(self):
+        env = {"confirmed_at": "2026-09-30T00:00:00Z", "page_generated_at": "x",
+               "corrections": {}, "geometry": _geometry_for(self.payload, self.report),
+               "payload": self.payload}
+        code, res = self.run_cli(["layout", "--envelope", self._tmp("env.json", env),
+                                  "--analysis", self._tmp("a.json", self.ana)])
+        self.assertEqual(code, 0, res)
+        self.assertTrue(res["ok"])
+        self.assertFalse(any("pre-confirmation" in w for w in res["warnings"]))
+        self.assertEqual(res["layout"]["source_image"]["sha256"], "f" * 64)
+
+    def test_envelope_without_geometry_fails_with_guidance(self):
+        env = {"confirmed_at": "x", "corrections": {}, "payload": self.payload}
+        code, res = self.run_cli(["layout", "--envelope", self._tmp("env.json", env)])
+        self.assertEqual(code, 1)
+        self.assertIn("no geometry block", res["error"])
+
+    def test_validate_accepts_the_layout_against_the_payload(self):
+        env = {"geometry": _geometry_for(self.payload, self.report), "payload": self.payload}
+        out = os.path.join(self.dir, "t.layout.json")
+        self.run_cli(["layout", "--envelope", self._tmp("env.json", env),
+                      "--analysis", self._tmp("a.json", self.ana), "--out", out])
+        code, res = self.run_cli(["validate", "--payload", self._tmp("p.json", self.payload),
+                                  "--layout", out])
+        self.assertEqual(code, 0, res)
+        self.assertTrue(res["ok"])
+
+    def test_remap_cli_round_trip(self):
+        record = dict(self.payload, id="tpl-9", status="active")
+        code, res = self.run_cli(["remap", "--record", self._tmp("r.json", record),
+                                  "--analysis", self._tmp("a.json", self.ana)])
+        self.assertEqual(code, 0, res)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["match"]["verdict"], "reuse")
+
+
+class TestMilestoneMenuVocabulary(unittest.TestCase):
+    """Milestone CTA menus accept nine actions — `custom` is not one of them."""
+
+    def _milestone_analysis(self, detected):
+        return analysis(
+            [{"role": "background_image", "bbox": {"x": 0, "y": 0, "w": 1, "h": 1}},
+             {"role": "close_button", "bbox": {"x": 0.8, "y": 0.02, "w": 0.1, "h": 0.05}}],
+            feature={"type": "milestone", "detected": detected},
+        )
+
+    def test_derived_menus_filter_custom(self):
+        payload, _ = build_mod.build_payload(
+            self._milestone_analysis({"main_actions": ["custom", "billing"],
+                                      "milestone_actions": ["collect_resource"]}))
+        block = payload["features"]["milestone"]
+        self.assertEqual(block["mainActionTypes"], ["billing"])
+        self.assertEqual(block["milestonesActionTypes"], ["collect_resource"])
+
+    def test_custom_only_menu_degrades_to_omitted(self):
+        payload, _ = build_mod.build_payload(
+            self._milestone_analysis({"main_actions": ["custom"]}))
+        self.assertNotIn("mainActionTypes", payload["features"]["milestone"])
+
+    def test_mission_completion_cta_still_accepts_custom(self):
+        ana = analysis(
+            [{"role": "background_image", "bbox": {"x": 0, "y": 0, "w": 1, "h": 1}}],
+            feature={"type": "mission", "detected": {"completion_actions": ["custom"]}},
+        )
+        payload, _ = build_mod.build_payload(ana)
+        self.assertEqual(payload["features"]["mission"]["completionCta"], ["custom"])
+
+    def test_remap_strips_custom_from_a_legacy_record(self):
+        ana = self._milestone_analysis({})
+        payload, _ = build_mod.build_payload(ana)
+        record = dict(payload, id="tpl-legacy", status="active")
+        record["features"] = {"milestone": dict(payload["features"]["milestone"],
+                                                mainActionTypes=["custom", "billing"])}
+        res = build_mod.remap_record(record, ana)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["payload"]["features"]["milestone"]["mainActionTypes"], ["billing"])

@@ -1,0 +1,164 @@
+{
+  "id": "44444444-4444-4444-4444-444444444444",
+  "name": "One CTA Offer",
+  "key": "one_cta_offer",
+  "description": "",
+  "gameId": "11111111-1111-1111-1111-111111111111",
+  "status": "draft",
+  "tipImageUrl": null,
+  "featureType": "standard",
+  "features": {},
+  "images": [
+    {
+      "key": "background_image",
+      "name": "Background Image",
+      "index": 1,
+      "description": "",
+      "canBeHidden": true,
+      "customFields": []
+    }
+  ],
+  "buttons": [
+    {
+      "key": "close_button",
+      "name": "Close",
+      "index": 0,
+      "description": "",
+      "canBeHidden": true,
+      "customFields": [],
+      "clickActionType": [
+        "close"
+      ]
+    },
+    {
+      "key": "cta_button",
+      "name": "CTA",
+      "index": 5,
+      "description": "",
+      "canBeHidden": false,
+      "customFields": [],
+      "clickActionType": [
+        "close",
+        "show_ad",
+        "billing",
+        "collect_resource",
+        "deep_link",
+        "soft_billing"
+      ],
+      "requiredItemsCount": 1
+    }
+  ],
+  "texts": [
+    {
+      "key": "header",
+      "name": "Header",
+      "index": 2,
+      "nullable": false,
+      "description": "",
+      "canBeHidden": true,
+      "customFields": [
+        {
+          "key": "text_color",
+          "kind": "string",
+          "name": "Text Color",
+          "nullable": true,
+          "description": "",
+          "defaultValue": "#FFFFFF"
+        }
+      ]
+    },
+    {
+      "key": "upper_text",
+      "name": "Upper Text",
+      "index": 3,
+      "nullable": true,
+      "description": "",
+      "canBeHidden": true,
+      "customFields": [
+        {
+          "key": "text_color",
+          "kind": "string",
+          "name": "Text Color",
+          "nullable": true,
+          "description": "",
+          "defaultValue": "#FFFFFF"
+        }
+      ]
+    },
+    {
+      "key": "resource_badge",
+      "name": "Resource Badge",
+      "index": 4,
+      "nullable": true,
+      "description": "",
+      "canBeHidden": true,
+      "customFields": [
+        {
+          "key": "text_color",
+          "kind": "string",
+          "name": "Text Color",
+          "nullable": true,
+          "description": "",
+          "defaultValue": "#FFFFFF"
+        },
+        {
+          "key": "badge_color",
+          "kind": "string",
+          "name": "Badge Color",
+          "nullable": true,
+          "description": "",
+          "defaultValue": ""
+        }
+      ]
+    },
+    {
+      "key": "price_cut_badge",
+      "name": "Price Cut Badge",
+      "index": 6,
+      "nullable": true,
+      "description": "",
+      "canBeHidden": true,
+      "customFields": [
+        {
+          "key": "text_color",
+          "kind": "string",
+          "name": "Text Color",
+          "nullable": true,
+          "description": "",
+          "defaultValue": "#FFFFFF"
+        }
+      ]
+    },
+    {
+      "key": "fine_print",
+      "name": "Fine Print",
+      "index": 7,
+      "nullable": true,
+      "description": "",
+      "canBeHidden": true,
+      "customFields": [
+        {
+          "key": "text_color",
+          "kind": "string",
+          "name": "Text Color",
+          "nullable": true,
+          "description": "",
+          "defaultValue": "#FFFFFF"
+        }
+      ]
+    }
+  ],
+  "customs": [
+    {
+      "key": "show_resource_area",
+      "kind": "boolean",
+      "name": "Show Resource Area",
+      "index": 8,
+      "nullable": true,
+      "description": "Operator switch for the resource area",
+      "canBeHidden": true,
+      "customFields": [],
+      "defaultValue": false
+    }
+  ]
+}

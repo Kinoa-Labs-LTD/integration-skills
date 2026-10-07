@@ -80,9 +80,13 @@ leaves your machine.
 per bucket, the feature type and anything still flagged. The mockup itself is
 attached as the template's **tip image** — its face in the Dashboard constructor,
 so operators picking a template see the design it came from (say so if you'd
-rather skip that). The confirmed payload is written next to the mockup as JSON —
-keep it in your project as the canonical copy of the template's shape and the
-base for any later revision.
+rather skip that). Two JSON files are written next to the mockup — keep both in
+your project: the confirmed **template** (the canonical copy of its shape and
+the base for any later revision) and its **layout** (`<key>.layout.json`) —
+where each confirmed element sits on the design, normalized coordinates plus
+the client-rendered zones. The layout file is the input for downstream UI
+generation tooling, such as generating the pop-up's prefab in your game
+project.
 
 Two deliberate boundaries:
 
@@ -207,6 +211,22 @@ no compatible slot anywhere.
 
 Fewer templates is better: every new one is a shape someone has to maintain — and
 one that live campaigns may come to depend on.
+
+## Next step: a Unity prefab from the template
+
+For games on the Kinoa Unity SDK, a second module turns the registered template
+into a working popup: `kinoa-inapp-template-to-prefab`. It reads the template
+from the Dashboard, looks at one or two of your existing popup prefabs to copy
+their conventions (text system, font, panel size, close button), places every
+slot where the mockup had it — reusing the `<template_key>.layout.json` this
+module writes next to the template, so keep it (for a template that only exists
+on the Dashboard, this module derives one from its tip image) — and builds the prefab inside your open Unity Editor
+through a Unity MCP server, together with a view script that binds the in-app
+message and routes every button. Three things stay yours: how remote images are
+downloaded, how store prices are looked up, and where resource icons come from.
+The generated code calls hooks for those; the module wires your existing methods
+when you point at them and otherwise leaves clearly marked `TODO(kinoa-prefab)`
+lines rather than inventing a downloader.
 
 ## FAQ and troubleshooting
 

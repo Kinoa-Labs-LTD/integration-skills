@@ -1,0 +1,75 @@
+{
+  "skill_name": "kinoa-inapp-template-to-prefab",
+  "notes": "Behavioural cases for the template -> Unity prefab skill. Cases that need a live Unity MCP are marked 'live-' and only run on a machine with an open Unity project + bridge; the portable core checks gating and delegation behaviour.",
+  "evals": [
+    {
+      "id": 1,
+      "name": "stops-without-unity-mcp",
+      "prompt": "Make a Unity prefab for our Kinoa in-app template 44444444-4444-4444-4444-444444444444.",
+      "expected_output": "The skill triggers and its FIRST action is the Unity MCP check (ToolSearch for unity tools + a liveness probe). With no Unity MCP connected it STOPS: it names the three supported servers (CoderGamester mcp-unity, CoplayDev unity-mcp, IvanMurzak Unity-MCP), says the project must be open with the bridge started, and does not fall back to hand-writing prefab YAML or to 'plan only' unless the developer explicitly asks.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "no-trigger-for-template-creation",
+      "prompt": "Here is a mockup PNG of our offer popup — build the Kinoa in-app template from it.",
+      "expected_output": "kinoa-inapp-template-to-prefab does NOT trigger; the request routes to kinoa-inapp-template-from-image (mockup -> template structure). No Unity MCP check, no prefab plan.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "prefers-layout-recognition-output",
+      "prompt": "Visualise template one_cta_offer as a prefab. When we created it with the mockup skill we kept plugin/skills/kinoa-inapp-template-to-prefab/evals/fixtures/one-cta/one_cta_offer.layout.json and plugin/skills/kinoa-inapp-template-to-prefab/evals/fixtures/one-cta/build_result_one_cta.json; the dashboard record also has a tip image.",
+      "expected_output": "At Phase 3 the skill recommends option A (the existing <template_key>.layout.json artifact) over build_result.json and over re-deriving a layout from the tip image, passes it to `inapp_prefab_plan.py plan --layout-artifact`, and shows the plan report (layout_source, unplaced, estimated_positions, client_zones, warnings) before generating. The skill does not run its own ungated vision pass over the tip image.",
+      "files": [
+        "plugin/skills/kinoa-inapp-template-to-prefab/evals/fixtures/one-cta/one_cta_offer.layout.json",
+        "plugin/skills/kinoa-inapp-template-to-prefab/evals/fixtures/one-cta/template_one_cta.json"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "never-writes-image-download",
+      "prompt": "Generate the prefab + view for template one_cta_offer. Our game has no image cache yet — just download the background from the URL in the view.",
+      "expected_output": "The skill refuses to write a downloader: it explains remote images go through KinoaInAppHooks.LoadSpriteFromUrl, greps the project for an existing loader, asks which method to wire, and when none exists leaves the `TODO(kinoa-prefab)` with a runtime warning. The generated files contain no UnityWebRequest code; the hand-off lists the TODO with file:line.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "name": "delegated-dashboard-read-and-credential-hygiene",
+      "prompt": "Build the prefab for in-app template 44444444-4444-4444-4444-444444444444; credentials are in ~/.kinoa/session.env.",
+      "expected_output": "Credentials are read via kinoa_init.py show (never cat). The template record comes from `kinoa_dashboard_inapp_template.py get --id ...`; the skill makes no direct HTTP call. Generated C# contains no dashboard.kinoa.io URL and no bearer token.",
+      "files": []
+    },
+    {
+      "id": 6,
+      "name": "facade-edits-are-limited-and-gated",
+      "prompt": "Generate the view for template one_cta_offer; our project already has KinoaUiService and KinoaInAppTemplateConstants from the Kinoa SDK samples.",
+      "expected_output": "The view is generated with --facade present so clicks delegate to KinoaUiService.Instance.HandleInAppButtonClickAsync(Message, key). The skill shows the constant + allowlist-arm snippets and asks before applying them with Edit; it does NOT edit RouteByClickConfigAsync TODOs or CreateGameInApp — the create_game_inapp snippet is handed off for the /kinoa messaging --merge flow.",
+      "files": []
+    },
+    {
+      "id": 7,
+      "name": "live-compile-gate-and-build-report",
+      "prompt": "Unity is open with mcp-unity running. Build the prefab for template one_cta_offer using the fixture build_result and our OfferPopup.prefab as the style reference.",
+      "expected_output": "Phase 6 refreshes/recompiles through the MCP, reads the console for `error CS`, runs the menu item 'Tools/Kinoa/In-Apps/Build Prefabs From Plans', then READS the <key>.build-report.json from disk and reports ok/fields_missing/errors truthfully. A failed compile is reported as such — the skill never claims the prefab exists without the report and a Glob hit on the prefab path.",
+      "files": []
+    },
+    {
+      "id": 8,
+      "name": "tip-image-layout-goes-through-from-image-path-b",
+      "prompt": "Build the prefab for dashboard template 44444444-4444-4444-4444-444444444444. Nobody kept a layout file, but the record has a tip image.",
+      "expected_output": "At Phase 3 the skill picks option B: it first shows the record's tipImageUrl and gets a yes, then invokes kinoa-inapp-template-from-image for the layout of this existing template (that skill's path B — fetch record, analyse tip image, `remap` gate, developer confirmation, writes <template_key>.layout.json) and then plans with `--layout-artifact`. If `remap` reports a mismatch, the skill surfaces it and offers the no-layout option or a different mockup; it never positions slots from an image that failed the gate.",
+      "files": []
+    },
+    {
+      "id": 9,
+      "name": "layout-artifact-for-another-template-is-refused",
+      "prompt": "Make the prefab for template one_cta_offer using this layout: plugin/skills/kinoa-inapp-template-to-prefab/evals/fixtures/one-cta/summer_bundle.layout.json",
+      "expected_output": "When the artifact's template_key does not match the template, `plan --layout-artifact` exits 2 with error layout_template_mismatch and the skill asks for the matching artifact instead of editing template_key or planning without it.",
+      "files": [
+        "plugin/skills/kinoa-inapp-template-to-prefab/evals/fixtures/one-cta/summer_bundle.layout.json",
+        "plugin/skills/kinoa-inapp-template-to-prefab/evals/fixtures/one-cta/template_one_cta.json"
+      ]
+    }
+  ]
+}
