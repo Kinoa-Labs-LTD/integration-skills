@@ -150,8 +150,11 @@ recommended first):
   and copy it to `.kinoa-inapp-prefab/<key>/<key>.layout.json`.
 - **B — Derive the artifact from the template's tip image.** The template
   already lives on the dashboard but nobody has its layout. Before delegating,
-  show the developer the record's `tipImageUrl` and get a yes: it is read from
-  a Dashboard record, not typed by them, and the sibling skill downloads it.
+  show the developer the record's tip-image reference — `tipImageUrl` when it
+  was attached as a link, or the uploaded image when `tipImageUrl` is null and
+  `tipImageBlob` is set (a `get` shows it as `<blob: N chars>`) — and get a yes:
+  it is read from a Dashboard record, not typed by them, and the sibling skill
+  materialises it with the helper's `tip-image` (url first, then blob).
   Then invoke the sibling skill — `kinoa-dashboard:kinoa-inapp-template-from-image`
   when installed as the plugin, `kinoa-inapp-template-from-image` under the
   legacy symlink install — and ask for the layout of this existing template,

@@ -404,9 +404,16 @@ configuration**:
 1. Fetch the FULL record via the sibling helper:
    `python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-inapp-template/kinoa_dashboard_inapp_template.py" get --id <id>`
    (or resolve the key via `list` first).
-2. Obtain the image: download `tipImageUrl` to a working file. No tip image on
-   the record → ask the developer for the mockup the template was built from.
-   No image at all → stop and say so; a layout is never invented.
+2. Obtain the image with the helper's `tip-image`:
+   `python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-inapp-template/kinoa_dashboard_inapp_template.py" tip-image --id <id> --out-dir <workdir>`.
+   A record carries its tip image through one of two transports —
+   `tipImageUrl` (attached as a link) or `tipImageBlob` (uploaded as a file) —
+   and the helper resolves url → blob. The file lands in `<workdir>` as
+   `<key>.tip.<ext>`; the output also returns the full record under
+   `response`, so this call can replace step 1's `get`. `source: none` — both
+   transports came up empty — is the ONLY case that means the record has no tip
+   image: then ask the developer for the mockup the template was built from. No
+   image at all → stop and say so; a layout is never invented.
 3. Run the Phase 2 vision analysis on that image (same rules, same schema).
 4. Gate the pair:
 

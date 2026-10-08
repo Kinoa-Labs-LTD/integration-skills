@@ -220,7 +220,7 @@ from the Dashboard, looks at one or two of your existing popup prefabs to copy
 their conventions (text system, font, panel size, close button), places every
 slot where the mockup had it — reusing the `<template_key>.layout.json` this
 module writes next to the template, so keep it (for a template that only exists
-on the Dashboard, this module derives one from its tip image) — and builds the prefab inside your open Unity Editor
+on the Dashboard, this module derives one from its tip image — whether it was attached as a link or uploaded as a file) — and builds the prefab inside your open Unity Editor
 through a Unity MCP server, together with a view script that binds the in-app
 message and routes every button. Three things stay yours: how remote images are
 downloaded, how store prices are looked up, and where resource icons come from.

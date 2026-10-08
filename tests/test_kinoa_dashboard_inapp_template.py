@@ -9,7 +9,9 @@ Run from the repo root:
 """
 
 import argparse
+import base64
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -33,6 +35,15 @@ DEFAULT_BASE = "https://dashboard.kinoa.io/api/message_templates"
 
 # Smallest thing that sniffs as a PNG: the 8-byte signature + filler.
 PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"pixel-data"
+
+# Long enough that the server's 60-char base64 line wrapping actually kicks in
+# (530 bytes -> 708 base64 chars -> 12 lines).
+BIG_PNG_BYTES = PNG_BYTES + bytes(range(256)) * 2
+
+# Smallest thing that sniffs as a JPEG: the SOI marker + filler.
+JPEG_BYTES = b"\xff\xd8\xff\xe0" + b"jfif-data"
+
+TIP_URL = "https://cdn.example/t.png"
 
 
 def _load_module():
@@ -87,6 +98,26 @@ def _stored_record(**overrides):
     }
     record.update(overrides)
     return record
+
+
+def _tip_record(**overrides):
+    """A stored template as the by-id GET returns it, reduced to what
+    `tip-image` reads: the key plus both tip-image transports (neither set)."""
+    record = {"id": TEMPLATE_ID, "key": "summer_offer", "tipImageUrl": None, "tipImageBlob": None}
+    record.update(overrides)
+    return record
+
+
+def _b64(data):
+    return base64.b64encode(data).decode("ascii")
+
+
+def _server_blob(data):
+    """tipImageBlob exactly as the live server returns a file-uploaded image:
+    BARE base64 (no data: prefix), a newline after every 60 chars, the last
+    line included (`iVBORw0KGgo...` ... `...=` + newline)."""
+    flat = _b64(data)
+    return "".join(flat[i:i + 60] + "\n" for i in range(0, len(flat), 60))
 
 
 class InAppTemplateHelperTests(unittest.TestCase):
@@ -950,6 +981,358 @@ class InAppTemplateHelperTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertFalse(result["ok"])
         self.assertEqual(result["response"], "boom")
+
+    # ---- tip-image (read side: tipImageUrl -> tipImageBlob -> none) ----
+
+    def _tip_ns(self, out_dir=None):
+        return argparse.Namespace(id=TEMPLATE_ID,
+                                  out_dir=self._tmp.name if out_dir is None else out_dir)
+
+    def _mock_download(self, responses):
+        """Stand-in for _download_bytes: records every url into self.downloads
+        and pops a canned (status, bytes). It takes the url and nothing else, so
+        no header could ride along; an unexpected download pops an empty queue
+        and raises IndexError, so it can never pass silently."""
+        queue = list(responses)
+        self.downloads = []
+
+        def fake_download(url):
+            self.downloads.append(url)
+            return queue.pop(0)
+
+        self.mod._download_bytes = fake_download
+
+    def _tip_call(self, record, downloads=(), out_dir=None, status=200):
+        """cmd_tip_image with the record GET answering `status` + `record` as JSON."""
+        self._mock_download(downloads)
+        return self._call(self.mod.cmd_tip_image, self._tip_ns(out_dir),
+                          [(status, json.dumps(record))])
+
+    def _fresh_dir(self, name="fresh"):
+        path = os.path.join(self._tmp.name, name)
+        os.makedirs(path)
+        return path
+
+    def _read_bytes(self, path):
+        with open(path, "rb") as f:
+            return f.read()
+
+    def test_tip_image_url_mode_downloads_and_writes_file(self):
+        # The first transport: a non-empty tipImageUrl is downloaded and the
+        # bytes land as <out-dir>/<key>.tip.<ext>.
+        record = _tip_record(tipImageUrl=TIP_URL)
+        code, result = self._tip_call(record, downloads=[(200, PNG_BYTES)])
+        self.assertEqual(code, 0)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["http_status"], 200)
+        self.assertEqual(result["id"], TEMPLATE_ID)
+        self.assertEqual(result["key"], "summer_offer")
+        self.assertEqual(result["source"], "url")
+        path = os.path.join(self._tmp.name, "summer_offer.tip.png")
+        self.assertEqual(result["path"], path)
+        self.assertEqual(self._read_bytes(path), PNG_BYTES)
+        self.assertEqual(result["bytes"], len(PNG_BYTES))
+        self.assertEqual(result["content_type"], "image/png")
+        self.assertEqual(result["sha256"], hashlib.sha256(PNG_BYTES).hexdigest())
+        # ONE dashboard call — the record GET on the id route, with admin auth
+        self.assertEqual(len(self.requests), 1)
+        get = self.requests[0]
+        self.assertEqual(get["method"], "GET")
+        self.assertEqual(get["url"], f"{DEFAULT_BASE}/{TEMPLATE_ID}")
+        self.assertEqual(get["headers"]["Authorization"], "Bearer FAKE_TOKEN")
+        self.assertEqual(get["headers"]["Game"], GAME_ID)
+        self.assertEqual(get["headers"]["Game-Id"], GAME_ID)
+        self.assertEqual(get["headers"]["Key-Inflection"], "camel")
+        # ...plus exactly one plain download of the url
+        self.assertEqual(self.downloads, [TIP_URL])
+        self.assertEqual(result["attempts"],
+                         [{"source": "url", "url": TIP_URL, "http_status": 200, "ok": True}])
+        # the record is echoed, so this call also covers `get`
+        self.assertEqual(result["response"], record)
+
+    def test_tip_image_blob_mode_real_server_form(self):
+        # What production returns for a file-uploaded image: url null, blob as
+        # BARE base64 wrapped every 60 chars. The newlines must not break the
+        # decode, and the base64 must never reach stdout.
+        blob = _server_blob(BIG_PNG_BYTES)
+        self.assertGreater(blob.count("\n"), 1)  # the fixture really is wrapped
+        code, result = self._tip_call(_tip_record(tipImageBlob=blob))
+        self.assertEqual(code, 0)
+        self.assertEqual(result["source"], "blob")
+        path = os.path.join(self._tmp.name, "summer_offer.tip.png")
+        self.assertEqual(result["path"], path)
+        self.assertEqual(self._read_bytes(path), BIG_PNG_BYTES)
+        self.assertEqual(result["bytes"], len(BIG_PNG_BYTES))
+        self.assertEqual(result["sha256"], hashlib.sha256(BIG_PNG_BYTES).hexdigest())
+        # the url was tried first and skipped as empty — no download fired
+        self.assertEqual(self.downloads, [])
+        self.assertEqual(result["attempts"], [
+            {"source": "url", "ok": False, "error": "empty"},
+            {"source": "blob", "chars": len(blob), "ok": True},
+        ])
+        # the echoed record carries a summary, never the base64 itself
+        self.assertEqual(result["response"]["tipImageBlob"], f"<blob: {len(blob)} chars>")
+        dumped = json.dumps(result)
+        self.assertNotIn(blob.replace("\n", ""), dumped)
+        # a verbatim echo would be JSON-escaped ("\n" -> "\\n") and slip past
+        # the flat check — so no single wrapped line may appear either
+        for line in blob.splitlines():
+            self.assertNotIn(line, dumped)
+
+    def test_tip_image_blob_with_data_uri_prefix_is_decoded(self):
+        # The dashboard UI's form: a data: URI. The prefix is stripped, and its
+        # declared mime is ignored — the decoded bytes decide the type.
+        for mime in ("image/png", "image/jpeg"):
+            with self.subTest(declared=mime):
+                out_dir = os.path.join(self._tmp.name, mime.replace("/", "_"))
+                blob = f"data:{mime};base64," + _b64(PNG_BYTES)
+                code, result = self._tip_call(_tip_record(tipImageBlob=blob), out_dir=out_dir)
+                self.assertEqual(code, 0)
+                self.assertEqual(result["source"], "blob")
+                self.assertEqual(result["content_type"], "image/png")
+                self.assertEqual(result["path"], os.path.join(out_dir, "summer_offer.tip.png"))
+                self.assertEqual(self._read_bytes(result["path"]), PNG_BYTES)
+
+    def test_tip_image_accepts_snake_case_record_keys(self):
+        # A headerless read answers snake_case (tip_image_url / tip_image_blob);
+        # both transports must still resolve from it.
+        with self.subTest(transport="tip_image_url"):
+            out_dir = os.path.join(self._tmp.name, "snake_url")
+            record = {"id": TEMPLATE_ID, "key": "summer_offer",
+                      "tip_image_url": TIP_URL, "tip_image_blob": None}
+            code, result = self._tip_call(record, downloads=[(200, PNG_BYTES)], out_dir=out_dir)
+            self.assertEqual(code, 0)
+            self.assertEqual(result["source"], "url")
+            self.assertEqual(result["key"], "summer_offer")
+            self.assertEqual(self.downloads, [TIP_URL])
+            self.assertEqual(self._read_bytes(os.path.join(out_dir, "summer_offer.tip.png")),
+                             PNG_BYTES)
+        with self.subTest(transport="tip_image_blob"):
+            out_dir = os.path.join(self._tmp.name, "snake_blob")
+            blob = _server_blob(PNG_BYTES)
+            record = {"id": TEMPLATE_ID, "key": "summer_offer",
+                      "tip_image_url": None, "tip_image_blob": blob}
+            code, result = self._tip_call(record, out_dir=out_dir)
+            self.assertEqual(code, 0)
+            self.assertEqual(result["source"], "blob")
+            self.assertEqual(self._read_bytes(os.path.join(out_dir, "summer_offer.tip.png")),
+                             PNG_BYTES)
+            # the snake spelling is summarised in the echo as well
+            self.assertEqual(result["response"]["tip_image_blob"], f"<blob: {len(blob)} chars>")
+
+    def test_tip_image_failed_url_download_falls_through_to_blob(self):
+        # A dead link must not hide an image the record also carries as a blob.
+        code, result = self._tip_call(
+            _tip_record(tipImageUrl=TIP_URL, tipImageBlob=_server_blob(PNG_BYTES)),
+            downloads=[(404, b"")])
+        self.assertEqual(code, 0)
+        self.assertEqual(result["source"], "blob")
+        self.assertEqual(self.downloads, [TIP_URL])
+        url_try, blob_try = result["attempts"]
+        self.assertEqual(url_try["source"], "url")
+        self.assertFalse(url_try["ok"])
+        self.assertEqual(url_try["error"], "download_failed")
+        self.assertEqual(url_try["http_status"], 404)
+        self.assertEqual(blob_try["source"], "blob")
+        self.assertTrue(blob_try["ok"])
+        self.assertEqual(self._read_bytes(result["path"]), PNG_BYTES)
+
+    def test_tip_image_url_returning_non_image_falls_through_to_blob(self):
+        # A 200 that is not an image (an HTML error page, a login wall) is no
+        # better than a 404 — downloaded bytes are sniffed before being trusted.
+        code, result = self._tip_call(
+            _tip_record(tipImageUrl=TIP_URL, tipImageBlob=_server_blob(PNG_BYTES)),
+            downloads=[(200, b"<html>login</html>")])
+        self.assertEqual(code, 0)
+        self.assertEqual(result["source"], "blob")
+        url_try, blob_try = result["attempts"]
+        self.assertFalse(url_try["ok"])
+        self.assertEqual(url_try["error"], "not_an_image")
+        self.assertEqual(url_try["http_status"], 200)
+        self.assertTrue(blob_try["ok"])
+        # only the blob's image landed on disk — never the HTML
+        self.assertEqual(os.listdir(self._tmp.name), ["summer_offer.tip.png"])
+        self.assertEqual(self._read_bytes(result["path"]), PNG_BYTES)
+
+    def test_tip_image_without_url_or_blob_reports_none(self):
+        # "No tip image" is only said after BOTH transports came up empty, and
+        # nothing is written — path B then asks for the mockup instead of
+        # inventing a layout. Absent, null, "" and whitespace all count as empty.
+        variants = {
+            "absent": {"id": TEMPLATE_ID, "key": "summer_offer"},
+            "null": _tip_record(),
+            "empty": _tip_record(tipImageUrl="", tipImageBlob=""),
+            "whitespace": _tip_record(tipImageUrl="   ", tipImageBlob=" \n"),
+        }
+        for label, record in variants.items():
+            with self.subTest(record=label):
+                out_dir = self._fresh_dir(label)
+                code, result = self._tip_call(record, out_dir=out_dir)
+                self.assertEqual(code, 1)
+                self.assertFalse(result["ok"])
+                self.assertEqual(result["source"], "none")
+                self.assertEqual(result["error"], "no_tip_image")
+                self.assertEqual(result["attempts"], [
+                    {"source": "url", "ok": False, "error": "empty"},
+                    {"source": "blob", "ok": False, "error": "empty"},
+                ])
+                self.assertEqual(self.downloads, [])
+                self.assertNotIn("path", result)
+                self.assertEqual(os.listdir(out_dir), [])
+                # the record still comes back, so the caller sees what was there
+                self.assertEqual(result["response"]["id"], TEMPLATE_ID)
+                self.assertEqual(result["response"]["key"], "summer_offer")
+
+    def test_tip_image_undecodable_blob_reports_decode_failure(self):
+        # A corrupt blob is named as such in `attempts`, and nothing is written.
+        # The lenient decoder silently drops non-alphabet junk, so use input it
+        # must reject: 5 data chars can never be valid base64.
+        out_dir = self._fresh_dir()
+        code, result = self._tip_call(_tip_record(tipImageBlob="abcde"), out_dir=out_dir)
+        self.assertEqual(code, 1)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["source"], "none")
+        self.assertEqual(result["error"], "no_tip_image")
+        blob_try = result["attempts"][1]
+        self.assertEqual(blob_try["source"], "blob")
+        self.assertFalse(blob_try["ok"])
+        self.assertEqual(blob_try["error"], "blob_decode_failed")
+        self.assertEqual(blob_try["chars"], 5)
+        self.assertEqual(os.listdir(out_dir), [])
+
+    def test_tip_image_blob_decoding_to_non_image_reports_none(self):
+        # Valid base64 is not enough: the decoded bytes must sniff as an image.
+        out_dir = self._fresh_dir()
+        code, result = self._tip_call(_tip_record(tipImageBlob=_b64(b"just some text")),
+                                      out_dir=out_dir)
+        self.assertEqual(code, 1)
+        self.assertEqual(result["source"], "none")
+        self.assertEqual(result["error"], "no_tip_image")
+        blob_try = result["attempts"][1]
+        self.assertFalse(blob_try["ok"])
+        self.assertEqual(blob_try["error"], "not_an_image")
+        self.assertEqual(os.listdir(out_dir), [])
+
+    def test_tip_image_record_fetch_failure_downloads_and_writes_nothing(self):
+        # No usable record means no transports to try: no download, no file,
+        # and the server's own body is passed through for the caller.
+        cases = [
+            ("http_404", 404, {"message": "not found"}),
+            ("non_object_200", 200, [1, 2, 3]),
+        ]
+        for label, status, body in cases:
+            with self.subTest(case=label):
+                out_dir = self._fresh_dir(label)
+                code, result = self._tip_call(body, out_dir=out_dir, status=status)
+                self.assertEqual(code, 1)
+                self.assertFalse(result["ok"])
+                self.assertEqual(result["http_status"], status)
+                self.assertEqual(result["source"], "none")
+                self.assertEqual(result["error"], "record_fetch_failed")
+                self.assertEqual(result["response"], body)
+                self.assertNotIn("attempts", result)
+                self.assertEqual(self.downloads, [])
+                self.assertEqual(os.listdir(out_dir), [])
+
+    def test_tip_image_key_is_sanitised_into_a_safe_filename(self):
+        # The key is operator data: a "/" must not become a path separator, so
+        # the file always lands directly inside out-dir. The reported key stays
+        # verbatim — only the filename is sanitised.
+        cases = [("my key/1", "my_key_1.tip.png"), ("../escape", ".._escape.tip.png")]
+        for i, (key, filename) in enumerate(cases):
+            with self.subTest(key=key):
+                out_dir = self._fresh_dir(f"sanitise{i}")
+                code, result = self._tip_call(_tip_record(key=key, tipImageBlob=_b64(PNG_BYTES)),
+                                              out_dir=out_dir)
+                self.assertEqual(code, 0)
+                self.assertEqual(result["key"], key)
+                self.assertEqual(result["path"], os.path.join(out_dir, filename))
+                self.assertEqual(os.listdir(out_dir), [filename])
+
+    def test_tip_image_missing_key_falls_back_to_id(self):
+        # A record without a usable key still gets a deterministic filename.
+        absent = {"id": TEMPLATE_ID, "tipImageBlob": _b64(PNG_BYTES)}
+        variants = {"absent": absent, "null": dict(absent, key=None),
+                    "empty": dict(absent, key=""), "whitespace": dict(absent, key="   ")}
+        for label, record in variants.items():
+            with self.subTest(key=label):
+                out_dir = self._fresh_dir(label)
+                code, result = self._tip_call(record, out_dir=out_dir)
+                self.assertEqual(code, 0)
+                self.assertEqual(result["key"], TEMPLATE_ID)
+                self.assertEqual(result["path"], os.path.join(out_dir, f"{TEMPLATE_ID}.tip.png"))
+                self.assertEqual(self._read_bytes(result["path"]), PNG_BYTES)
+
+    def test_tip_image_jpeg_gets_jpg_extension(self):
+        # The extension follows the sniffed bytes, not the url's ".png".
+        code, result = self._tip_call(_tip_record(tipImageUrl=TIP_URL),
+                                      downloads=[(200, JPEG_BYTES)])
+        self.assertEqual(code, 0)
+        self.assertEqual(result["content_type"], "image/jpeg")
+        self.assertEqual(result["path"], os.path.join(self._tmp.name, "summer_offer.tip.jpg"))
+        self.assertEqual(self._read_bytes(result["path"]), JPEG_BYTES)
+
+    def test_tip_image_creates_missing_out_dir(self):
+        # Path B points --out-dir at a layout folder that may not exist yet.
+        out_dir = os.path.join(self._tmp.name, "not", "yet", "there")
+        self.assertFalse(os.path.exists(out_dir))
+        code, result = self._tip_call(_tip_record(tipImageBlob=_b64(PNG_BYTES)), out_dir=out_dir)
+        self.assertEqual(code, 0)
+        self.assertTrue(os.path.isdir(out_dir))
+        self.assertEqual(result["path"], os.path.join(out_dir, "summer_offer.tip.png"))
+        self.assertEqual(self._read_bytes(result["path"]), PNG_BYTES)
+
+    def test_tip_image_write_failure_is_serialized(self):
+        # out-dir collides with an existing FILE: the OSError comes back as
+        # JSON with exit 1, never as a traceback, and no success fields leak.
+        blocker = os.path.join(self._tmp.name, "blocker")
+        with open(blocker, "w", encoding="utf-8") as f:
+            f.write("not a directory")
+        code, result = self._tip_call(_tip_record(tipImageBlob=_b64(PNG_BYTES)), out_dir=blocker)
+        self.assertEqual(code, 1)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "write_failed")
+        self.assertTrue(result["detail"])
+        for absent in ("path", "bytes", "sha256"):
+            self.assertNotIn(absent, result)
+
+    def test_download_bytes_refuses_non_http_schemes(self):
+        # tipImageUrl is operator data: a file: link must never turn into a
+        # local read, so anything but http(s) is refused before urlopen.
+        with mock.patch.object(self.mod.urllib.request, "urlopen",
+                               side_effect=AssertionError("urlopen must not be called")) as urlopen:
+            for url in ("file:///etc/hosts", "ftp://cdn.example/t.png", "/etc/hosts"):
+                with self.subTest(url=url):
+                    status, body = self.mod._download_bytes(url)
+                    self.assertEqual(status, 0)
+                    self.assertIn(b"unsupported URL scheme", body)
+        urlopen.assert_not_called()
+
+    def test_download_bytes_sends_no_admin_headers(self):
+        # The url may point at any CDN: the admin bearer must never travel
+        # there (credentials ARE loaded in this test). Only a User-Agent goes
+        # out, and the body comes back as raw bytes, not decoded text.
+        resp = mock.MagicMock()
+        resp.__enter__.return_value = resp
+        resp.status = 200
+        resp.read.return_value = PNG_BYTES
+        with mock.patch.object(self.mod.urllib.request, "urlopen", return_value=resp) as urlopen:
+            status, body = self.mod._download_bytes(TIP_URL)
+        self.assertEqual((status, body), (200, PNG_BYTES))
+        req = urlopen.call_args[0][0]
+        self.assertEqual(req.full_url, TIP_URL)
+        self.assertEqual(req.get_method(), "GET")
+        self.assertEqual(req.header_items(), [("User-agent", "kinoa-dashboard-inapp-template")])
+
+    def test_main_wires_tip_image_subcommand(self):
+        # argparse reaches cmd_tip_image with --id and --out-dir intact.
+        self._mock_download([(200, PNG_BYTES)])
+        code, result = self._main(["tip-image", "--id", TEMPLATE_ID, "--out-dir", self._tmp.name],
+                                  [(200, json.dumps(_tip_record(tipImageUrl=TIP_URL)))])
+        self.assertEqual(code, 0)
+        self.assertEqual(result["source"], "url")
+        self.assertEqual(result["id"], TEMPLATE_ID)
+        self.assertEqual(result["path"], os.path.join(self._tmp.name, "summer_offer.tip.png"))
 
     # ---- hardcoded production base URL ----
 

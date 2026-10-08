@@ -58,7 +58,7 @@
       "id": 8,
       "name": "tip-image-layout-goes-through-from-image-path-b",
       "prompt": "Build the prefab for dashboard template 44444444-4444-4444-4444-444444444444. Nobody kept a layout file, but the record has a tip image.",
-      "expected_output": "At Phase 3 the skill picks option B: it first shows the record's tipImageUrl and gets a yes, then invokes kinoa-inapp-template-from-image for the layout of this existing template (that skill's path B — fetch record, analyse tip image, `remap` gate, developer confirmation, writes <template_key>.layout.json) and then plans with `--layout-artifact`. If `remap` reports a mismatch, the skill surfaces it and offers the no-layout option or a different mockup; it never positions slots from an image that failed the gate.",
+      "expected_output": "At Phase 3 the skill picks option B: it first shows the record's tip-image reference (tipImageUrl, or the uploaded tipImageBlob when the url is empty) and gets a yes, then invokes kinoa-inapp-template-from-image for the layout of this existing template (that skill's path B — fetch record, analyse tip image, `remap` gate, developer confirmation, writes <template_key>.layout.json) and then plans with `--layout-artifact`. If `remap` reports a mismatch, the skill surfaces it and offers the no-layout option or a different mockup; it never positions slots from an image that failed the gate.",
       "files": []
     },
     {

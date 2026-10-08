@@ -7,9 +7,9 @@ bundles, milestone chases, mission boards). A template declares SLOTS —
 (standard / mission / milestone) and its matching `features` block. Operators
 then fill those slots in and ship many in-app messages from one template.
 
-List templates, fetch one, create a draft, update one, and check whether a
-template is still referenced by in-app messages. There is deliberately NO
-delete subcommand — see below.
+List templates, fetch one, materialise its tip image on disk, create a draft,
+update one, and check whether a template is still referenced by in-app
+messages. There is deliberately NO delete subcommand — see below.
 
 Self-contained: no imports from sibling skills. Reads the bearer token and
 game id from ~/.kinoa/session.env (written by kinoa-init).
@@ -78,7 +78,8 @@ Security boundary — ADMIN surface, skill-only:
   or runtime request. Rendering an in-app message at runtime is the SDK's job,
   on the public surface with a game secret — this helper never touches it.
 
-Subcommands (each makes ONE HTTP call and prints ONE JSON object:
+Subcommands (each makes ONE dashboard call — tip-image may add one plain
+image download — and prints ONE JSON object:
 { http_status, ok, response | request_body, ...context }):
 
   list [--page N] [--rows N] [--sort-by F] [--sort-direction asc|desc]
@@ -155,6 +156,29 @@ Subcommands (each makes ONE HTTP call and prints ONE JSON object:
       changing or retiring it breaks them. The output adds a flattened
       `has_related` for easy scripting.
 
+  tip-image --id ID [--out-dir DIR]
+      GET {base}/<id>, then write the template's tip image to disk — the face
+      the dashboard constructor shows, and the image path B of
+      kinoa-inapp-template-from-image analyses for the layout artifact. The
+      record carries it through ONE of the two transports above, and the read
+      side resolves them in order:
+        1. tipImageUrl non-empty  -> download it (plain GET, NO admin headers:
+           the link may point at any CDN and the bearer must not travel there);
+        2. else tipImageBlob non-empty -> base64-decode it (a `data:…;base64,`
+           prefix is stripped when present);
+        3. else -> source "none": the record has no tip image at all.
+      A url that fails to download, or decodes to something that is not an
+      image, falls through to the blob before giving up. The bytes decide the
+      type (magic sniff, the same rule as the upload side) and the file lands
+      as <out-dir>/<key>.tip.<ext>. Prints { http_status, ok, id, key, source:
+      url|blob|none, path, bytes, content_type, sha256, attempts, response } —
+      the raw base64 is never echoed, and `response` is the summarised record,
+      so this call also covers `get`. Exit 0 when an image was written, 1
+      otherwise; nothing is written on failure. `source` always names the
+      transport that yielded the image — it stays `url`/`blob` even when the
+      write then fails (error: write_failed); `none` strictly means the record
+      has no usable tip image.
+
 NO DELETE — BY DESIGN:
   The server exposes a DELETE route; this helper does not, and must not grow
   one. A template with related in-app messages must never be deleted (that
@@ -172,8 +196,12 @@ another game creating a template on the WRONG game's dashboard.
 """
 
 import argparse
+import base64
+import binascii
+import hashlib
 import json
 import os
+import re
 import sys
 import uuid
 import urllib.error
@@ -190,6 +218,8 @@ MESSAGE_TEMPLATES_URL = "https://dashboard.kinoa.io/api/message_templates"
 # PATCH, so the content type has to be sniffed here.
 TIP_IMAGE_FIELD = "tip_image_blob"
 TIP_IMAGE_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp")
+# File extension per sniffed type, for the tip-image download (<key>.tip.<ext>).
+TIP_IMAGE_EXTENSIONS = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp"}
 
 # The four slot buckets a template declares. Used by the update slot-loss guard:
 # a key that exists in the stored record but not in the new body is a WIPE.
@@ -420,6 +450,88 @@ def _request_bytes(method, url, headers=None, data=None):
         return 0, f"URLError: {e.reason}"
     except TimeoutError as e:
         return 0, f"Timeout: {e}"
+
+
+def _download_bytes(url):
+    """Plain GET of a tip-image URL -> (status, bytes). Separate from both
+    _request (shared boilerplate, utf-8 text) and _request_bytes (the upload
+    side, text response): this one keeps the body BINARY.
+
+    It sends NO admin headers on purpose — `tipImageUrl` is an arbitrary link
+    (a CDN, a client's bucket), and the bearer must never travel to a host that
+    is not the dashboard. Only http(s) is followed: a record is operator data,
+    and a `file:` link must not turn into a local read."""
+    if urllib.parse.urlsplit(url).scheme not in ("http", "https"):
+        return 0, b"unsupported URL scheme (only http/https is downloaded)"
+    req = urllib.request.Request(url, method="GET", headers={"User-Agent": "kinoa-dashboard-inapp-template"})
+    try:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
+            return resp.status, resp.read()
+    except urllib.error.HTTPError as e:
+        return e.code, b""
+    except urllib.error.URLError as e:
+        return 0, f"URLError: {e.reason}".encode("utf-8")
+    except TimeoutError as e:
+        return 0, f"Timeout: {e}".encode("utf-8")
+
+
+def _decode_tip_image_blob(blob):
+    """base64 -> bytes. The stored blob may carry a `data:<mime>;base64,`
+    prefix (the dashboard UI's form) or be bare base64. The prefix's mime is
+    ignored: the bytes are sniffed like every other image in this helper.
+    Raises ValueError / binascii.Error on malformed input."""
+    text = blob.strip()
+    if text.startswith("data:"):
+        _head, sep, text = text.partition(",")
+        if not sep:
+            raise ValueError("data: URI without a comma-separated payload")
+    return base64.b64decode(text)
+
+
+def _resolve_tip_image_bytes(record):
+    """The READ side of the two tip-image transports, in the order path B
+    relies on: tipImageUrl first, then tipImageBlob, then nothing.
+
+    Returns (source, data, content_type, attempts). `attempts` records every
+    transport tried and why it was skipped or failed, so a `none` verdict is
+    auditable — "no tip image" is only ever said after BOTH came up empty."""
+    attempts = []
+    url = _field(record, "tipImageUrl", "tip_image_url")
+    if isinstance(url, str) and url.strip():
+        url = url.strip()
+        status, data = _download_bytes(url)
+        if 200 <= status < 300:
+            content_type = _sniff_image_type(data)
+            if content_type:
+                attempts.append({"source": "url", "url": url, "http_status": status, "ok": True})
+                return "url", data, content_type, attempts
+            attempts.append({"source": "url", "url": url, "http_status": status, "ok": False,
+                             "error": "not_an_image",
+                             "detail": "the downloaded body is not png/jpeg/gif/webp"})
+        else:
+            attempts.append({"source": "url", "url": url, "http_status": status, "ok": False,
+                             "error": "download_failed",
+                             "detail": data.decode("utf-8", errors="replace")[:200]})
+    else:
+        attempts.append({"source": "url", "ok": False, "error": "empty"})
+
+    blob = _field(record, "tipImageBlob", "tip_image_blob")
+    if isinstance(blob, str) and blob.strip():
+        try:
+            data = _decode_tip_image_blob(blob)
+        except (ValueError, binascii.Error) as e:
+            attempts.append({"source": "blob", "chars": len(blob), "ok": False,
+                             "error": "blob_decode_failed", "detail": str(e)})
+            return "none", None, None, attempts
+        content_type = _sniff_image_type(data)
+        if content_type:
+            attempts.append({"source": "blob", "chars": len(blob), "ok": True})
+            return "blob", data, content_type, attempts
+        attempts.append({"source": "blob", "chars": len(blob), "ok": False, "error": "not_an_image",
+                         "detail": "the decoded blob is not png/jpeg/gif/webp"})
+    else:
+        attempts.append({"source": "blob", "ok": False, "error": "empty"})
+    return "none", None, None, attempts
 
 
 def _sniff_image_type(data):
@@ -804,6 +916,57 @@ def cmd_update(args):
     return 0 if main_ok else 1
 
 
+def cmd_tip_image(args):
+    """GET the record, then write its tip image as <out-dir>/<key>.tip.<ext>
+    — url first, blob second, and only then "none". See the module docstring."""
+    status, raw = _request("GET", f"{MESSAGE_TEMPLATES_URL}/{args.id}", headers=_admin_headers())
+    record = _parse_json(raw)
+    out = {"http_status": status, "ok": False, "id": args.id, "source": "none"}
+    if not (200 <= status < 300) or not isinstance(record, dict):
+        out["error"] = "record_fetch_failed"
+        out["response"] = _response_body(raw)
+        print(json.dumps(out, indent=2))
+        return 1
+
+    key = _field(record, "key", "key")
+    key = key if isinstance(key, str) and key.strip() else args.id
+    out["key"] = key
+    source, data, content_type, attempts = _resolve_tip_image_bytes(record)
+    out["source"] = source
+    out["attempts"] = attempts
+    if source == "none":
+        out["error"] = "no_tip_image"
+        out["detail"] = ("neither tipImageUrl nor tipImageBlob yielded an image — ask for the "
+                         "mockup the template was built from; a layout is never invented")
+        out["response"] = _response_body(raw)
+        print(json.dumps(out, indent=2))
+        return 1
+
+    out_dir = args.out_dir or "."
+    filename = f"{re.sub(r'[^A-Za-z0-9_.-]', '_', key)}.tip.{TIP_IMAGE_EXTENSIONS[content_type]}"
+    path = os.path.join(out_dir, filename)
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(data)
+    except OSError as e:
+        out["error"] = "write_failed"
+        out["detail"] = str(e)
+        out["response"] = _response_body(raw)
+        print(json.dumps(out, indent=2))
+        return 1
+    out.update({
+        "ok": True,
+        "path": path,
+        "bytes": len(data),
+        "content_type": content_type,
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "response": _response_body(raw),
+    })
+    print(json.dumps(out, indent=2))
+    return 0
+
+
 def cmd_has_related(args):
     status, raw = _request(
         "GET", f"{MESSAGE_TEMPLATES_URL}/{args.id}/has_related_in_app_messages", headers=_admin_headers())
@@ -877,6 +1040,15 @@ def main(argv):
                          help="Attach a tip image from disk. Sent AFTER the main call as a "
                               "separate image-only multipart PATCH (a blob is rejected by the "
                               "JSON body). png/jpeg/gif/webp, detected from magic bytes.")
+
+    p_tip = sub.add_parser("tip-image",
+                           help="GET one template and write its tip image to disk "
+                                "(tipImageUrl first, then tipImageBlob, then 'none').")
+    p_tip.add_argument("--id", required=True)
+    p_tip.add_argument("--out-dir", default=".",
+                       help="Directory for <key>.tip.<ext> (extension from the image bytes). "
+                            "Default: current directory.")
+    p_tip.set_defaults(func=cmd_tip_image)
 
     p_rel = sub.add_parser("has-related",
                            help="GET whether in-app messages still reference this template.")
