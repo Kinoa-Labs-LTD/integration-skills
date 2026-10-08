@@ -2451,6 +2451,10 @@ def cmd_generate(args):
 # --------------------------------------------------------------------------- CLI
 
 def main(argv=None):
+    # One JSON object on stdout, always UTF-8: a Windows console defaults to a legacy code page,
+    # which mangles (or cannot encode) the non-ASCII characters in names and warnings.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(prog="inapp_prefab_plan", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)

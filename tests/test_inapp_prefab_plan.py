@@ -1121,3 +1121,15 @@ class TestDeOverlapContainersAndOrder(unittest.TestCase):
         plan = mod.plan_prefab(t, mod.layout_from_artifact(art), STYLE, {})["plan"]
         names = [n["name"] for n in plan["nodes"]]
         self.assertGreater(names.index("SaleStickerImage"), names.index("CtaButton"))
+
+
+class TestCliOutputEncoding(unittest.TestCase):
+    def test_stdout_is_utf8_even_on_a_legacy_console(self):
+        import subprocess, sys, tempfile
+        env = dict(os.environ, PYTHONIOENCODING="cp1252")
+        out = os.path.join(tempfile.mkdtemp(), "p.json")
+        res = subprocess.run([sys.executable, HELPER, "plan", "--template", os.path.join(FIX, "template_one_cta.json"), "--out", out],
+                             capture_output=True, env=env)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        data = json.loads(res.stdout.decode("utf-8"))  # the no-layout warning contains an em-dash
+        self.assertTrue(any("—" in w for w in data["report"]["warnings"]))
