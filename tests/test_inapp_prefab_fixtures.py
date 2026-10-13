@@ -55,6 +55,9 @@ class TestSkillDoc(unittest.TestCase):
         self.assertIn("Tools/Kinoa/In-Apps/Build Prefabs From Plans", doc)
         self.assertIn("references/unity-mcp-capabilities.md", doc)
         self.assertIn("TODO(kinoa-prefab)", doc)
+        # the hand-off must tell the developer to set up the canvas; the builder adds none
+        for component in ("`Canvas`", "`CanvasScaler`", "`GraphicRaycaster`"):
+            self.assertIn(component, doc)
         self.assertIn("never write", doc.lower())
         self.assertIn("Never `cat ~/.kinoa/session.env`", doc)   # the doc forbids it, never instructs it
         for ref in ("prefab-plan-schema.md", "generated-code-contract.md"):

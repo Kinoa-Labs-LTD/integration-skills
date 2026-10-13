@@ -352,9 +352,13 @@ Summarise, in this order: prefab path · view class · fields assigned ·
 `warnings` from `generate` and `plan` · unplaced slots and estimated positions ·
 snippets shown but not applied (if the developer declined the facade constant +
 allowlist arm, say plainly that clicks on the view are ignored until they are
-applied) · next steps (assign the hooks in the game's bootstrap; wire
-`CreateGameInApp` via `/kinoa messaging --merge`; activate the template on the
-Dashboard when the first in-app is configured). Say plainly what was verified
+applied) · next steps (assign the hooks in the game's bootstrap; **TODO:
+add, check or align the `Canvas`, `CanvasScaler` and `GraphicRaycaster` for
+the prefab** — the builder adds none of them, because render mode, sorting
+order, reference resolution and scale mode depend on the game's own UI setup
+(an existing popup canvas, or one on the prefab root) and cannot be assigned
+from the template; wire `CreateGameInApp` via `/kinoa messaging --merge`;
+activate the template on the Dashboard when the first in-app is configured). Say plainly what was verified
 in Unity and what was not. State these facts every time:
 
 - **Rebuilding overwrites hand edits.** The Editor builder rebuilds the prefab

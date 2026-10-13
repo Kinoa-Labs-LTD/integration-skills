@@ -67,6 +67,13 @@ Menu `Tools/Kinoa/In-Apps/Build Prefabs From Plans` → `BuildAll()`; per plan a
 `fields_missing`, `errors`) beside the plan. Idempotent: rebuilding overwrites
 the prefab from the plan (hand edits to the prefab are lost).
 
+The prefab root is a plain stretched `RectTransform`. The builder adds no
+`Canvas`, `CanvasScaler` or `GraphicRaycaster`: render mode, sorting order,
+reference resolution and scale mode belong to the game's UI setup. The
+developer parents the prefab under the game's popup canvas, or adds and
+aligns those components on the prefab root. Without a raycaster above it, the
+buttons receive no clicks.
+
 ## File ownership and the `generate` output
 
 | File | Owner | Written by `generate` |
