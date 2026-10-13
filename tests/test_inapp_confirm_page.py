@@ -1899,7 +1899,11 @@ class ConfirmPageInteractionTests(_PageCase):
         self.assertAlmostEqual(got["dragStillWorks"], 0.34, places=6)
 
     # ---- manual placement (page-side feedback only) ----------------------
-    def test_only_page_added_rows_offer_placement(self):
+    def test_rows_without_a_box_offer_placement(self):
+        # Placement follows the missing box, not the row's origin: page-added
+        # rows AND payload rows the vision pass never located (path B's
+        # unmatched slots; the show_banner custom here) get the badge; rows
+        # with a vision box are drag-adjusted instead.
         self._with_image()
         got = self.drive("""
             const detected = { chips: H.count('[data-fid^="place-"]'),
@@ -1917,8 +1921,8 @@ class ConfirmPageInteractionTests(_PageCase):
                               boxes: H.count("#overlay .box.placed") },
                      buttons: H.count('[data-fid^="place-"]') };
         """)
-        self.assertEqual(got["detected"]["chips"], 0)      # vision rows untouched
-        self.assertNotIn("not placed", got["detected"]["text"])
+        self.assertEqual(got["detected"]["chips"], 1)      # show_banner has no bbox
+        self.assertNotIn("not placed", got["detected"]["text"])   # texts rows all have boxes
         self.assertIn("not placed", got["added"]["chip"])
         self.assertTrue(got["added"]["hasBadge"])
         self.assertEqual(got["added"]["label"], "not placed")
@@ -1930,7 +1934,27 @@ class ConfirmPageInteractionTests(_PageCase):
         self.assertTrue(got["added"]["inHead"])
         self.assertEqual(got["added"]["buttons"], 0)
         self.assertEqual(got["added"]["boxes"], 0)
-        self.assertEqual(got["buttons"], 1)               # only the page-added row
+        self.assertEqual(got["buttons"], 2)               # page-added + show_banner
+
+    def test_placing_an_unlocated_payload_row_ships_hand_placed(self):
+        # A template slot the image did not show (path B's unmatched slot) is
+        # placed through the same badge — and ships in geometry as hand_placed.
+        self._with_image()
+        got = self.drive("""
+            H.stubStage(1000);
+            const uid = H.uidOfKey("show_banner");
+            H.click("place-" + uid);
+            const hint = !d.getElementById("place-hint").hidden;
+            H.mouse(H.stage(), "click", 500, 500);
+            const g = H.envelope().geometry.elements.find(e => e.key === "show_banner");
+            return { hint: hint, g: g,
+                     // once placed, the row has a box: the badge yields to dragging
+                     badgeGone: !d.querySelector('[data-fid="place-' + uid + '"]') };
+        """)
+        self.assertTrue(got["hint"])
+        self.assertIsNotNone(got["g"]["bbox"])
+        self.assertTrue(got["g"]["hand_placed"])
+        self.assertTrue(got["badgeGone"])
 
     def test_clicking_the_mockup_places_a_default_box(self):
         self._with_image()

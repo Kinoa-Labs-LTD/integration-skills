@@ -857,7 +857,7 @@ function geometryOut() {
       role: e.role || "",
       observed_text: e.observedText || "",
       confidence: e.confidence == null ? null : e.confidence,
-      hand_placed: !!e._pageNew,
+      hand_placed: !!(e._pageNew || (e.bbox && !e._origBbox)),
       adjusted: !!e._adjusted
     });
   });
@@ -1045,8 +1045,8 @@ function renderBuildNotes() {
   var mp = listPanel("Tip image mismatch", mmItems, "warn", function (li, it) {
     if (it.slot) {
       li.innerHTML = "<code>" + esc(it.slot) + "</code> &mdash; configured on the template, "
-        + "not found on the image: place it on the mockup (click the row's #N badge) "
-        + "or it ships without coordinates.";
+        + "not found on the image: place it on the mockup (the row's \u201cnot placed\u201d "
+        + "badge) or it ships without coordinates.";
     } else {
       li.innerHTML = "<b>" + esc(it.extra.role || "(no role)") + "</b>"
         + (it.extra.observed_text ? " &ldquo;" + esc(it.extra.observed_text) + "&rdquo;" : "")
@@ -1575,10 +1575,12 @@ function rowHead(e, index, expanded) {
   }
   g.appendChild(idxBadge);
   g.appendChild(badge(C.bucketBadges[e.bucket] || e.bucket, "b-" + e.bucket));
-  if (e._pageNew) {
-    g.appendChild(badge("added here", "b-new"));
-    // operator decision: the placement badge IS the trigger — clicking it enters
-    // placement mode (or re-places). The old 📍 button is gone; the fid stays.
+  if (e._pageNew) g.appendChild(badge("added here", "b-new"));
+  // operator decision: the placement badge IS the trigger — clicking it enters
+  // placement mode (or re-places). The old 📍 button is gone; the fid stays.
+  // Any row without a confirmed box can be placed: page-added rows, and
+  // template slots the image did not show (path B's unmatched slots).
+  if (e._pageNew || !e.bbox) {
     var placeBadge = badge(e.bbox ? "placed" : "not placed",
                            e.bbox ? "b-" + e.bucket : "b-idx");
     placeBadge.dataset.fid = "place-" + e.uid;
