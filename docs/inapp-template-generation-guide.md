@@ -226,7 +226,8 @@ message and routes every button. Three things stay yours: how remote images are
 downloaded, how store prices are looked up, and where resource icons come from.
 The generated code calls hooks for those; the module wires your existing methods
 when you point at them and otherwise leaves clearly marked `TODO(kinoa-prefab)`
-lines rather than inventing a downloader.
+lines rather than inventing a downloader. The full walkthrough is in
+[Turning an In-App Template into a Unity Prefab](inapp-template-to-prefab-guide.md).
 
 ## FAQ and troubleshooting
 
