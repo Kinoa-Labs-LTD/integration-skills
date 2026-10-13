@@ -127,7 +127,9 @@ python "${CLAUDE_SKILL_DIR}/inapp_prefab_plan.py" probe-style --prefab <A.prefab
 ```
 
 Report what the probe found — text system (legacy `Text` vs TextMeshPro),
-font asset, panel size, close-button sprite, base popup classes. `text_system`
+font asset, panel size, close-button sprite, base popup classes, and the root
+`Canvas` / `CanvasScaler` settings when a reference pop-up has its own canvas
+(the generated prefab copies them; otherwise it gets pop-up defaults). `text_system`
 `unknown` ⇒ ask which to use (legacy is the safe default on 2021/2022 projects
 without `Unity.TextMeshPro`). The generated prefab follows these conventions;
 the base popup class is **reported, not inherited** — the view derives from
@@ -353,11 +355,15 @@ Summarise, in this order: prefab path · view class · fields assigned ·
 snippets shown but not applied (if the developer declined the facade constant +
 allowlist arm, say plainly that clicks on the view are ignored until they are
 applied) · next steps (assign the hooks in the game's bootstrap; **TODO:
-add, check or align the `Canvas`, `CanvasScaler` and `GraphicRaycaster` for
-the prefab** — the builder adds none of them, because render mode, sorting
-order, reference resolution and scale mode depend on the game's own UI setup
-(an existing popup canvas, or one on the prefab root) and cannot be assigned
-from the template; wire `CreateGameInApp` via `/kinoa messaging --merge`;
+check or align the `Canvas`, `CanvasScaler` and `GraphicRaycaster` on the
+prefab root** — the builder adds them with the settings copied from a
+reference pop-up that has its own canvas, or else pop-up defaults (overlay,
+sorting order 100, scale with screen size at the design's frame size, match
+0.5). Render mode, sorting order, reference resolution and scale mode depend
+on the game's own UI setup, so name the values used (`plan.ui.canvas`) and
+tell the developer to align them — or remove them when the prefab is parented
+under an existing pop-up canvas, where a nested canvas ignores its scaler;
+wire `CreateGameInApp` via `/kinoa messaging --merge`;
 activate the template on the Dashboard when the first in-app is configured). Say plainly what was verified
 in Unity and what was not. State these facts every time:
 

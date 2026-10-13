@@ -67,12 +67,15 @@ Menu `Tools/Kinoa/In-Apps/Build Prefabs From Plans` → `BuildAll()`; per plan a
 `fields_missing`, `errors`) beside the plan. Idempotent: rebuilding overwrites
 the prefab from the plan (hand edits to the prefab are lost).
 
-The prefab root is a plain stretched `RectTransform`. The builder adds no
-`Canvas`, `CanvasScaler` or `GraphicRaycaster`: render mode, sorting order,
-reference resolution and scale mode belong to the game's UI setup. The
-developer parents the prefab under the game's popup canvas, or adds and
-aligns those components on the prefab root. Without a raycaster above it, the
-buttons receive no clicks.
+The prefab root is a stretched `RectTransform` with a `Canvas`, a
+`CanvasScaler` and a `GraphicRaycaster`, built from `plan.ui.canvas`. Those
+settings are copied from a reference pop-up whose root has a canvas, or else
+are pop-up defaults: Screen Space Overlay, override sorting at order 100, and
+Scale With Screen Size at the design's frame size with match 0.5. They depend
+on the game's UI setup, so the developer checks and aligns them. Under an
+existing pop-up canvas the prefab's canvas becomes a nested one, and its
+scaler is then ignored. Screen Space Camera needs its camera assigned at
+runtime. A plan written before these settings existed gets the defaults.
 
 ## File ownership and the `generate` output
 

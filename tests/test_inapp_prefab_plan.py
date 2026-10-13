@@ -1133,3 +1133,24 @@ class TestCliOutputEncoding(unittest.TestCase):
         self.assertEqual(res.returncode, 0, res.stderr)
         data = json.loads(res.stdout.decode("utf-8"))  # the no-layout warning contains an em-dash
         self.assertTrue(any("—" in w for w in data["report"]["warnings"]))
+
+
+class TestPlanCanvas(unittest.TestCase):
+    def test_default_canvas_fits_a_popup_and_the_design_frame(self):
+        plan = mod.plan_prefab(TEMPLATE, mod.layout_from_artifact(ARTIFACT), STYLE, {})["plan"]
+        self.assertEqual(plan["ui"]["canvas"], {"render_mode": "overlay", "override_sorting": True, "sorting_order": 100,
+                                                "scale_mode": "scale_with_screen_size",
+                                                "reference_resolution": plan["ui"]["frame_size"], "match": 0.5,
+                                                "source": "default"})
+        self.assertTrue(any("Canvas" in n and "align" in n for n in plan["report"]["needs_developer"]))
+
+    def test_probed_canvas_is_copied(self):
+        probed = {"render_mode": "camera", "override_sorting": True, "sorting_order": 250,
+                  "scale_mode": "scale_with_screen_size", "reference_resolution": [1080.0, 1920.0], "match": 0.3,
+                  "graphic_raycaster": True, "source": "PopupWithCanvas"}
+        plan = mod.plan_prefab(TEMPLATE, mod.layout_from_artifact(ARTIFACT), dict(STYLE, canvas=probed), {})["plan"]
+        canvas = plan["ui"]["canvas"]
+        self.assertEqual((canvas["render_mode"], canvas["sorting_order"], canvas["reference_resolution"], canvas["match"]),
+                         ("camera", 250, [1080.0, 1920.0], 0.3))
+        self.assertEqual(canvas["source"], "PopupWithCanvas")
+        self.assertTrue(any("camera" in n.lower() for n in plan["report"]["needs_developer"]))

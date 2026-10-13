@@ -477,3 +477,21 @@ class TestBuilderArtIsClickThrough(unittest.TestCase):
         header = builder.split("// </auto-generated>")[0]
         self.assertNotIn("--force-shared", header)
         self.assertIn("rewritten by every generate run", header)
+
+
+class TestBuilderCanvas(unittest.TestCase):
+    def setUp(self):
+        self.builder = mod.generate_code(_plan(), {})["files"]["Assets/Kinoa/InApps/Editor/KinoaInAppPrefabBuilder.cs"]
+
+    def test_root_gets_canvas_scaler_and_raycaster(self):
+        self.assertIn("AddCanvas(root, plan.ui);", self.builder)
+        for snippet in ("root.AddComponent<Canvas>()", "root.AddComponent<CanvasScaler>()",
+                        "root.AddComponent<GraphicRaycaster>()", "CanvasScaler.ScaleMode.ScaleWithScreenSize",
+                        "RenderMode.ScreenSpaceOverlay"):
+            self.assertIn(snippet, self.builder)
+
+    def test_plan_canvas_fields_match_the_planner(self):
+        decl = self.builder.split("class PlanCanvas")[1].split("}")[0]
+        fields = set(re.findall(r"public (?:string|bool|int|float|float\[\]) (\w+);", decl))
+        plan = _plan()
+        self.assertEqual(fields, set(plan["ui"]["canvas"].keys()))

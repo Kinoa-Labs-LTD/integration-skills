@@ -26,6 +26,11 @@ LEGACY_TEXT_GUID = "5f7201a12d95ffc409449d95f23cf332"   # UnityEngine.UI.Text
 TMP_TEXT_GUID = "f4688fdb7df04437aeb418b961361dc5"      # TMPro.TextMeshProUGUI
 IMAGE_GUID = "fe87c0e1cc204ed48ad3b37840f39efc"         # UnityEngine.UI.Image
 BUTTON_GUID = "4e29b1a8efbd4b44bb3f3716e73f07ff"        # UnityEngine.UI.Button
+CANVAS_SCALER_GUID = "0cd44c1031e13a943bb63640046fad76"  # UnityEngine.UI.CanvasScaler
+GRAPHIC_RAYCASTER_GUID = "dc42784cf147c0c48a680349fa168899"  # UnityEngine.UI.GraphicRaycaster
+CANVAS_CLASS_ID = "223"                                  # built-in Canvas component
+_RENDER_MODES = {"0": "overlay", "1": "camera", "2": "world"}
+_SCALE_MODES = {"0": "constant_pixel_size", "1": "scale_with_screen_size", "2": "constant_physical_size"}
 
 _CLOSE_NAME_RE = re.compile(r"close|dismiss|^x$|btn_x|exit", re.I)
 
@@ -83,16 +88,18 @@ def _meta_guid_index(assets_root):
 def _probe_one(path, meta_index):
     with open(path, encoding="utf-8", errors="ignore") as fh:
         text = fh.read()
-    rects, monos = {}, []
+    rects, monos, canvases = {}, [], {}
     for tag, body in _split_yaml_docs(text):
         if tag == "224":
             rects[(_field(body, "m_GameObject") or "").replace(" ", "")] = body
         elif tag == "114":
             monos.append(body)
+        elif tag == CANVAS_CLASS_ID:
+            canvases[(_field(body, "m_GameObject") or "").replace(" ", "")] = body
 
     summary = {"name": os.path.splitext(os.path.basename(path))[0], "legacy_text": 0, "tmp_text": 0,
                "font_guid": None, "tmp_font_guid": None, "root_size": None,
-               "close_sprite_guid": None, "root_scripts": [], "unresolved_root_scripts": []}
+               "close_sprite_guid": None, "root_scripts": [], "unresolved_root_scripts": [], "canvas": None}
 
     # Root = the RectTransform whose m_Father is {fileID: 0}.
     root_go_ref = None
@@ -125,6 +132,13 @@ def _probe_one(path, meta_index):
             name = go_names_by_ref.get(go_ref, "")
             if _CLOSE_NAME_RE.search(name) and not summary["close_sprite_guid"]:
                 summary["close_sprite_guid"] = _guid_in(_field(body, "m_Sprite"))
+        elif script == CANVAS_SCALER_GUID:
+            if go_ref == root_go_ref:
+                scaler = _probe_scaler(body)
+                summary.setdefault("_scaler", scaler)
+        elif script == GRAPHIC_RAYCASTER_GUID:
+            if go_ref == root_go_ref:
+                summary["_raycaster"] = True
         elif script and go_ref == root_go_ref and script not in (BUTTON_GUID,):
             # Only append resolved class names; track unresolved GUIDs separately
             class_name = meta_index.get(script)
@@ -132,14 +146,50 @@ def _probe_one(path, meta_index):
                 summary["root_scripts"].append(class_name)
             else:
                 summary["unresolved_root_scripts"].append(script)
+
+    # A canvas on the root of a reference pop-up: its settings are the game's convention for pop-ups.
+    canvas_body = canvases.get(root_go_ref) if root_go_ref else None
+    if canvas_body is not None:
+        scaler = summary.get("_scaler") or {}
+        summary["canvas"] = {
+            "render_mode": _RENDER_MODES.get((_field(canvas_body, "m_RenderMode") or "0").strip(), "overlay"),
+            "override_sorting": (_field(canvas_body, "m_OverrideSorting") or "0").strip() == "1",
+            "sorting_order": _int_or(_field(canvas_body, "m_SortingOrder"), 0),
+            "scale_mode": scaler.get("scale_mode", "constant_pixel_size"),
+            "reference_resolution": scaler.get("reference_resolution"),
+            "match": scaler.get("match", 0.5),
+            "graphic_raycaster": bool(summary.get("_raycaster")),
+            "source": summary["name"],
+        }
+    summary.pop("_scaler", None)
+    summary.pop("_raycaster", None)
     return summary
+
+
+def _int_or(value, default):
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _probe_scaler(body):
+    out = {"scale_mode": _SCALE_MODES.get((_field(body, "m_UiScaleMode") or "0").strip(), "constant_pixel_size")}
+    m = re.search(r"x:\s*(-?[\d.]+),\s*y:\s*(-?[\d.]+)", _field(body, "m_ReferenceResolution") or "")
+    if m and float(m.group(1)) > 0 and float(m.group(2)) > 0:
+        out["reference_resolution"] = [float(m.group(1)), float(m.group(2))]
+    try:
+        out["match"] = float((_field(body, "m_MatchWidthOrHeight") or "0.5").strip())
+    except ValueError:
+        out["match"] = 0.5
+    return out
 
 
 def probe_style(prefab_paths, assets_root):
     meta_index = _meta_guid_index(assets_root) if assets_root and os.path.isdir(assets_root) else {}
     result = {"schema_version": SCHEMA_VERSION, "text_system": "unknown", "font_guid": None,
               "tmp_font_guid": None, "root_size": None, "close_sprite_guid": None,
-              "base_classes": [], "prefabs": [], "warnings": []}
+              "base_classes": [], "prefabs": [], "warnings": [], "canvas": None}
     legacy = tmp = 0
     for path in prefab_paths:
         if not os.path.isfile(path):
@@ -153,6 +203,7 @@ def probe_style(prefab_paths, assets_root):
         result["tmp_font_guid"] = result["tmp_font_guid"] or s["tmp_font_guid"]
         result["root_size"] = result["root_size"] or s["root_size"]
         result["close_sprite_guid"] = result["close_sprite_guid"] or s["close_sprite_guid"]
+        result["canvas"] = result["canvas"] or s.get("canvas")
         for cls in s["root_scripts"]:
             if cls not in result["base_classes"]:
                 result["base_classes"].append(cls)
@@ -392,6 +443,44 @@ def _node(name, parent, binding, components=None, field=None, field_type=None, a
             "custom_cta_names": custom_cta_names or [], "sprite_guid": sprite_guid}
 
 
+DEFAULT_SORTING_ORDER = 100   # above a typical HUD canvas; align it with the game's pop-up layer
+
+
+def _plan_canvas(probed, frame_size, report):
+    """Canvas / CanvasScaler / GraphicRaycaster settings for the prefab root.
+
+    Copied from a reference pop-up whose root has a canvas, else popup defaults: an overlay canvas
+    sorted above the HUD, scaling with the screen at the design's frame size. Either way the
+    developer is told to align them: they depend on the game's own UI setup.
+    """
+    if probed:
+        canvas = {
+            "render_mode": probed.get("render_mode") or "overlay",
+            "override_sorting": bool(probed.get("override_sorting")),
+            "sorting_order": int(probed.get("sorting_order") or 0),
+            "scale_mode": probed.get("scale_mode") or "scale_with_screen_size",
+            "reference_resolution": list(probed.get("reference_resolution") or frame_size),
+            "match": float(probed.get("match") if probed.get("match") is not None else 0.5),
+            "source": probed.get("source") or "probe",
+        }
+        note = "copied from %s" % canvas["source"]
+    else:
+        canvas = {"render_mode": "overlay", "override_sorting": True, "sorting_order": DEFAULT_SORTING_ORDER,
+                  "scale_mode": "scale_with_screen_size", "reference_resolution": list(frame_size), "match": 0.5,
+                  "source": "default"}
+        note = "defaults: overlay, sorting order %d, scale with screen size at %gx%g, match 0.5" % (
+            DEFAULT_SORTING_ORDER, frame_size[0], frame_size[1])
+    report["needs_developer"].append(
+        "the prefab root gets a Canvas, CanvasScaler and GraphicRaycaster (%s); check and align them with your UI "
+        "setup, or remove them when the prefab is parented under an existing pop-up canvas" % note)
+    if canvas["render_mode"] == "camera":
+        report["needs_developer"].append(
+            "the canvas render mode is Screen Space - Camera: assign its camera at runtime (the builder cannot)")
+    elif canvas["render_mode"] == "world":
+        report["needs_developer"].append("the canvas render mode is World Space: position and size it in the scene")
+    return canvas
+
+
 def _frame_size(style, options):
     root = (style or {}).get("root_size") or []
     width = float(root[0]) if len(root) == 2 and root[0] else 1080.0
@@ -474,7 +563,8 @@ def plan_prefab(template, layout=None, style=None, options=None):
     text_system = style.get("text_system") if style.get("text_system") in ("legacy", "tmp") else "legacy"
     frame_size = _frame_size(style, options)
     ui = {"text_system": text_system, "font_guid": style.get("font_guid"), "tmp_font_guid": style.get("tmp_font_guid"),
-          "frame_size": frame_size, "close_sprite_guid": style.get("close_sprite_guid"), "dimmer_alpha": 0.6}
+          "frame_size": frame_size, "close_sprite_guid": style.get("close_sprite_guid"), "dimmer_alpha": 0.6,
+          "canvas": _plan_canvas(style.get("canvas"), frame_size, report)}
 
     panel_min, panel_max = anchors_from_bbox(panel_bbox, full)
     nodes = [
@@ -1354,7 +1444,8 @@ namespace Kinoa.InApps.Editor
 
         [Serializable] public class Plan { public string schema_version; public PlanTemplate template; public PlanUi ui; public PlanView view; public PlanPaths paths; public PlanNode[] nodes; }
         [Serializable] public class PlanTemplate { public string id; public string key; public string name; public string feature_type; }
-        [Serializable] public class PlanUi { public string text_system; public string font_guid; public string tmp_font_guid; public float[] frame_size; public string close_sprite_guid; public float dimmer_alpha; }
+        [Serializable] public class PlanUi { public string text_system; public string font_guid; public string tmp_font_guid; public float[] frame_size; public string close_sprite_guid; public float dimmer_alpha; public PlanCanvas canvas; }
+        [Serializable] public class PlanCanvas { public string render_mode; public bool override_sorting; public int sorting_order; public string scale_mode; public float[] reference_resolution; public float match; public string source; }
         [Serializable] public class PlanView { public string class_name; public string ns; }
         [Serializable] public class PlanPaths { public string out_dir; public string prefab_path; public string view_path; public string plan_path; }
         [Serializable] public class PlanNode
@@ -1404,6 +1495,7 @@ namespace Kinoa.InApps.Editor
 
                 root = new GameObject(Path.GetFileNameWithoutExtension(plan.paths.prefab_path), typeof(RectTransform));
                 Stretch(root.GetComponent<RectTransform>());
+                AddCanvas(root, plan.ui);
                 var byName = new Dictionary<string, GameObject> { { "", root } };
                 foreach (var node in plan.nodes)
                 {
@@ -1470,6 +1562,46 @@ namespace Kinoa.InApps.Editor
 
         private static Type TmpType => Type.GetType("TMPro.TextMeshProUGUI, Unity.TextMeshPro");
         private static bool UseTmp(PlanUi ui) => ui != null && ui.text_system == "tmp" && TmpType != null;
+
+        /// <summary>
+        ///     Canvas + CanvasScaler + GraphicRaycaster on the prefab root, from plan.ui.canvas (copied from a
+        ///     reference pop-up, or pop-up defaults). They depend on the game's UI setup: align them, or remove
+        ///     them when the prefab is parented under an existing pop-up canvas (a nested canvas ignores its scaler).
+        /// </summary>
+        private static void AddCanvas(GameObject root, PlanUi ui)
+        {
+            var cfg = ui?.canvas;
+            if (cfg != null && string.IsNullOrEmpty(cfg.source)) cfg = null;   // plan written before canvas settings existed
+
+            var canvas = root.AddComponent<Canvas>();
+            canvas.renderMode = cfg?.render_mode == "camera" ? RenderMode.ScreenSpaceCamera
+                : cfg?.render_mode == "world" ? RenderMode.WorldSpace
+                : RenderMode.ScreenSpaceOverlay;
+            canvas.overrideSorting = cfg == null || cfg.override_sorting;
+            canvas.sortingOrder = cfg != null ? cfg.sorting_order : 100;
+
+            var scaler = root.AddComponent<CanvasScaler>();
+            if (cfg != null && cfg.scale_mode == "constant_pixel_size")
+            {
+                scaler.uiScaleMode = CanvasScaler.ScaleMode.ConstantPixelSize;
+            }
+            else if (cfg != null && cfg.scale_mode == "constant_physical_size")
+            {
+                scaler.uiScaleMode = CanvasScaler.ScaleMode.ConstantPhysicalSize;
+            }
+            else
+            {
+                scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+                var resolution = cfg?.reference_resolution != null && cfg.reference_resolution.Length == 2
+                    ? cfg.reference_resolution : ui?.frame_size;
+                if (resolution != null && resolution.Length == 2)
+                    scaler.referenceResolution = new Vector2(resolution[0], resolution[1]);
+                scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
+                scaler.matchWidthOrHeight = cfg != null ? cfg.match : 0.5f;
+            }
+
+            root.AddComponent<GraphicRaycaster>();
+        }
 
         private static void Stretch(RectTransform rt)
         {

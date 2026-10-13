@@ -10,7 +10,7 @@ Produced by `inapp_prefab_plan.py plan`, copied into the project as
 |---|---|---|
 | `schema_version` | `"1.0"` | bump when a node field changes meaning |
 | `template` | object | `id`, `key`, `name`, `feature_type` (`standard`/`mission`/`milestone`), plus the slot lists the view generator reads (`images`, `texts`, `buttons`, `customs`) |
-| `ui` | object | `text_system` (`legacy`/`tmp`), `font_guid`, `tmp_font_guid`, `frame_size` `[w,h]`, `close_sprite_guid`, `dimmer_alpha` |
+| `ui` | object | `text_system` (`legacy`/`tmp`), `font_guid`, `tmp_font_guid`, `frame_size` `[w,h]`, `close_sprite_guid`, `dimmer_alpha`, `canvas` — the root `Canvas` / `CanvasScaler` settings: `render_mode` (`overlay`/`camera`/`world`), `override_sorting`, `sorting_order`, `scale_mode` (`scale_with_screen_size`/`constant_pixel_size`/`constant_physical_size`), `reference_resolution` `[w,h]`, `match`, `source` (the reference pop-up it was copied from, or `default`) |
 | `view` | object | `class_name`, `ns` (always `Kinoa.InApps`), `facade`, `facade_namespace` |
 | `paths` | object | `out_dir`, `prefab_path`, `view_path`, `plan_path` — all project-relative |
 | `nodes` | array | flat GameObject list, parent-before-child order |

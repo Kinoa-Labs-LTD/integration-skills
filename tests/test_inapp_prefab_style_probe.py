@@ -91,3 +91,50 @@ class TestProbeStyle(unittest.TestCase):
         if not hasattr(self, "_d"):
             self._d = tempfile.mkdtemp()
         return self._d
+
+
+class TestProbeCanvas(unittest.TestCase):
+    CANVAS_PREFAB = """%YAML 1.1
+--- !u!1 &100
+GameObject:
+  m_Name: PopupWithCanvas
+--- !u!224 &101
+RectTransform:
+  m_GameObject: {fileID: 100}
+  m_Father: {fileID: 0}
+  m_SizeDelta: {x: 0, y: 0}
+--- !u!223 &102
+Canvas:
+  m_GameObject: {fileID: 100}
+  m_RenderMode: 1
+  m_OverrideSorting: 1
+  m_SortingOrder: 250
+--- !u!114 &103
+MonoBehaviour:
+  m_GameObject: {fileID: 100}
+  m_Script: {fileID: 11500000, guid: 0cd44c1031e13a943bb63640046fad76, type: 3}
+  m_UiScaleMode: 1
+  m_ReferenceResolution: {x: 1080, y: 1920}
+  m_ScreenMatchMode: 0
+  m_MatchWidthOrHeight: 0.3
+--- !u!114 &104
+MonoBehaviour:
+  m_GameObject: {fileID: 100}
+  m_Script: {fileID: 11500000, guid: dc42784cf147c0c48a680349fa168899, type: 3}
+"""
+
+    def test_root_canvas_settings_are_read(self):
+        import tempfile
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "PopupWithCanvas.prefab")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(self.CANVAS_PREFAB)
+        probe = mod.probe_style([path], d)
+        self.assertEqual(probe["canvas"], {"render_mode": "camera", "override_sorting": True, "sorting_order": 250,
+                                           "scale_mode": "scale_with_screen_size", "reference_resolution": [1080.0, 1920.0],
+                                           "match": 0.3, "graphic_raycaster": True, "source": "PopupWithCanvas"})
+        self.assertNotIn("CanvasScaler", probe["base_classes"])
+
+    def test_prefab_without_a_root_canvas_reports_none(self):
+        probe = mod.probe_style([os.path.join(FIX, "OfferPopup.prefab")], FIX)
+        self.assertIsNone(probe["canvas"])

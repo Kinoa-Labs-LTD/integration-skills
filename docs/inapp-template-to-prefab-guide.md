@@ -55,7 +55,8 @@ clicks are routed through it when it exists.
 **2. Your existing pop-ups set the style.** You name one or two of your game's
 pop-up prefabs. Candidates whose names look like popups, dialogs or offers are
 suggested. They are read, never changed, to copy your conventions: legacy
-`Text` or TextMeshPro, the font, the panel size and the close-button sprite.
+`Text` or TextMeshPro, the font, the panel size, the close-button sprite, and
+the canvas settings when the pop-up carries its own canvas.
 If they share a base popup class, it is reported to you rather than inherited.
 The generated view stays a plain component that your popup manager can wrap.
 If your game has no pop-ups yet, you answer one question instead: legacy Text
@@ -173,12 +174,15 @@ takes taps meant for them.
    store price lookup and the resource icon lookup in `KinoaInAppHooks.cs`.
    Until then, the affected images and prices stay empty and a warning is
    logged.
-2. **Set up the canvas.** Add, check or align the `Canvas`, `CanvasScaler`
-   and `GraphicRaycaster` for the prefab. The builder adds none of them,
-   because render mode, sorting order, reference resolution and scale mode
-   depend on your game's own UI setup. Either parent the prefab under your
-   existing pop-up canvas, or add and configure them on the prefab root.
-   Without a raycaster above it, the buttons receive no taps.
+2. **Check the canvas.** The prefab root comes with a `Canvas`, a
+   `CanvasScaler` and a `GraphicRaycaster`. Their settings are copied from
+   your reference pop-up when it has its own canvas. Otherwise they are
+   pop-up defaults: an overlay canvas at sorting order 100, scaling with the
+   screen at the design's size. Render mode, sorting order, reference
+   resolution and scale mode depend on your game's UI setup, so align them.
+   If you show the pop-up under an existing pop-up canvas instead, remove
+   them or keep them as a nested canvas, whose scaler is then ignored. A
+   Screen Space Camera canvas needs its camera assigned at runtime.
 3. **Register the template key**, if your project uses the SDK sample facade.
    The module offers two one-line edits, a key constant and one switch arm,
    and asks before applying them. Until both are in place, the sample facade
@@ -218,10 +222,11 @@ bridge (for `mcp-unity`: *Tools → MCP Unity → Server Window → Start Server
 then run the module again. If you only want the plan file without a prefab,
 ask for that explicitly.
 
-**Taps on the pop-up do nothing.** Check three things in this order. Is there
-a `GraphicRaycaster` on a canvas above the prefab? Are the template-key
-constant and switch arm applied in your sample facade? Is the action's
-handling filled in your facade?
+**Taps on the pop-up do nothing.** Check three things in this order. Is the
+prefab's `GraphicRaycaster` still there and enabled, or is there one on the
+canvas above it if you removed it? Are the template-key constant and switch
+arm applied in your sample facade? Is the action's handling filled in your
+facade?
 
 **An image never appears.** Remote images load through your image hook. If
 the hook is not assigned, a warning in the Unity console says so.
