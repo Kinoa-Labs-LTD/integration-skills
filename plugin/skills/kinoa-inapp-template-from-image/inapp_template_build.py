@@ -1246,11 +1246,12 @@ def validate_layout(layout, payload=None):
 # remap — layout path B: a template that already exists on the dashboard
 # --------------------------------------------------------------------------
 # The record is the ground truth for keys and structure; a fresh vision pass of
-# its tip image supplies the geometry. The matcher gates the pair: every
-# detected element must land on a declared slot, otherwise the image does not
-# show THIS template and no layout may be derived from it. The reverse is fine:
-# slots not found on the image simply ship with bbox null (flagged) unless the
-# developer places them on the confirmation page.
+# its tip image supplies the geometry. Only a feature-type mismatch fails
+# closed (a milestone image over a mission template is a different world).
+# Element-level disagreements in either direction surface as report.mismatch —
+# the confirmation page shows them in a warning banner and the developer
+# decides: update the tip image on the dashboard, place the elements by hand,
+# or let them ship without coordinates (bbox null, flagged `unplaced`).
 
 
 def _record_payload(record):
@@ -1284,16 +1285,13 @@ def remap_record(record, analysis):
     if "mapping" not in entry:
         # Summary record or feature-type mismatch: the matcher already said why.
         return {"ok": False, "reason": entry.get("reason") or f"verdict {entry['verdict']!r}", "match": entry}
-    if entry.get("missing"):
-        return {
-            "ok": False,
-            "reason": "the image shows elements this template has no slot for — a stale or "
-                      "unrelated tip image; a layout must not be derived from it",
-            "mismatch": entry["missing"],
-            "match": entry,
-        }
 
     needs, _skipped = _analysis_needs(analysis)
+    unslotted = []
+    for m in entry.get("missing") or []:
+        need = needs[m["need_index"]]
+        unslotted.append({"bucket": m["bucket"], "role": need.get("role") or "",
+                          "observed_text": need.get("observed_text") or ""})
     slot_index = {}
     for bucket in BUCKETS:
         for item in payload.get(bucket) or []:
@@ -1334,6 +1332,16 @@ def remap_record(record, analysis):
             "slots not located on the image — they ship with bbox null unless placed "
             "on the confirmation page: " + ", ".join(unmatched)
         )
+    if unslotted:
+        warnings.append(
+            "the tip image shows elements this template has no slot for — "
+            "likely a stale tip image; update it on the dashboard if so"
+        )
+    mismatch = {}
+    if unmatched:
+        mismatch["unmatched_slots"] = unmatched
+    if unslotted:
+        mismatch["unslotted_elements"] = unslotted
 
     client_rendered = [
         {"role": el.get("role"), "reason": CLIENT_RENDERED[el.get("role")], "bbox": el.get("bbox")}
@@ -1357,6 +1365,7 @@ def remap_record(record, analysis):
         "unsupported": unsupported,
         "elements": trace,
         "source_image": analysis.get("source_image") or {},
+        "mismatch": mismatch,
     }
     return {
         "ok": True,

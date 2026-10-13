@@ -175,8 +175,9 @@ enumerations. Mission features additionally use `scope` ∈ `PER_MISSION`,
 PER_SET) — live capture 2026-08-31.
 
 **Menu vocabulary:** milestone menus accept **nine** click actions — every
-action except `custom` (verified live 2026-10-05). Older records may still
-carry `custom`; the builder and page simply drop it.
+action except `custom` (verified live 2026-10-13: create with `custom` in
+`mainActionTypes` → 422 enumerating exactly the nine allowed actions). Older
+records may still carry `custom`; the builder and page simply drop it.
 
 **CTA menus — required-ness verified live (API + UI, 2026-08-31):**
 `mainActionTypes`/`milestonesActionTypes` are optional for the create API

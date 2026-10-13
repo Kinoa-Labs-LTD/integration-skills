@@ -1172,6 +1172,7 @@ class TestRemapRecord(unittest.TestCase):
     def test_happy_path_keys_come_from_the_record(self):
         res = build_mod.remap_record(self.record, self.ana)
         self.assertTrue(res["ok"], res)
+        self.assertEqual(res["report"]["mismatch"], {})
         self.assertEqual(res["payload"]["key"], self.record["key"])
         record_keys = {(b, i["key"]) for b in build_mod.BUCKETS for i in self.record[b]}
         trace_keys = {(t["bucket"], t["key"]) for t in res["report"]["elements"]}
@@ -1195,17 +1196,20 @@ class TestRemapRecord(unittest.TestCase):
         self.assertFalse(res["ok"])
         self.assertIn("feature type mismatch", res["reason"])
 
-    def test_alien_elements_fail_closed_with_the_mismatch(self):
+    def test_alien_elements_surface_as_mismatch_not_a_failure(self):
         ana = copy.deepcopy(self.ana)
         ana["elements"] = ana["elements"] + [
             {"role": "cta_button", "suggested_key": "second_cta", "observed_text": "$9.99",
              "bbox": {"x": 0.1, "y": 0.9, "w": 0.3, "h": 0.06}},
         ]
         res = build_mod.remap_record(self.record, ana)
-        self.assertFalse(res["ok"])
-        self.assertIn("stale or", res["reason"])
-        self.assertEqual(len(res["mismatch"]), 1)
-        self.assertEqual(res["mismatch"][0]["bucket"], "buttons")
+        self.assertTrue(res["ok"], res)
+        extra = res["report"]["mismatch"]["unslotted_elements"]
+        self.assertEqual(len(extra), 1)
+        self.assertEqual([extra[0]["bucket"], extra[0]["observed_text"]], ["buttons", "$9.99"])
+        self.assertTrue(any("stale tip image" in w for w in res["report"]["warnings"]))
+        # the matched part still produces a full page-ready trace
+        self.assertTrue(all(t["bbox"] for t in res["report"]["elements"]))
 
     def test_unmatched_slots_warn_and_stay_out_of_the_trace(self):
         ana = copy.deepcopy(self.ana)
@@ -1213,6 +1217,7 @@ class TestRemapRecord(unittest.TestCase):
         res = build_mod.remap_record(self.record, ana)
         self.assertTrue(res["ok"], res)
         self.assertIn("texts.fine_print", res["match"]["unmatched_slots"])
+        self.assertEqual(res["report"]["mismatch"]["unmatched_slots"], res["match"]["unmatched_slots"])
         self.assertTrue(any("bbox null" in w for w in res["report"]["warnings"]))
         self.assertNotIn("fine_print", [t["key"] for t in res["report"]["elements"]])
 

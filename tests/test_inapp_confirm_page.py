@@ -2523,6 +2523,33 @@ class ConfirmPageInteractionTests(_PageCase):
         self.assertTrue(got["empty"]["flagged"])
         self.assertEqual(got["fixed"]["cls"], "ok")
 
+    def test_tip_image_mismatch_banner(self):
+        build = self._milestone_build()
+        build["report"]["mismatch"] = {
+            "unmatched_slots": ["texts.fine_print"],
+            "unslotted_elements": [{"bucket": "buttons", "role": "cta_button",
+                                    "observed_text": "$9.99"}],
+        }
+        got = self.drive("""
+            var panels = [...d.querySelectorAll("#build-notes .card h2")].map(h => h.textContent);
+            var banner = [...d.querySelectorAll("#build-notes .card")]
+              .find(c => c.querySelector("h2").textContent.indexOf("Tip image") === 0);
+            return { panels: panels,
+                     lead: banner.querySelector(".muted").textContent,
+                     items: [...banner.querySelectorAll("li")].map(li => li.textContent) };
+        """, build=build)
+        self.assertTrue(got["panels"][0].startswith("Tip image does not match"))
+        self.assertIn("update it on the dashboard", got["lead"])
+        self.assertIn("without coordinates", got["lead"])
+        self.assertEqual(len(got["items"]), 2)
+        self.assertIn("fine_print", got["items"][0])
+        self.assertIn("$9.99", got["items"][1])
+
+        clean = self.drive("""
+            return [...d.querySelectorAll("#build-notes .card h2")].map(h => h.textContent);
+        """, build=self._milestone_build())
+        self.assertFalse(any(p.startswith("Tip image") for p in clean))
+
     def test_milestone_menus_offer_nine_actions_mission_keeps_ten(self):
         # dashboard change (2026-10-05): `custom` is gone from milestone menus;
         # the mission completion picker keeps the full vocabulary.

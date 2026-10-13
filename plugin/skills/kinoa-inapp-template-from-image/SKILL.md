@@ -342,20 +342,27 @@ Write the confirmed payload next to the mockup as
 dashboard helper (co-installed sibling):
 
 ```bash
+# local mockup file (the usual case):
 python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-inapp-template/kinoa_dashboard_inapp_template.py" \
-  create --payload <template_key>.template.json
+  create --payload <template_key>.template.json --tip-image-file <mockup path>
+# mockup supplied as a URL:
+python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-inapp-template/kinoa_dashboard_inapp_template.py" \
+  create --payload <template_key>.template.json --tip-image-url <url>
 ```
 
-**Attach the source mockup as the template's tip image by default** — it
-becomes the template's face in the dashboard constructor. Mockup given as a
-URL → add `--tip-image-url <url>`; local file → add `--tip-image-file <path>`
-(the helper uploads it as a separate image-only PATCH after the create; blobs
-are not accepted inside the JSON body). This is the client's own dashboard, so
-there is no confidentiality concern; still, skip it if the developer asks.
+The tip-image flag is part of the default command, not an option to consider:
+the mockup becomes the template's face in the dashboard constructor, and the
+layout path for EXISTING templates (path B below) depends on it being there.
+The helper uploads a local file as a separate image-only PATCH after the
+create — blobs are not accepted inside the JSON body. This is the client's own
+dashboard, so there is no confidentiality concern; drop the flag only when the
+developer explicitly asks.
 
 The server answers with the full record and `status: "draft"` — report the new
 template `id` back to the developer, together with element counts per bucket,
-the feature type, and anything the confirmation page left flagged.
+the feature type, anything the confirmation page left flagged, and a **tip
+image line**: `attached` or `skipped (<reason>)` — a silent skip is how
+templates end up un-renderable for path B later.
 
 **Ship the corrections to telemetry** (they are how the vision instructions
 get better): write the envelope's `corrections` object to a temp file and post
@@ -423,11 +430,12 @@ configuration**:
    ```
 
    `remap` matches every detected element onto the record's declared slots. It
-   fails closed (`ok: false` + a mismatch report) when the image shows elements
-   the template has no slot for, or the feature type differs — a stale or
-   unrelated tip image must never produce a layout; surface the mismatch and
-   stop. Slots NOT found on the image are fine: they surface as a warning and
-   ship unplaced unless the developer places them on the page.
+   fails closed (`ok: false`) only on a feature-type mismatch — surface the
+   reason and stop. Element-level disagreements in either direction land in
+   `report.mismatch` and the page renders them as a warning banner: the
+   developer updates the tip image on the dashboard, places the missing
+   elements by hand, or lets them ship without coordinates (`bbox: null` +
+   `unplaced`). Relay the mismatch lists in chat as well — never silently.
 5. On success the output is build-result-shaped — run Phase 4 on it unchanged
    (`generate_confirm_page.py --build build_for_page.json --image <tip image>`).
    The keys on the page are the record's own; tell the developer not to rename

@@ -50,6 +50,7 @@ Usage:
                  "client_rendered":[{"role","reason","bbox"}],
                  "needs_confirmation":[{"key","bucket","role","question"}],
                  "unsupported":[{"what","why","bbox"}],
+                 "mismatch"?: {"unmatched_slots":[],"unslotted_elements":[]},
                  "elements":[{"index","bucket","key","role","bbox","observed_text",
                               "confidence"}],
                  "source_image":{"path","width","height"}},
@@ -1034,6 +1035,35 @@ function listPanel(title, items, cls, renderItem) {
 function renderBuildNotes() {
   var host = document.getElementById("build-notes");
   host.innerHTML = "";
+  // Tip-image mismatch (remap / path B): the record and its tip image disagree.
+  // The developer decides — update the image on the dashboard, place the
+  // elements by hand here, or let them ship without coordinates.
+  var mm = REPORT.mismatch || {};
+  var mmItems = (mm.unmatched_slots || []).map(function (k) {
+    return { slot: k };
+  }).concat((mm.unslotted_elements || []).map(function (e) { return { extra: e }; }));
+  var mp = listPanel("Tip image mismatch", mmItems, "warn", function (li, it) {
+    if (it.slot) {
+      li.innerHTML = "<code>" + esc(it.slot) + "</code> &mdash; configured on the template, "
+        + "not found on the image: place it on the mockup (click the row's #N badge) "
+        + "or it ships without coordinates.";
+    } else {
+      li.innerHTML = "<b>" + esc(it.extra.role || "(no role)") + "</b>"
+        + (it.extra.observed_text ? " &ldquo;" + esc(it.extra.observed_text) + "&rdquo;" : "")
+        + " (" + esc(it.extra.bucket) + ") &mdash; visible on the image, no slot in this template.";
+    }
+  });
+  if (mp) {
+    mp.querySelector("h2").textContent =
+      "Tip image does not match the configured elements (" + mmItems.length + ")";
+    var lead = document.createElement("div");
+    lead.className = "muted";
+    lead.textContent = "If the tip image is stale, update it on the dashboard and re-run. "
+      + "If the image is right, resolve the items below; anything left unplaced ships "
+      + "in the layout file without coordinates.";
+    mp.insertBefore(lead, mp.querySelector("ul"));
+    host.appendChild(mp);
+  }
   // Needs-confirmation gets the same prominence as unmapped: the element IS in
   // the payload, but keeping it is a decision only the developer can make.
   var confirmPanel = listPanel("Needs your confirmation", REPORT.needs_confirmation || [], "bad",
