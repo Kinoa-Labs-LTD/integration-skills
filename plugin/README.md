@@ -37,8 +37,8 @@ Plugin-installed skills are invoked **namespaced**:
 
 Notes:
 
-- **Auto-update is off by default.** A CLI add registers the marketplace with auto-update disabled (third-party default). Turn it on via `/plugin` → **Marketplaces** → `kinoa` → **Enable auto-update**, or add `"autoUpdate": true` to the `kinoa` entry under `extraKnownMarketplaces` in `~/.claude/settings.json`. With it on, every session start re-fetches the plugin to the latest `main` commit.
-- **No version field — every commit is a version.** The plugin manifest sets no `version`; the commit SHA doubles as the integrity checksum. Marketplaces registered with `autoUpdate: true` pull the latest `main` on session start.
+- **Auto-update is off by default.** A CLI add registers the marketplace with auto-update disabled (third-party default). Turn it on via `/plugin` → **Marketplaces** → `kinoa` → **Enable auto-update**, or add `"autoUpdate": true` to the `kinoa` entry under `extraKnownMarketplaces` in `~/.claude/settings.json`.
+- **Versioned releases.** The plugin manifest pins a `version`; consumers receive an update only when it changes (see `CHANGELOG.md` in the repo). With auto-update on, every session start re-checks `main` and updates only on a version bump.
 - **Private-repo access** for auto-update uses `GITHUB_TOKEN` / `GH_TOKEN`.
 - **Pre-wiring game projects:** a game project can pre-register the marketplace via its own `.claude/settings.json` → `extraKnownMarketplaces` (with `"autoUpdate": true`) + `enabledPlugins`.
 
@@ -105,6 +105,9 @@ The 13 skills split by **flavor**: an **orchestrator** dispatches; **workflow** 
 | [`kinoa-sync-resource-template-integration`](skills/kinoa-sync-resource-template-integration/) | Workflow | Discover sellable / prize items (resources — not currency), confirm them on an interactive HTML page, register as resource templates (create DRAFT → activate), generate `KinoaResources`, verify. |
 | [`kinoa-dashboard-resource-template`](skills/kinoa-dashboard-resource-template/) | Dashboard helper | Admin CLI for resource-template definitions (list, get, create, update, activate, deprecate, clone, delete — HARD + DRAFT-only). |
 | [`kinoa-csv-schema-infer`](skills/kinoa-csv-schema-infer/) | Utility | Pure parser: CSV header + samples → a Kinoa feature-schema (`SchemaDto`). No network, no credentials. |
+| [`kinoa-inapp-template-from-image`](skills/kinoa-inapp-template-from-image/) | Workflow | Mockup image (file or URL) → in-app template: vision analysis, deterministic build, reuse matching, interactive confirmation page, draft registration with the mockup as tip image. Also emits the layout artifact `<template_key>.layout.json` (element geometry for UI generation) — incl. for existing dashboard templates via their tip image (`remap`). |
+| [`kinoa-dashboard-inapp-template`](skills/kinoa-dashboard-inapp-template/) | Dashboard helper | Admin CLI for in-app message templates (list, get, create → draft, guarded update, has-related; no delete by design; tip-image upload). |
+| [`kinoa-inapp-template-to-prefab`](skills/kinoa-inapp-template-to-prefab/) | Workflow (Unity) | Visualises an in-app template as a Unity uGUI prefab via the Unity MCP: plans from the layout artifact (preferred) or a build result, generates the per-template view + hooks + Editor builder. |
 
 Dashboard helpers aren't usually invoked directly during a fresh integration — the workflows delegate to them. Use them directly for one-off admin tasks ("publish event X", "delete a stale custom field", "publish a configuration").
 

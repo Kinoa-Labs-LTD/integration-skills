@@ -18,7 +18,11 @@ a **Download JSON** button, a **Copy** button, and a visible <pre> block the
 developer can select by hand.
 
 The hand-back is stamped: `{"confirmed_at", "page_generated_at", "corrections",
-"payload"}`. `corrections` is page-side feedback for the analysis corpus — what
+"geometry", "payload"}`. `geometry` is the confirmed position of every shipped
+element (final bbox or null, by bucket+key) plus the client-rendered zones and
+the image fingerprint — the input `inapp_template_build.py layout` turns into
+the `<template_key>.layout.json` artifact. `corrections` is page-side feedback
+for the analysis corpus — what
 the human fixed about what the model saw: `missed` (rows added and placed here),
 `adjusted` (vision boxes moved/resized, final + `original_bbox`) and `excluded`
 (vision rows un-ticked — false positives), plus `source_image`: a fingerprint
@@ -46,6 +50,7 @@ Usage:
                  "client_rendered":[{"role","reason","bbox"}],
                  "needs_confirmation":[{"key","bucket","role","question"}],
                  "unsupported":[{"what","why","bbox"}],
+                 "mismatch"?: {"unmatched_slots":[],"unslotted_elements":[]},
                  "elements":[{"index","bucket","key","role","bbox","observed_text",
                               "confidence"}],
                  "source_image":{"path","width","height"}},
@@ -95,6 +100,10 @@ CLICK_ACTIONS = [
     "update_app_version",
     "soft_billing",
 ]
+
+# Milestone CTA menus accept every click action except `custom` — mirrors
+# MILESTONE_MENU_ACTIONS in inapp_template_build.py (drift-guarded).
+MILESTONE_MENU_ACTIONS = [a for a in CLICK_ACTIONS if a != "custom"]
 ITEM_BEARING_ACTIONS = ["collect_resource", "promise_rewards"]
 KINDS = ["string", "numeric", "boolean", "enumeration"]
 FIELD_KINDS = KINDS + ["image"]
@@ -802,9 +811,12 @@ function featuresOut() {
     if (k in block) block[k] = num(block[k], 1);
   });
   // An emptied milestone menu goes back to "the dashboard chooses": the key is
-  // dropped, never shipped as an empty array.
+  // dropped, never shipped as an empty array. `custom` is filtered out —
+  // milestone menus no longer accept it.
   ["mainActionTypes", "milestonesActionTypes"].forEach(function (k) {
-    if (Array.isArray(block[k]) && !block[k].length) delete block[k];
+    if (!Array.isArray(block[k])) return;
+    block[k] = block[k].filter(function (a) { return C.milestoneMenuActions.indexOf(a) >= 0; });
+    if (!block[k].length) delete block[k];
   });
   // maxMilestones is nested in progressBar and optional: an empty field means
   // "no cap", so the key is dropped rather than coerced to a number.
@@ -826,8 +838,38 @@ function featuresOut() {
 // House hand-back contract: both established pages stamp their export, so a
 // stale file handed back to the skill is detectable.
 // Geometry NEVER enters the template payload — templates have no coordinates.
-// It rides alongside as feedback for the analysis corpus: "the pass missed this
-// element, and here is where it actually sits".
+// It ships in TWO sibling blocks: `geometry` (the confirmed position of every
+// element that ships — the source of the layout artifact) and `corrections`
+// (feedback for the analysis corpus: what the human fixed about what the model
+// saw).
+
+// The layout artifact's raw material: one entry per INCLUDED element, final
+// bbox (or null — placement undecided), in payload key terms. Excluded rows
+// ship nothing here; they are corrections-side only.
+function geometryOut() {
+  var els = [];
+  state.elements.forEach(function (e) {
+    if (!inc(e)) return;
+    els.push({
+      key: String(e.key).trim(),
+      bucket: e.bucket,
+      bbox: e.bbox ? clone(e.bbox) : null,
+      role: e.role || "",
+      observed_text: e.observedText || "",
+      confidence: e.confidence == null ? null : e.confidence,
+      hand_placed: !!(e._pageNew || (e.bbox && !e._origBbox)),
+      adjusted: !!e._adjusted
+    });
+  });
+  return {
+    source_image: DATA.image_fingerprint || null,
+    elements: els,
+    client_rendered: (REPORT.client_rendered || []).map(function (c) {
+      return { role: c.role || "", bbox: c.bbox ? clone(c.bbox) : null };
+    })
+  };
+}
+
 function correctionsOut() {
   var missed = [], adjusted = [], excluded = [];
   var source = DATA.image_fingerprint || null;
@@ -855,6 +897,7 @@ function buildEnvelope() {
   return { confirmed_at: new Date().toISOString(),
            page_generated_at: DATA.generated_at || "",
            corrections: correctionsOut(),
+           geometry: geometryOut(),
            payload: buildTemplate() };
 }
 
@@ -992,6 +1035,35 @@ function listPanel(title, items, cls, renderItem) {
 function renderBuildNotes() {
   var host = document.getElementById("build-notes");
   host.innerHTML = "";
+  // Tip-image mismatch (remap / path B): the record and its tip image disagree.
+  // The developer decides — update the image on the dashboard, place the
+  // elements by hand here, or let them ship without coordinates.
+  var mm = REPORT.mismatch || {};
+  var mmItems = (mm.unmatched_slots || []).map(function (k) {
+    return { slot: k };
+  }).concat((mm.unslotted_elements || []).map(function (e) { return { extra: e }; }));
+  var mp = listPanel("Tip image mismatch", mmItems, "warn", function (li, it) {
+    if (it.slot) {
+      li.innerHTML = "<code>" + esc(it.slot) + "</code> &mdash; configured on the template, "
+        + "not found on the image: place it on the mockup (the row's \u201cnot placed\u201d "
+        + "badge) or it ships without coordinates.";
+    } else {
+      li.innerHTML = "<b>" + esc(it.extra.role || "(no role)") + "</b>"
+        + (it.extra.observed_text ? " &ldquo;" + esc(it.extra.observed_text) + "&rdquo;" : "")
+        + " (" + esc(it.extra.bucket) + ") &mdash; visible on the image, no slot in this template.";
+    }
+  });
+  if (mp) {
+    mp.querySelector("h2").textContent =
+      "Tip image does not match the configured elements (" + mmItems.length + ")";
+    var lead = document.createElement("div");
+    lead.className = "muted";
+    lead.textContent = "If the tip image is stale, update it on the dashboard and re-run. "
+      + "If the image is right, resolve the items below; anything left unplaced ships "
+      + "in the layout file without coordinates.";
+    mp.insertBefore(lead, mp.querySelector("ul"));
+    host.appendChild(mp);
+  }
   // Needs-confirmation gets the same prominence as unmapped: the element IS in
   // the payload, but keeping it is a decision only the developer can make.
   var confirmPanel = listPanel("Needs your confirmation", REPORT.needs_confirmation || [], "bad",
@@ -1503,10 +1575,12 @@ function rowHead(e, index, expanded) {
   }
   g.appendChild(idxBadge);
   g.appendChild(badge(C.bucketBadges[e.bucket] || e.bucket, "b-" + e.bucket));
-  if (e._pageNew) {
-    g.appendChild(badge("added here", "b-new"));
-    // operator decision: the placement badge IS the trigger — clicking it enters
-    // placement mode (or re-places). The old 📍 button is gone; the fid stays.
+  if (e._pageNew) g.appendChild(badge("added here", "b-new"));
+  // operator decision: the placement badge IS the trigger — clicking it enters
+  // placement mode (or re-places). The old 📍 button is gone; the fid stays.
+  // Any row without a confirmed box can be placed: page-added rows, and
+  // template slots the image did not show (path B's unmatched slots).
+  if (e._pageNew || !e.bbox) {
     var placeBadge = badge(e.bbox ? "placed" : "not placed",
                            e.bbox ? "b-" + e.bucket : "b-idx");
     placeBadge.dataset.fid = "place-" + e.uid;
@@ -1864,7 +1938,7 @@ function chipGroup(opts) {
   chips.className = "chips" + (opts.selected.length ? "" : (opts.badWhenEmpty ? " bad" : ""));
   chips.dataset.fid = opts.fid;
   if (opts.title) chips.title = opts.title;
-  C.clickActions.forEach(function (action) {
+  (opts.menu || C.clickActions).forEach(function (action) {
     var on = opts.selected.indexOf(action) >= 0;
     var chip = document.createElement("label");
     chip.className = "chip" + (on ? " on" : "");
@@ -1889,11 +1963,11 @@ function chipGroup(opts) {
 }
 
 // Rebuilt from the menu each time, so every list follows menu order.
-function withAction(list, action, on) {
+function withAction(list, action, on, menu) {
   var picked = {};
   (list || []).forEach(function (a) { picked[a] = true; });
   if (on) { picked[action] = true; } else { delete picked[action]; }
-  return C.clickActions.filter(function (a) { return picked[a]; });
+  return (menu || C.clickActions).filter(function (a) { return picked[a]; });
 }
 
 function actionsBlock(e, err) {
@@ -2078,7 +2152,7 @@ var CTA_EMPTY_HINT = "nothing selected — you'll choose on the dashboard";
 
 // operator decision: whatever is SENT is visible and editable here. A menu the
 // builder did not derive is NOT offered for editing — the page never invents one.
-function renderFeatureChips(hostId, keys, badWhenEmpty, emptyHint) {
+function renderFeatureChips(hostId, keys, badWhenEmpty, emptyHint, menu) {
   var host = document.getElementById(hostId);
   if (!host) return;
   host.innerHTML = "";
@@ -2091,12 +2165,13 @@ function renderFeatureChips(hostId, keys, badWhenEmpty, emptyHint) {
       fid: "fp-" + key,
       chipFid: function (a) { return "fp-cta-" + key + "-" + a; },
       selected: f[key] || [],
+      menu: menu,
       badWhenEmpty: !!badWhenEmpty,
       emptyHint: emptyHint,
       onToggle: function (action, on) {
         var block = (state.features || {})[state.featureType];
         if (!block) return;
-        block[key] = withAction(block[key], action, on);
+        block[key] = withAction(block[key], action, on, menu);
         fillFeatureInputs();
         refresh();
       }
@@ -2141,7 +2216,8 @@ function fillFeatureInputs() {
     // Both menus are always offered; an empty one is valid and simply ships no
     // key (see featuresOut) — the dashboard then demands the choice.
     renderFeatureChips("fp-milestone-ctas",
-                       ["mainActionTypes", "milestonesActionTypes"], false, CTA_EMPTY_HINT);
+                       ["mainActionTypes", "milestonesActionTypes"], false, CTA_EMPTY_HINT,
+                       C.milestoneMenuActions);
     // operator decision: no note — the chips themselves say everything now
     note.textContent = "";
   }
@@ -2553,6 +2629,7 @@ def render(payload: dict[str, Any], image_data_uri: str | None = None,
     }
     consts = {
         "clickActions": CLICK_ACTIONS,
+        "milestoneMenuActions": MILESTONE_MENU_ACTIONS,
         "itemBearing": ITEM_BEARING_ACTIONS,
         "kinds": KINDS,
         "fieldKinds": FIELD_KINDS,

@@ -27,7 +27,10 @@ a DRAFT template on the dashboard via the `kinoa-dashboard-inapp-template`
 helper (see *Phase 5*).
 
 Read [`references/template-model.md`](references/template-model.md) for the full
-field-by-field model before doing anything non-obvious.
+field-by-field model before doing anything non-obvious. The geometry deliverable
+(`<template_key>.layout.json` — where every element sits, for downstream UI
+generation) has its own contract:
+[`references/layout-artifact.md`](references/layout-artifact.md).
 
 ---
 
@@ -299,19 +302,38 @@ read the confirmed result back in. Do not proceed on the un-confirmed payload:
 a vision pass is a proposal, not a verdict.
 
 What comes back is an **envelope**: `{confirmed_at, page_generated_at,
-corrections, payload}`. Check freshness first — `page_generated_at` must match
+corrections, geometry, payload}`. Check freshness first — `page_generated_at` must match
 the page you generated in THIS run; a mismatch means the developer handed back
 a stale file from an earlier session, so regenerate the page and ask again.
 `corrections` is the developer's verdict on the vision pass — `missed`
 (elements the model did not see, hand-placed on the mockup), `adjusted`
 (boxes the developer moved/resized, with originals), `excluded` (the model's
 false positives, un-ticked on the page; they stay recoverable page-side).
-Elements un-ticked are simply absent from `payload`. Then unwrap and
-re-validate:
+Elements un-ticked are simply absent from `payload`. `geometry` is the
+confirmed position of every element that ships (final bbox or null, plus the
+client-rendered zones and the image fingerprint) — the raw material of the
+layout artifact below. Then unwrap and re-validate:
 
 ```bash
 python "${CLAUDE_SKILL_DIR}/inapp_template_build.py" validate --payload confirmed_payload.json
 ```
+
+**Produce the layout artifact** right after validation — write the confirmed
+envelope to a file and run:
+
+```bash
+python "${CLAUDE_SKILL_DIR}/inapp_template_build.py" layout \
+  --envelope confirmed_envelope.json --analysis analysis.json \
+  --out <template_key>.layout.json
+```
+
+It joins the confirmed payload with the confirmed geometry — elements the
+developer never placed ship with `bbox: null` + `"unplaced": true`, never
+dropped — cross-validates the 1:1 key join, and writes
+`<template_key>.layout.json` next to the mockup, alongside the template JSON.
+This file is the input of downstream UI generation (the prefab skill); contract:
+[`references/layout-artifact.md`](references/layout-artifact.md). Produce it in
+every run, credentials or not — it does not depend on the dashboard create.
 
 ## Phase 5 — Register on the dashboard
 
@@ -320,20 +342,27 @@ Write the confirmed payload next to the mockup as
 dashboard helper (co-installed sibling):
 
 ```bash
+# local mockup file (the usual case):
 python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-inapp-template/kinoa_dashboard_inapp_template.py" \
-  create --payload <template_key>.template.json
+  create --payload <template_key>.template.json --tip-image-file <mockup path>
+# mockup supplied as a URL:
+python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-inapp-template/kinoa_dashboard_inapp_template.py" \
+  create --payload <template_key>.template.json --tip-image-url <url>
 ```
 
-**Attach the source mockup as the template's tip image by default** — it
-becomes the template's face in the dashboard constructor. Mockup given as a
-URL → add `--tip-image-url <url>`; local file → add `--tip-image-file <path>`
-(the helper uploads it as a separate image-only PATCH after the create; blobs
-are not accepted inside the JSON body). This is the client's own dashboard, so
-there is no confidentiality concern; still, skip it if the developer asks.
+The tip-image flag is part of the default command, not an option to consider:
+the mockup becomes the template's face in the dashboard constructor, and the
+layout path for EXISTING templates (path B below) depends on it being there.
+The helper uploads a local file as a separate image-only PATCH after the
+create — blobs are not accepted inside the JSON body. This is the client's own
+dashboard, so there is no confidentiality concern; drop the flag only when the
+developer explicitly asks.
 
 The server answers with the full record and `status: "draft"` — report the new
 template `id` back to the developer, together with element counts per bucket,
-the feature type, and anything the confirmation page left flagged.
+the feature type, anything the confirmation page left flagged, and a **tip
+image line**: `attached` or `skipped (<reason>)` — a silent skip is how
+templates end up un-renderable for path B later.
 
 **Ship the corrections to telemetry** (they are how the vision instructions
 get better): write the envelope's `corrections` object to a temp file and post
@@ -363,8 +392,66 @@ operator-initiated admin tasks, not as a revision loop. **Never delete** — the
 exposes no delete; a template with related in-app messages must never be
 removed (`has-related` reports that signal).
 
-If the developer only wants the JSON, stop after writing the file — creating
-the draft is the default, not an obligation.
+If the developer only wants the JSON, stop after writing the files — creating
+the draft is the default, not an obligation. Either way the run's local
+deliverables are the pair `<template_key>.template.json` +
+`<template_key>.layout.json`.
+
+---
+
+## Layout for an EXISTING dashboard template (path B)
+
+When the developer asks for the layout of a template that already lives on the
+dashboard ("build the layout for template X", "the prefab skill needs geometry
+for an existing template"), no new template is minted — the record is the
+ground truth for keys and structure, and its **tip image** supplies the
+geometry, **provided it is valid and corresponds to the template's
+configuration**:
+
+1. Fetch the FULL record via the sibling helper:
+   `python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-inapp-template/kinoa_dashboard_inapp_template.py" get --id <id>`
+   (or resolve the key via `list` first).
+2. Obtain the image with the helper's `tip-image`:
+   `python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-inapp-template/kinoa_dashboard_inapp_template.py" tip-image --id <id> --out-dir <workdir>`.
+   A record carries its tip image through one of two transports —
+   `tipImageUrl` (attached as a link) or `tipImageBlob` (uploaded as a file) —
+   and the helper resolves url → blob. The file lands in `<workdir>` as
+   `<key>.tip.<ext>`; the output also returns the full record under
+   `response`, so this call can replace step 1's `get`. `source: none` — both
+   transports came up empty — is the ONLY case that means the record has no tip
+   image: then ask the developer for the mockup the template was built from. No
+   image at all → stop and say so; a layout is never invented.
+3. Run the Phase 2 vision analysis on that image (same rules, same schema).
+4. Gate the pair:
+
+   ```bash
+   python "${CLAUDE_SKILL_DIR}/inapp_template_build.py" remap \
+     --record record.json --analysis tip_analysis.json --out build_for_page.json
+   ```
+
+   `remap` matches every detected element onto the record's declared slots. It
+   fails closed (`ok: false`) only on a feature-type mismatch — surface the
+   reason and stop. Element-level disagreements in either direction land in
+   `report.mismatch` and the page renders them as a warning banner: the
+   developer updates the tip image on the dashboard, places the missing
+   elements by hand, or lets them ship without coordinates (`bbox: null` +
+   `unplaced`). Relay the mismatch lists in chat as well — never silently.
+5. On success the output is build-result-shaped — run Phase 4 on it unchanged
+   (`generate_confirm_page.py --build build_for_page.json --image <tip image>`).
+   The keys on the page are the record's own; tell the developer not to rename
+   them — the layout must join the dashboard record 1:1.
+6. From the confirmed envelope, produce the artifact exactly as in Phase 4
+   (`layout --envelope … --analysis tip_analysis.json --out <template_key>.layout.json`),
+   then cross-check against the record:
+   `validate --payload record.json --layout <template_key>.layout.json`.
+
+No create, no update — path B is read-only against the dashboard.
+
+**Next step for Unity games — visualise it.** Keep `<template_key>.layout.json`:
+`kinoa-inapp-template-to-prefab` consumes it as its preferred layout source
+(`plan --layout-artifact`) and builds the prefab + view in the developer's open
+Unity Editor. Mention this in the hand-off when the project is a Unity SDK
+integration.
 
 ---
 

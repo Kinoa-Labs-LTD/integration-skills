@@ -560,7 +560,8 @@ class ConfirmPageInteractionTests(_PageCase):
                      body: JSON.stringify(env.payload),
                      confirmed: env.confirmed_at, stamped: env.page_generated_at };
         """)
-        self.assertEqual(got["env"], ["confirmed_at", "page_generated_at", "corrections", "payload"])
+        self.assertEqual(got["env"], ["confirmed_at", "page_generated_at", "corrections",
+                                      "geometry", "payload"])
         # a freshly built page has corrected nothing yet, but the arrays are always there
         self.assertEqual(got["corrections"], {"source_image": None, "missed": [],
                                               "adjusted": [], "excluded": []})
@@ -1001,6 +1002,58 @@ class ConfirmPageInteractionTests(_PageCase):
     def test_fingerprint_is_null_without_a_mockup(self):
         got = self.drive("return H.envelope().corrections.source_image;")
         self.assertIsNone(got)
+
+    # ---- geometry: the layout artifact's raw material ---------------------
+    def test_geometry_ships_final_boxes_for_every_included_element(self):
+        self._with_image()
+        got = self.drive("""
+            const env = H.envelope();
+            const p = env.payload;
+            const flat = [].concat(p.images, p.buttons, p.texts, p.customs);
+            return { g: env.geometry, n: flat.length,
+                     payloadStr: JSON.stringify(p) };
+        """)
+        g = got["g"]
+        # one entry per SHIPPED element — same cardinality as the payload
+        self.assertEqual(len(g["elements"]), got["n"])
+        self.assertEqual(g["source_image"]["sha256"], hashlib.sha256(PNG_BYTES).hexdigest())
+        cta = next(e for e in g["elements"] if e["key"] == "cta_button")
+        self.assertEqual(cta["bbox"], {"x": 0.3, "y": 0.7, "w": 0.4, "h": 0.08})
+        self.assertEqual([cta["hand_placed"], cta["adjusted"]], [False, False])
+        self.assertEqual(cta["role"], "cta_button")
+        # a row the vision pass never placed ships bbox null, never dropped
+        banner = next(e for e in g["elements"] if e["key"] == "show_banner")
+        self.assertIsNone(banner["bbox"])
+        # client-rendered zones ride in geometry (for the layout artifact)…
+        self.assertEqual(g["client_rendered"],
+                         [{"role": "timer", "bbox": {"x": 0.4, "y": 0.8, "w": 0.2, "h": 0.03}}])
+        # …but never in the create payload
+        self.assertNotIn("timer", got["payloadStr"])
+
+    def test_geometry_tracks_exclusion_addition_and_drag(self):
+        self._with_image()
+        got = self.drive("""
+            H.stubStage(1000);
+            const off = H.uidOfKey("header");
+            H.tick("inc-" + off, false);                  // exclude a vision row
+            H.addRow("texts", "extra_line");              // add an unplaced row
+            const cta = H.uidOfKey("cta_button");
+            H.mouse(H.box(cta), "pointerdown", 400, 700); // move a detected box
+            H.mouse(d, "pointermove", 500, 750);
+            H.mouse(d, "pointerup", 500, 750);
+            const g = H.envelope().geometry;
+            return { keys: g.elements.map(e => e.key),
+                     extra: g.elements.find(e => e.key === "extra_line"),
+                     cta: g.elements.find(e => e.key === "cta_button") };
+        """)
+        # excluded rows ship nothing in geometry (they are corrections-side only)
+        self.assertNotIn("header", got["keys"])
+        self.assertIsNone(got["extra"]["bbox"])
+        self.assertTrue(got["extra"]["hand_placed"])
+        # a moved box ships its FINAL position, flagged as adjusted
+        self.assertTrue(got["cta"]["adjusted"])
+        self.assertAlmostEqual(got["cta"]["bbox"]["x"], 0.4, places=6)
+        self.assertAlmostEqual(got["cta"]["bbox"]["y"], 0.75, places=6)
 
     # ---- geometry corrections on DETECTED boxes --------------------------
     def test_moving_a_detected_box_is_reported_as_adjusted(self):
@@ -1846,7 +1899,11 @@ class ConfirmPageInteractionTests(_PageCase):
         self.assertAlmostEqual(got["dragStillWorks"], 0.34, places=6)
 
     # ---- manual placement (page-side feedback only) ----------------------
-    def test_only_page_added_rows_offer_placement(self):
+    def test_rows_without_a_box_offer_placement(self):
+        # Placement follows the missing box, not the row's origin: page-added
+        # rows AND payload rows the vision pass never located (path B's
+        # unmatched slots; the show_banner custom here) get the badge; rows
+        # with a vision box are drag-adjusted instead.
         self._with_image()
         got = self.drive("""
             const detected = { chips: H.count('[data-fid^="place-"]'),
@@ -1864,8 +1921,8 @@ class ConfirmPageInteractionTests(_PageCase):
                               boxes: H.count("#overlay .box.placed") },
                      buttons: H.count('[data-fid^="place-"]') };
         """)
-        self.assertEqual(got["detected"]["chips"], 0)      # vision rows untouched
-        self.assertNotIn("not placed", got["detected"]["text"])
+        self.assertEqual(got["detected"]["chips"], 1)      # show_banner has no bbox
+        self.assertNotIn("not placed", got["detected"]["text"])   # texts rows all have boxes
         self.assertIn("not placed", got["added"]["chip"])
         self.assertTrue(got["added"]["hasBadge"])
         self.assertEqual(got["added"]["label"], "not placed")
@@ -1877,7 +1934,27 @@ class ConfirmPageInteractionTests(_PageCase):
         self.assertTrue(got["added"]["inHead"])
         self.assertEqual(got["added"]["buttons"], 0)
         self.assertEqual(got["added"]["boxes"], 0)
-        self.assertEqual(got["buttons"], 1)               # only the page-added row
+        self.assertEqual(got["buttons"], 2)               # page-added + show_banner
+
+    def test_placing_an_unlocated_payload_row_ships_hand_placed(self):
+        # A template slot the image did not show (path B's unmatched slot) is
+        # placed through the same badge — and ships in geometry as hand_placed.
+        self._with_image()
+        got = self.drive("""
+            H.stubStage(1000);
+            const uid = H.uidOfKey("show_banner");
+            H.click("place-" + uid);
+            const hint = !d.getElementById("place-hint").hidden;
+            H.mouse(H.stage(), "click", 500, 500);
+            const g = H.envelope().geometry.elements.find(e => e.key === "show_banner");
+            return { hint: hint, g: g,
+                     // once placed, the row has a box: the badge yields to dragging
+                     badgeGone: !d.querySelector('[data-fid="place-' + uid + '"]') };
+        """)
+        self.assertTrue(got["hint"])
+        self.assertIsNotNone(got["g"]["bbox"])
+        self.assertTrue(got["g"]["hand_placed"])
+        self.assertTrue(got["badgeGone"])
 
     def test_clicking_the_mockup_places_a_default_box(self):
         self._with_image()
@@ -2470,6 +2547,65 @@ class ConfirmPageInteractionTests(_PageCase):
         self.assertTrue(got["empty"]["flagged"])
         self.assertEqual(got["fixed"]["cls"], "ok")
 
+    def test_tip_image_mismatch_banner(self):
+        build = self._milestone_build()
+        build["report"]["mismatch"] = {
+            "unmatched_slots": ["texts.fine_print"],
+            "unslotted_elements": [{"bucket": "buttons", "role": "cta_button",
+                                    "observed_text": "$9.99"}],
+        }
+        got = self.drive("""
+            var panels = [...d.querySelectorAll("#build-notes .card h2")].map(h => h.textContent);
+            var banner = [...d.querySelectorAll("#build-notes .card")]
+              .find(c => c.querySelector("h2").textContent.indexOf("Tip image") === 0);
+            return { panels: panels,
+                     lead: banner.querySelector(".muted").textContent,
+                     items: [...banner.querySelectorAll("li")].map(li => li.textContent) };
+        """, build=build)
+        self.assertTrue(got["panels"][0].startswith("Tip image does not match"))
+        self.assertIn("update it on the dashboard", got["lead"])
+        self.assertIn("without coordinates", got["lead"])
+        self.assertEqual(len(got["items"]), 2)
+        self.assertIn("fine_print", got["items"][0])
+        self.assertIn("$9.99", got["items"][1])
+
+        clean = self.drive("""
+            return [...d.querySelectorAll("#build-notes .card h2")].map(h => h.textContent);
+        """, build=self._milestone_build())
+        self.assertFalse(any(p.startswith("Tip image") for p in clean))
+
+    def test_milestone_menus_offer_nine_actions_mission_keeps_ten(self):
+        # dashboard change (2026-10-05): `custom` is gone from milestone menus;
+        # the mission completion picker keeps the full vocabulary.
+        got = self.drive("""
+            H.click("tpl-ed");
+            return { milestoneChipTexts: [...d.querySelectorAll("#fp-milestone-ctas .chip")]
+                       .map(c => c.textContent),
+                     exported: H.exported().features.milestone };
+        """, build=self._milestone_build(main_actions=["close", "show_ad"]))
+        self.assertNotIn("custom", got["milestoneChipTexts"])
+        self.assertEqual(len(set(got["milestoneChipTexts"])), len(self.mod.MILESTONE_MENU_ACTIONS))
+
+        mission = self.drive("""
+            H.click("tpl-ed");
+            return { chips: [...d.querySelectorAll("#fp-mission-ctas .chip")]
+                       .map(c => c.textContent) };
+        """, build=self._mission_build())
+        self.assertIn("custom", mission["chips"])
+
+    def test_legacy_custom_in_milestone_menu_never_ships(self):
+        # a payload created before the change may carry `custom`; the export
+        # must filter it rather than send a menu the dashboard now rejects.
+        build = self._milestone_build()
+        build["payload"]["features"]["milestone"]["mainActionTypes"] = ["custom", "billing"]
+        build["payload"]["features"]["milestone"]["milestonesActionTypes"] = ["custom"]
+        got = self.drive("""
+            return { features: H.exported().features.milestone };
+        """, build=build)
+        self.assertEqual(got["features"].get("mainActionTypes"), ["billing"])
+        # custom-only menu collapses to "dashboard chooses": key dropped
+        self.assertNotIn("milestonesActionTypes", got["features"])
+
     def _milestone_build(self, **detected):
         analysis = json.loads(json.dumps(ANALYSIS))
         base = {"milestone_count": 6}
@@ -2518,7 +2654,8 @@ class ConfirmPageInteractionTests(_PageCase):
         """, build=self._milestone_build())
         # the groups are there even though the mockup showed nothing
         self.assertEqual(undetected["groups"], ["fp-mainActionTypes", "fp-milestonesActionTypes"])
-        self.assertEqual(undetected["chips"], 2 * len(self.mod.CLICK_ACTIONS))
+        # milestone menus offer NINE actions — `custom` left the vocabulary
+        self.assertEqual(undetected["chips"], 2 * len(self.mod.MILESTONE_MENU_ACTIONS))
         self.assertEqual(undetected["hints"],
                          ["nothing selected — you'll choose on the dashboard"] * 2)
         self.assertFalse(undetected["oldNote"])   # the standalone note is gone
@@ -2732,7 +2869,7 @@ class ConfirmPageInteractionTests(_PageCase):
                      boxes: H.count("#overlay .box"),
                      client: H.count("#overlay .box.client"),
                      rows: H.count(".row"),
-                     payload: H.raw() };
+                     payload: JSON.stringify(H.envelope().payload) };
         """)
         self.assertIn("timer", got["list"])
         self.assertEqual(got["client"], 1)

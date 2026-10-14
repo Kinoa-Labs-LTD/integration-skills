@@ -1,7 +1,7 @@
 ---
 name: kinoa-dashboard-inapp-template
-description: Pure admin-API wrapper for Kinoa in-app message templates (`message_templates`) — the reusable skeletons behind in-app pop-ups: offers, bundles, milestone chases, mission boards. List templates, fetch one, create a draft from a builder payload, update one with a full body (guarded: draft-only, refuses on referenced templates or slot loss, with a `--dry-run`), and check whether in-app messages still reference it (`has_related_in_app_messages`). There is deliberately NO delete subcommand — a template with related in-app messages must never be deleted, and delete is kept out of this tooling entirely. Use whenever the user wants to inspect or directly manipulate in-app templates on the Kinoa dashboard (without going through the mockup-to-template workflow). The workflow skill kinoa-inapp-template-from-image delegates its Phase 5 create to this helper.
-argument-hint: [list|get|create|update|has-related]
+description: Pure admin-API wrapper for Kinoa in-app message templates (`message_templates`) — the reusable skeletons behind in-app pop-ups: offers, bundles, milestone chases, mission boards. List templates, fetch one, write its tip image to disk (url, then blob), create a draft from a builder payload, update one with a full body (guarded: draft-only, refuses on referenced templates or slot loss, with a `--dry-run`), and check whether in-app messages still reference it (`has_related_in_app_messages`). There is deliberately NO delete subcommand — a template with related in-app messages must never be deleted, and delete is kept out of this tooling entirely. Use whenever the user wants to inspect or directly manipulate in-app templates on the Kinoa dashboard (without going through the mockup-to-template workflow). The workflow skill kinoa-inapp-template-from-image delegates its Phase 5 create to this helper.
+argument-hint: [list|get|tip-image|create|update|has-related]
 allowed-tools: Bash(python *) Read AskUserQuestion
 ---
 
@@ -71,6 +71,17 @@ python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_inapp_template.py" get --id ID
     timestamps. A record that reads back sparse was written without the header,
     so those fields were never stored — see the section above.
 
+python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_inapp_template.py" tip-image --id ID [--out-dir DIR]
+    GET {base}/<id>, then write the template's tip image to disk, resolved in
+    order: (1) `tipImageUrl` non-empty -> plain GET download with NO admin
+    headers (the link may point at any CDN; the bearer must not travel there;
+    only http/https is followed); (2) else `tipImageBlob` non-empty ->
+    base64-decode (a `data:…;base64,` prefix is stripped); (3) else source
+    `none`. A url that fails to download or is not an image falls through to
+    the blob. The bytes decide the type (magic sniff: png/jpeg/gif/webp); the
+    file lands as <out-dir>/<key>.tip.<ext> (default: current directory). Exit
+    0 when an image was written, 1 otherwise; nothing is written on failure.
+
 python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_inapp_template.py" create --payload FILE|- [--tip-image-url URL | --tip-image-file PATH] [--expect-game UUID]
     POST {base} — creates the template; it lands server-side as status "draft"
     with its own id/createdAt. The payload is the create body produced by
@@ -114,11 +125,12 @@ Every other key and value passes through **byte-for-byte**. Each lookup accepts 
 
 ### Output shape
 
-Every subcommand makes **one HTTP call** and prints a single JSON object:
+Every subcommand makes **one HTTP call** (`tip-image` may add one plain image download) and prints a single JSON object:
 
 ```json
 { "http_status": 200, "ok": true, "response": { … } }                        // list
 { "http_status": 200, "ok": true, "id": "<id>", "response": { … } }          // get
+{ "http_status": 200, "ok": true, "id": "<id>", "key": "…", "source": "url|blob|none", "path": "<out-dir>/<key>.tip.<ext>", "bytes": 20481, "content_type": "image/png", "sha256": "…", "attempts": [ … ], "response": { … } } // tip-image
 { "http_status": 200, "ok": true, "request_body": { … }, "response": { … } } // create
 { "http_status": 200, "ok": true, "id": "<id>", "name": "…", "guards": { … }, "slot_diff": { "added": {}, "removed": {} }, "request_body": { … }, "response": { … } } // update
 { "ok": true, "dry_run": true, "id": "<id>", "name": "…", "guards": { … }, "slot_diff": { … }, "would_send": { … } }        // update --dry-run
@@ -165,6 +177,10 @@ The upload fires only after the main create/update **succeeded** (and, for `upda
 ```
 
 **A failed image upload never masks a successful main call**: the top-level `ok` and the exit code track the **main** call (the template was created/updated either way), so check `tip_image.ok` separately. Under `--dry-run` no image bytes are sent at all — the output carries `tip_image_plan` describing what would happen (mode, file, size).
+
+### Reading it back
+
+A `get` returns whichever transport was used: `tipImageUrl` as the link, or — when the image was uploaded as a file — `tipImageBlob` as bare base64, with `tipImageUrl` `null`. Every echoed response summarises the blob as `<blob: N chars>`; the raw base64 is never printed. `tip-image` is the read path: it resolves `tipImageUrl` → `tipImageBlob` → none and writes the image as `<key>.tip.<ext>`; `source: none` (both transports came up empty; `attempts` says why) is the only verdict that a record has no tip image. The URL download is a plain GET with no admin headers — the link may point at any host, and the bearer stays on the dashboard.
 
 ## `update` guard ladder (load-bearing)
 

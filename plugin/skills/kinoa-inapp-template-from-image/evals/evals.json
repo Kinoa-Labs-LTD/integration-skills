@@ -127,6 +127,15 @@
       "prompt": "Build a Kinoa in-app template from plugin/skills/kinoa-inapp-template-from-image/evals/fixtures/one-cta/one_cta_tip.png. Kinoa credentials are configured; the game already has the boxed One CTA template (one_cta_predefined) active on its dashboard.",
       "expected_output": "Before creating anything, the skill fetches the game's existing templates (helper list + get per template, full records) and runs inapp_template_build.py match. one_cta_predefined comes back verdict 'reuse' with full coverage; the skill puts the reuse-vs-new choice to the developer via AskUserQuestion instead of silently minting a duplicate template. On reuse, the deliverable is a <template_key>.reuse.json mapping file (template_key, template_id, element→slot mapping) and NO create call and NO confirm page — the operator configures the in-app on the existing template in the dashboard. A new template is created only if the developer explicitly chooses that.",
       "files": []
+    },
+    {
+      "id": 19,
+      "name": "layout-artifact-accompanies-the-template",
+      "prompt": "Build a Kinoa in-app template from plugin/skills/kinoa-inapp-template-from-image/evals/fixtures/one-cta/one_cta_tip.png and also give me the layout file — my Unity tooling needs to know where each element sits on the design.",
+      "expected_output": "The run delivers BOTH files next to the mockup: <template_key>.template.json and <template_key>.layout.json. The layout comes from inapp_template_build.py layout (from the confirmed envelope's geometry block, or --build with the explicit pre-confirmation warning if the developer skips the page). Its elements join 1:1 with the payload keys and carry normalized bboxes (origin top-left) plus source_image pixel size and sha256; client-rendered zones (timer, resource area, price-before-sale) are listed separately, never as elements; an element never placed ships bbox null + unplaced:true rather than being dropped. validate --payload --layout passes.",
+      "files": [
+        "plugin/skills/kinoa-inapp-template-from-image/evals/fixtures/one-cta/one_cta_tip.png"
+      ]
     }
   ]
 }

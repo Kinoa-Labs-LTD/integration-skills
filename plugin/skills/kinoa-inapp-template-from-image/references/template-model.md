@@ -46,7 +46,7 @@ Server-owned, never sent on create: `id`, `createdAt`, `updatedAt`, `status`,
 | Field | Notes |
 |---|---|
 | `key` | Observed values are snake_case, but `Monster_v2` proves uppercase is accepted. The builder emits `^[a-zA-Z][a-zA-Z0-9_]*$`. |
-| `tipImageBlob` / `tipImageUrl` | The template's face in the dashboard. **Verified contract:** `tipImageUrl` goes as a plain string in the JSON body; a blob is NOT accepted via JSON (500) — it is uploaded by a separate image-only `PATCH {base}/{id}` with `multipart/form-data`, single part `tip_image_blob` (binary, snake_case field name even under Key-Inflection), which leaves the rest of the record untouched. The workflow attaches the source mockup here by default. |
+| `tipImageBlob` / `tipImageUrl` | The template's face in the dashboard. **Verified contract:** `tipImageUrl` goes as a plain string in the JSON body; a blob is NOT accepted via JSON (500) — it is uploaded by a separate image-only `PATCH {base}/{id}` with `multipart/form-data`, single part `tip_image_blob` (binary, snake_case field name even under Key-Inflection), which leaves the rest of the record untouched. The workflow attaches the source mockup here by default. **Read side:** a `get` returns whichever transport was used — `tipImageUrl` as the link, or `tipImageBlob` as bare base64 (line-wrapped every 60 chars, no `data:` prefix; the helper summarises it as `<blob: N chars>`); `tipImageUrl` is `null` for a file upload. The helper's `tip-image` resolves url → blob → none and writes the file as `<key>.tip.<ext>`. |
 | `status` | Observed only as `"active"`. No DRAFT/ACTIVE/DEPRECATED ladder has been seen — do not assume the resource-template lifecycle applies here. |
 | `availableActions` | Observed: `show`, `clone`, `deprecate`, `export_to_game`, `hide`. The `system` template omits `deprecate`/`export_to_game`. |
 
@@ -173,6 +173,11 @@ enumerations. Mission features additionally use `scope` ∈ `PER_MISSION`,
 `limit` is the number of milestones the template supports. Feature-level
 `customFields` here carry **no `scope`** (unlike missions' PER_MISSION /
 PER_SET) — live capture 2026-08-31.
+
+**Menu vocabulary:** milestone menus accept **nine** click actions — every
+action except `custom` (verified live 2026-10-13: create with `custom` in
+`mainActionTypes` → 422 enumerating exactly the nine allowed actions). Older
+records may still carry `custom`; the builder and page simply drop it.
 
 **CTA menus — required-ness verified live (API + UI, 2026-08-31):**
 `mainActionTypes`/`milestonesActionTypes` are optional for the create API
