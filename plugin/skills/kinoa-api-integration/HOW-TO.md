@@ -44,7 +44,7 @@ skills/            # installed plugin root (plugin/skills/ in the source repo)
     └── kinoa_csv_schema_infer.py
 ```
 
-The split between `*-integration` (workflow) and `kinoa-dashboard-*` (admin CLI wrapper) keeps each role single-purpose: the integration skill owns the discover→diff→apply prompts, the dashboard skill owns one HTTP call per subcommand. Integration skills delegate admin calls via `${CLAUDE_SKILL_DIR}/../kinoa-dashboard-*/...`, so both must be installed as siblings.
+The split between `*-integration` (workflow) and `kinoa-dashboard-*` (admin CLI wrapper) keeps each role single-purpose: the integration skill owns the discover→diff→apply prompts, the dashboard skill owns one logical admin operation per subcommand (list subcommands page through the listing internally). Integration skills delegate admin calls via `${CLAUDE_SKILL_DIR}/../kinoa-dashboard-*/...`, so both must be installed as siblings.
 
 Each sub-skill ships its own Python helper and has no cross-skill Python imports. The skills are still meant to be **co-installed as one tree**: workflows delegate admin calls to sibling `kinoa-dashboard-*` helpers, fire telemetry via `../kinoa-api-integration/kinoa_webhook.py`, and read `../kinoa-api-integration/references/*.md` — install the whole `skills/` directory (the plugin and the symlink loop both do), not individual folders.
 

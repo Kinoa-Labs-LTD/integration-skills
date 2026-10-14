@@ -7,6 +7,16 @@ events with their parameters, and delete events (HARD delete — see below).
 Self-contained. Reads bearer token and game id from ~/.kinoa/session.env
 (written by kinoa-init).
 
+Pagination: every list-* subcommand auto-paginates. --rows is the PAGE SIZE,
+not a global limit — when the server reports more records than one page holds
+(totalCount), the next pages are requested and merged so the printed response
+always carries the FULL listing ({totalCount, elements}). The output gains
+pages_fetched, plus truncated:true when the merge had to stop early and
+count_mismatch:true when it assembled more elements than the final totalCount
+(either flag means: re-run the listing, don't trust it); a non-2xx page instead
+fails closed (ok:false + failed_page) — a partial merge is never presented as a
+complete listing.
+
 Subcommands:
   list-predefined [--rows N] [--states s1,s2]
       GET https://dashboard.kinoa.io/gamemetaapi/api/game_events?types=PREDEFINED
@@ -121,6 +131,70 @@ def _parse_json(raw):
         return None
 
 
+def _get_all_pages(url, params, headers):
+    """GET a paginated listing page by page and merge the elements.
+
+    `params` is a list of (key, value) query pairs without a page entry — the
+    page number is appended here, starting at 0; `rows` in `params` is the
+    page size. A first page that is not {"totalCount": int, "elements": list}
+    is returned untouched after that single request (legacy single-call).
+
+    Returns output keys for the caller's JSON envelope:
+      status         HTTP status of the last request
+      response       merged {..., totalCount, elements} | untouched body
+      pages_fetched  page requests made
+      failed_page    non-2xx page index — caller derives ok:false, the
+                     partial merge is discarded
+      truncated      merge stopped early (no-progress page or the page cap);
+                     totalCount stays server-reported
+      count_mismatch merge ended with more elements than totalCount — the
+                     listing is unreliable, re-run it instead of diffing
+    """
+    merged = []
+    total = None
+    first_body = None
+    page = 0
+    while True:
+        qs = urllib.parse.urlencode(params + [("page", str(page))])
+        status, raw = _request("GET", f"{url}?{qs}", headers=headers)
+        body = _parse_json(raw)
+        body = body if body is not None else raw
+        if not (200 <= status < 300):
+            return {"status": status, "response": body,
+                    "pages_fetched": page + 1, "failed_page": page}
+        if page == 0:
+            if not (isinstance(body, dict)
+                    and isinstance(body.get("totalCount"), int)
+                    and isinstance(body.get("elements"), list)):
+                return {"status": status, "response": body, "pages_fetched": 1}
+            first_body = body
+        elements = body.get("elements") if isinstance(body, dict) else None
+        if isinstance(elements, list):
+            merged.extend(elements)
+        # Later pages may report a fresher totalCount (concurrent creates or
+        # deletes) — trust the newest value the server sent.
+        if isinstance(body, dict) and isinstance(body.get("totalCount"), int):
+            total = body["totalCount"]
+        page += 1
+        if len(merged) >= total:
+            break
+        # No-progress stop: a page that contributed nothing (empty, missing, or
+        # non-list elements — the isinstance matters: a truthy non-list value
+        # would otherwise re-request with zero progress until the cap) ends the
+        # merge; the page cap is the backstop for servers that keep feeding
+        # non-empty pages while inflating totalCount.
+        if not (isinstance(elements, list) and elements) or page >= 1000:
+            return {"status": status,
+                    "response": dict(first_body, totalCount=total, elements=merged),
+                    "pages_fetched": page, "truncated": True}
+    result = {"status": status,
+              "response": dict(first_body, totalCount=total, elements=merged),
+              "pages_fetched": page}
+    if len(merged) > total:
+        result["count_mismatch"] = True
+    return result
+
+
 def _admin_headers():
     bearer = os.environ.get("KINOA_BEARER_TOKEN")
     game_id = os.environ.get("KINOA_GAME_ID")
@@ -167,24 +241,21 @@ def _guard_expected_game(args):
 
 
 def _list_events(types, rows, states=None):
-    params = {
-        "page": "0",
-        "rows": str(rows),
-        "sortBy": "updated_at",
-        "order": "desc",
-        "types": types,
-    }
+    params = [
+        ("rows", str(rows)),
+        ("sortBy", "updated_at"),
+        ("order", "desc"),
+        ("types", types),
+    ]
     if states:
-        params["selectedFilters"] = "states"
-        params["states"] = states
-    qs = urllib.parse.urlencode(params)
-    status, raw = _request("GET", f"{GAME_EVENTS_URL}?{qs}", headers=_admin_headers())
-    print(json.dumps({
-        "http_status": status,
-        "ok": 200 <= status < 300,
-        "response": _parse_json(raw) or raw,
-    }, indent=2))
-    return 0 if 200 <= status < 300 else 1
+        params.append(("selectedFilters", "states"))
+        params.append(("states", states))
+    result = _get_all_pages(GAME_EVENTS_URL, params, _admin_headers())
+    status = result.pop("status")
+    payload = {"http_status": status, "ok": 200 <= status < 300}
+    payload.update(result)
+    print(json.dumps(payload, indent=2))
+    return 0 if payload["ok"] else 1
 
 
 def cmd_list_predefined(args):
@@ -391,17 +462,17 @@ def main(argv):
     )
 
     p_lp = sub.add_parser("list-predefined", parents=[guard], help="GET predefined game_events.")
-    p_lp.add_argument("--rows", type=int, default=100, help="Page size. Default: 100.")
+    p_lp.add_argument("--rows", type=int, default=100, help="Page size — every page is fetched and merged (auto-pagination). Default: 100.")
     p_lp.add_argument("--states", default=None, help="Optional states filter. Currently IGNORED by the live game_events endpoint (events have no deleted state); forward-compat only.")
     p_lp.set_defaults(func=cmd_list_predefined)
 
     p_ld = sub.add_parser("list-debug", parents=[guard], help="GET DEBUG (SDK/backend-emitted) game_events.")
-    p_ld.add_argument("--rows", type=int, default=100, help="Page size. Default: 100.")
+    p_ld.add_argument("--rows", type=int, default=100, help="Page size — every page is fetched and merged (auto-pagination). Default: 100.")
     p_ld.add_argument("--states", default=None, help="Optional states filter (forward-compat only).")
     p_ld.set_defaults(func=cmd_list_debug)
 
     p_lc = sub.add_parser("list-custom", parents=[guard], help="GET USER (custom) game_events.")
-    p_lc.add_argument("--rows", type=int, default=100, help="Page size. Default: 100.")
+    p_lc.add_argument("--rows", type=int, default=100, help="Page size — every page is fetched and merged (auto-pagination). Default: 100.")
     p_lc.add_argument("--states", default=None, help="Optional states filter. Currently IGNORED by the live game_events endpoint (events have no deleted state); forward-compat only.")
     p_lc.set_defaults(func=cmd_list_custom)
 

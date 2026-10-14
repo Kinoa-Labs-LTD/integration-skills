@@ -16,6 +16,11 @@ Requires `KINOA_BEARER_TOKEN`, `KINOA_GAME_ID`, and (for `get-player-state`) `KI
 ```
 python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_player_fields.py" list-predefined [--states active,not_implemented] [--rows N]
     GET https://dashboard.kinoa.io/gamemetaapi/api/player_fields?types=PREDEFINED
+    Auto-paginates: --rows is the PAGE SIZE and every page is
+    fetched and merged, so the response carries the FULL listing; the output
+    gains pages_fetched (plus truncated:true / count_mismatch:true when the
+    merge could not assemble a consistent listing — re-run it; a non-2xx page
+    fails closed with ok:false + failed_page).
 
 python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_player_fields.py" list-custom [--states active] [--rows N]
     GET https://dashboard.kinoa.io/gamemetaapi/api/player_fields?types=USER

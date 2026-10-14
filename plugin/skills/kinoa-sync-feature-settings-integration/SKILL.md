@@ -35,11 +35,13 @@ python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-feature-settings/kinoa_dashboard_
 A `missing_credentials` or `401` means init wasn't run (or the ~24h token expired)
 — tell the user to run `/kinoa-init` and stop.
 
-**Truncation guard for every listing** (`list-schemas`, `list-settings`,
-`list-configs`): the helpers fetch one page (default 100 rows). If
-`totalCount > elements.length`, re-run with `--rows <totalCount or more>` before
-reasoning about "what exists" — deciding to create a schema/setting from a
-truncated listing duplicates one that already exists past the page boundary.
+**Listing completeness** (`list-schemas`, `list-settings`, `list-configs`): the
+helpers auto-paginate — `--rows` is the page size and every page is
+fetched and merged, so `totalCount == elements.length` on a healthy response. If the
+output ever carries `truncated: true` or `count_mismatch: true` (server
+anomalies) or `ok: false` with `failed_page`, re-run the listing before reasoning about "what exists" —
+deciding to create a schema/setting from a partial listing duplicates one that
+already exists past the missing pages.
 
 ## The three-resource model (internalize this)
 

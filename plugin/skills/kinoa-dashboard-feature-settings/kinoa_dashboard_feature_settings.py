@@ -14,6 +14,16 @@ SETTING binds a runtime `key` to a schema; a CONFIGURATION holds the actual data
 rows for one schema version under a setting and has its own lifecycle (DRAFT ->
 publish). The runtime fetches by setting `key` + schema `version` number.
 
+Pagination: every list-* subcommand auto-paginates. --rows is the PAGE SIZE,
+not a global limit — when the server reports more records than one page holds
+(totalCount), the next pages are requested and merged so the printed response
+always carries the FULL listing ({totalCount, elements}). The output gains
+pages_fetched, plus truncated:true when the merge had to stop early and
+count_mismatch:true when it assembled more elements than the final totalCount
+(either flag means: re-run the listing, don't trust it); a non-2xx page instead
+fails closed (ok:false + failed_page) — a partial merge is never presented as a
+complete listing.
+
 Subcommands
 -----------
 Schemas (https://dashboard.kinoa.io/featuresettingsapi/schemas):
@@ -194,6 +204,70 @@ def _parse_json(raw):
         return None
 
 
+def _get_all_pages(url, params, headers):
+    """GET a paginated listing page by page and merge the elements.
+
+    `params` is a list of (key, value) query pairs without a page entry — the
+    page number is appended here, starting at 0; `rows` in `params` is the
+    page size. A first page that is not {"totalCount": int, "elements": list}
+    is returned untouched after that single request (legacy single-call).
+
+    Returns output keys for the caller's JSON envelope:
+      status         HTTP status of the last request
+      response       merged {..., totalCount, elements} | untouched body
+      pages_fetched  page requests made
+      failed_page    non-2xx page index — caller derives ok:false, the
+                     partial merge is discarded
+      truncated      merge stopped early (no-progress page or the page cap);
+                     totalCount stays server-reported
+      count_mismatch merge ended with more elements than totalCount — the
+                     listing is unreliable, re-run it instead of diffing
+    """
+    merged = []
+    total = None
+    first_body = None
+    page = 0
+    while True:
+        qs = urllib.parse.urlencode(params + [("page", str(page))])
+        status, raw = _request("GET", f"{url}?{qs}", headers=headers)
+        body = _parse_json(raw)
+        body = body if body is not None else raw
+        if not (200 <= status < 300):
+            return {"status": status, "response": body,
+                    "pages_fetched": page + 1, "failed_page": page}
+        if page == 0:
+            if not (isinstance(body, dict)
+                    and isinstance(body.get("totalCount"), int)
+                    and isinstance(body.get("elements"), list)):
+                return {"status": status, "response": body, "pages_fetched": 1}
+            first_body = body
+        elements = body.get("elements") if isinstance(body, dict) else None
+        if isinstance(elements, list):
+            merged.extend(elements)
+        # Later pages may report a fresher totalCount (concurrent creates or
+        # deletes) — trust the newest value the server sent.
+        if isinstance(body, dict) and isinstance(body.get("totalCount"), int):
+            total = body["totalCount"]
+        page += 1
+        if len(merged) >= total:
+            break
+        # No-progress stop: a page that contributed nothing (empty, missing, or
+        # non-list elements — the isinstance matters: a truthy non-list value
+        # would otherwise re-request with zero progress until the cap) ends the
+        # merge; the page cap is the backstop for servers that keep feeding
+        # non-empty pages while inflating totalCount.
+        if not (isinstance(elements, list) and elements) or page >= 1000:
+            return {"status": status,
+                    "response": dict(first_body, totalCount=total, elements=merged),
+                    "pages_fetched": page, "truncated": True}
+    result = {"status": status,
+              "response": dict(first_body, totalCount=total, elements=merged),
+              "pages_fetched": page}
+    if len(merged) > total:
+        result["count_mismatch"] = True
+    return result
+
+
 def _admin_headers():
     bearer = os.environ.get("KINOA_BEARER_TOKEN")
     game_id = os.environ.get("KINOA_GAME_ID")
@@ -261,9 +335,8 @@ def _emit(status, **extra):
 # Schemas
 # --------------------------------------------------------------------------- #
 def cmd_list_schemas(args):
-    qs = urllib.parse.urlencode({"page": "0", "rows": str(args.rows)})
-    status, raw = _request("GET", f"{SCHEMAS_URL}?{qs}", headers=_admin_headers())
-    return _emit(status, response=_parse_json(raw) or raw)
+    result = _get_all_pages(SCHEMAS_URL, [("rows", str(args.rows))], _admin_headers())
+    return _emit(result.pop("status"), **result)
 
 
 def cmd_active_schemas_meta(args):
@@ -378,9 +451,8 @@ def cmd_publish_schema(args):
 # Settings
 # --------------------------------------------------------------------------- #
 def cmd_list_settings(args):
-    qs = urllib.parse.urlencode({"page": "0", "rows": str(args.rows)})
-    status, raw = _request("GET", f"{SETTINGS_URL}?{qs}", headers=_admin_headers())
-    return _emit(status, response=_parse_json(raw) or raw)
+    result = _get_all_pages(SETTINGS_URL, [("rows", str(args.rows))], _admin_headers())
+    return _emit(result.pop("status"), **result)
 
 
 def cmd_get_setting(args):
@@ -403,10 +475,9 @@ def cmd_create_setting(args):
 # Configurations
 # --------------------------------------------------------------------------- #
 def cmd_list_configs(args):
-    qs = urllib.parse.urlencode({"page": "0", "rows": str(args.rows)})
-    url = f"{SETTINGS_URL}/{args.setting_id}/configurations?{qs}"
-    status, raw = _request("GET", url, headers=_admin_headers())
-    return _emit(status, setting_id=args.setting_id, response=_parse_json(raw) or raw)
+    url = f"{SETTINGS_URL}/{args.setting_id}/configurations"
+    result = _get_all_pages(url, [("rows", str(args.rows))], _admin_headers())
+    return _emit(result.pop("status"), setting_id=args.setting_id, **result)
 
 
 def cmd_get_configuration(args):
@@ -562,7 +633,7 @@ def main(argv):
 
     # Schemas
     p = sub.add_parser("list-schemas", parents=[guard], help="GET all schemas.")
-    p.add_argument("--rows", type=int, default=100)
+    p.add_argument("--rows", type=int, default=100, help="Page size — every page is fetched and merged (auto-pagination). Default: 100.")
     p.set_defaults(func=cmd_list_schemas)
 
     p = sub.add_parser("active-schemas-meta", parents=[guard], help="GET id+name of ACTIVE schemas.")
@@ -590,7 +661,7 @@ def main(argv):
 
     # Settings
     p = sub.add_parser("list-settings", parents=[guard], help="GET all settings.")
-    p.add_argument("--rows", type=int, default=100)
+    p.add_argument("--rows", type=int, default=100, help="Page size — every page is fetched and merged (auto-pagination). Default: 100.")
     p.set_defaults(func=cmd_list_settings)
 
     p = sub.add_parser("get-setting", parents=[guard], help="GET a setting by id.")
@@ -607,7 +678,7 @@ def main(argv):
     # Configurations
     p = sub.add_parser("list-configs", parents=[guard], help="GET configurations of a setting.")
     p.add_argument("--setting-id", required=True)
-    p.add_argument("--rows", type=int, default=100)
+    p.add_argument("--rows", type=int, default=100, help="Page size — every page is fetched and merged (auto-pagination). Default: 100.")
     p.set_defaults(func=cmd_list_configs)
 
     p = sub.add_parser("get-configuration", parents=[guard], help="GET a configuration by id.")

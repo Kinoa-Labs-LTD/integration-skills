@@ -18,10 +18,16 @@ A **resource template** is a typed definition of an item that can be **sold or a
 ## Subcommands
 
 ```
-python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_resource_template.py" list [--rows N] [--statuses DRAFT,ACTIVE,DEPRECATED] [--name SUBSTR] [--sort-by F] [--order asc|desc]
+python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_resource_template.py" list [--rows N] [--page N] [--statuses DRAFT,ACTIVE,DEPRECATED] [--name SUBSTR] [--sort-by F] [--order asc|desc]
     GET https://gate.kinoa.io/bundle/resource-templates
     Returns { totalCount, elements:[{id,name,key,status,fields,...}] } (verified
-    live 2026-07-09). `status` values come back lowercase (draft/active/
+    live 2026-07-09). Auto-paginates: --rows is the PAGE SIZE and
+    every page is fetched and merged, so the response carries the FULL listing;
+    the output gains pages_fetched (plus truncated:true / count_mismatch:true
+    when the merge could not assemble a consistent listing — re-run it; a
+    non-2xx page fails closed with ok:false + failed_page). An explicit
+    --page N bypasses this and fetches exactly that page (legacy single-page
+    mode). `status` values come back lowercase (draft/active/
     deprecated) — compare case-insensitively. NOTE: `order` must be ASC/DESC —
     the helper uppercases it. NOTE (live-verified 2026-07-23): the DEFAULT
     listing (no --statuses) EXCLUDES DEPRECATED — pass

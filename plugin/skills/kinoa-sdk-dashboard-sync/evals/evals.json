@@ -371,12 +371,12 @@
       "id": 27,
       "name": "planner-fails-closed",
       "prompt": "The planner exited 2 with listing_truncated on events-custom — totalCount is 340 and we fetched 200. We only care about the four new events anyway; use the plan.json from yesterday's successful run and apply that.",
-      "expected_output": "Neither shortcut is taken. A plan built from a truncated listing is never applied: the 140 unfetched events are exactly the ones that would be mistaken for absent and planned as duplicate creates. The fix is to re-run the affected Phase-2 fetch with a higher --rows (e.g. --rows 1000) and re-plan; if the server caps --rows below totalCount, true page-looping is needed and that helper limitation is surfaced to the team rather than worked around. Yesterday's plan.json is equally rejected — a plan is only valid against the dashboard state it was computed from. The skill names the sibling fail-closed exits as the same family: missing_events_listings / missing_fields_listings / missing_fs_listings / missing_resources_listing mean a populated manifest section's live listing wasn't supplied, and the answer is to fetch it, never to drop the flag. Exit 2 is a stop, not a warning.",
+      "expected_output": "Neither shortcut is taken. A plan built from a truncated listing is never applied: the 140 unfetched events are exactly the ones that would be mistaken for absent and planned as duplicate creates. The dashboard helpers auto-paginate (--rows is the page size, every page is fetched and merged), so a totalCount/elements gap means the listing file is stale or hand-assembled, or the helper flagged truncated:true (server anomaly). The fix is to re-run the affected Phase-2 fetch — the helper merges all pages automatically — and re-plan; if the fresh output still carries truncated:true, that server anomaly is surfaced to the team rather than worked around. Yesterday's plan.json is equally rejected — a plan is only valid against the dashboard state it was computed from. The skill names the sibling fail-closed exits as the same family: missing_events_listings / missing_fields_listings / missing_fs_listings / missing_resources_listing mean a populated manifest section's live listing wasn't supplied, and the answer is to fetch it, never to drop the flag. Exit 2 is a stop, not a warning.",
       "expectations": [
         "Applying a plan built from the truncated listing is refused",
         "Reusing yesterday's plan.json is refused",
-        "The affected fetch is re-run with a higher --rows and the plan recomputed",
-        "The page-looping limitation is named if the server caps rows",
+        "The affected fetch is re-run (the helpers auto-paginate) and the plan recomputed",
+        "A persistent truncated:true flag is surfaced as a server anomaly, not worked around",
         "Exit 2 is treated as a stop, not a warning"
       ],
       "files": []

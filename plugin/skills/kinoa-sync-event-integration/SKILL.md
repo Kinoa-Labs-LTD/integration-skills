@@ -96,9 +96,9 @@ python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-event/kinoa_dashboard_event.py" l
 python "${CLAUDE_SKILL_DIR}/../kinoa-dashboard-event/kinoa_dashboard_event.py" list-custom
 ```
 
-Each response is `{ http_status, ok, response: { totalCount, elements: [...] } }`.
+Each response is `{ http_status, ok, response: { totalCount, elements: [...] }, pages_fetched }`.
 
-**Truncation guard — never diff a partial listing.** The helper fetches one page (default 100 rows). If `totalCount > elements.length` on either call, re-run it with `--rows <totalCount or more>` before computing the diff — diffing a truncated listing misclassifies the missing events as 🔵 CREATE CUSTOM and produces duplicate creates against the live dashboard.
+**Listings are complete by construction — but never diff a partial one.** The helper auto-paginates: `--rows` is the page size, and every page is fetched and merged, so `totalCount == elements.length` on a healthy response. If the output ever carries `truncated: true` or `count_mismatch: true` (server anomalies — the merge could not assemble a consistent complete listing) or `ok: false` with `failed_page`, stop and re-run the listing before computing the diff — diffing a partial listing misclassifies the missing events as 🔵 CREATE CUSTOM and produces duplicate creates against the live dashboard.
 
 Important fields per element:
 

@@ -9,7 +9,8 @@ allowed-tools: Bash(python *) Bash(cat *) Read AskUserQuestion
 
 A thin, self-contained CLI over the Kinoa **feature-settings** admin API
 (`dashboard.kinoa.io/featuresettingsapi`), plus the one public runtime read on
-`gate.kinoa.io/featureset`. Every subcommand makes one HTTP call and prints one JSON
+`gate.kinoa.io/featureset`. Every subcommand performs one logical operation (list-* subcommands page
+through the listing internally — see the pagination note under Subcommands) and prints one JSON
 object: `{ http_status, ok, response | request_body, …context }`. HTTP errors are
 serialized, never raised — so the caller can branch on `ok`/`http_status`.
 
@@ -67,6 +68,17 @@ python "${CLAUDE_SKILL_DIR}/kinoa_dashboard_feature_settings.py" <subcommand> [a
 ```
 
 ## Subcommands
+
+Every `list-*` subcommand auto-paginates: `--rows` is the PAGE
+SIZE and every page is fetched and merged, so the response carries the FULL
+listing; the output gains `pages_fetched` (plus `truncated: true` /
+`count_mismatch: true` when the merge could not assemble a consistent listing —
+re-run it; a non-2xx page fails closed with `ok: false` + `failed_page`).
+The configurations listing (`list-configs`) carries an extra sibling key,
+`versionsWithDefault` — a setting-level aggregate (not a page slice),
+preserved in the merged output from page 0. An unexpected response shape falls
+back to the legacy single-call behavior — nothing breaks, but auto-pagination
+silently does not apply there.
 
 ### Schemas
 | Command | Call | Notes |
@@ -155,7 +167,8 @@ resolves.
 
 ## Conventions
 
-- One subcommand → one HTTP call → one JSON object on stdout. Branch on `ok`.
+- One subcommand → one logical operation → one JSON object on stdout (list-*
+  subcommands make one request per page and merge). Branch on `ok`.
 - Non-2xx is reported, not thrown; missing creds exit `2` with a `kinoa-init` hint.
 - Helper is self-contained (duplicated `_load_session_env`/`_request`/… by
   design) so it installs in isolation. Don't extract a shared module.
