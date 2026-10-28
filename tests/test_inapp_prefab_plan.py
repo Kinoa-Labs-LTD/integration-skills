@@ -276,8 +276,10 @@ class TestPlanCore(unittest.TestCase):
 ITEM_BEARING = {"collect_resource", "billing", "soft_billing", "show_ad", "promise_rewards"}
 
 
-def _milestone_template():
+def _milestone_template(buttons=None):
     t = copy.deepcopy(TEMPLATE)
+    if buttons is not None:
+        t["buttons"] = [b for b in t["buttons"] if b["key"] in buttons]
     t["key"] = "chase"
     t["featureType"] = "milestone"
     t["features"] = {"milestone": {"key": "main_progressbar", "name": "Main Progressbar", "limit": 3,
@@ -362,16 +364,16 @@ class TestFeatures(unittest.TestCase):
         layout["elements"].append({"bucket": "images", "key": "bar_image", "role": "bar_image",
                                    "bbox": {"x": 0.25, "y": 0.6, "w": 0.5, "h": 0.04}, "observed_text": None})
         plan = mod.plan_prefab(_milestone_template(), layout, STYLE, {})["plan"]
-        bar = _node(plan, "MilestoneBar")
-        self.assertEqual(bar["field"], "milestoneBarRoot")
+        scroll = _node(plan, "MilestoneScroll")
+        self.assertEqual(scroll["field"], "milestoneScroll")
         amin, _ = mod.anchors_from_bbox({"x": 0.25, "y": 0.6, "w": 0.5, "h": 0.04}, plan["report"]["panel_bbox"])
-        self.assertEqual(bar["anchor_min"], amin)  # follows bar_image
-        self.assertEqual(_node(plan, "MilestoneFill")["field_type"], "Image")
-        self.assertEqual(_node(plan, "MilestoneMarkers")["components"], ["HorizontalLayoutGroup"])
-        marker = _node(plan, "MilestoneMarker")
-        self.assertEqual(marker["parent"], "MilestoneMarkers")
-        self.assertEqual(marker["field"], "milestoneMarkerTemplate")
-        self.assertEqual(_node(plan, "MilestoneMainButtonLabel")["parent"], "MilestoneMainButton")
+        self.assertEqual(scroll["anchor_min"], amin)  # follows bar_image
+        self.assertEqual(_node(plan, "MilestoneContent")["components"], ["HorizontalLayoutGroup", "ContentSizeFitter"])
+        step = _node(plan, "MilestoneStep")
+        self.assertEqual(step["parent"], "MilestoneContent")
+        self.assertEqual(step["field"], "milestoneStepTemplate")
+        # the template's one CTA slot is the milestone CTA, so no extra main button is built
+        self.assertNotIn("MilestoneMainButton", [n["name"] for n in plan["nodes"]])
         self.assertEqual(_node(plan, "GrandPrizeArea")["field"], "grandPrizeRoot")
         self.assertEqual(plan["template"]["feature_type"], "milestone")
 
@@ -517,9 +519,9 @@ class TestPlacedFlagConsistency(unittest.TestCase):
         self.assertFalse(mission_bar["placed"])
 
     def test_milestone_nodes_without_layout_have_placed_false(self):
-        plan = mod.plan_prefab(_milestone_template(), None, STYLE, {})["plan"]
-        bar = _node(plan, "MilestoneBar")
-        self.assertFalse(bar["placed"])
+        plan = mod.plan_prefab(_milestone_template(buttons=["close_button"]), None, STYLE, {})["plan"]
+        scroll = _node(plan, "MilestoneScroll")
+        self.assertFalse(scroll["placed"])
         button = _node(plan, "MilestoneMainButton")
         self.assertFalse(button["placed"])
 
@@ -622,14 +624,14 @@ class TestLayoutArtifact(unittest.TestCase):
         for name in ("ResourceArea", "PriceBeforeSaleZone"):
             self.assertNotIn(name, [a["node"] for a in plan["report"]["layout_adjustments"]])
 
-    def test_milestone_area_bbox_places_the_bar_when_no_bar_image(self):
+    def test_milestone_area_bbox_places_the_scroll_when_no_bar_image(self):
         art = copy.deepcopy(ARTIFACT)
         art["template_key"] = "chase"
         art["feature"] = {"type": "milestone", "area_bbox": {"x": 0.25, "y": 0.6, "w": 0.5, "h": 0.05}}
         plan = mod.plan_prefab(_milestone_template(), mod.layout_from_artifact(art), STYLE, {})["plan"]
-        bar = _node(plan, "MilestoneBar")
-        self.assertTrue(bar["placed"])
-        self.assertNotIn("MilestoneBar", plan["report"]["estimated_positions"])
+        scroll = _node(plan, "MilestoneScroll")
+        self.assertTrue(scroll["placed"])
+        self.assertNotIn("MilestoneScroll", plan["report"]["estimated_positions"])
 
     def test_feature_type_mismatch_is_a_warning(self):
         art = copy.deepcopy(ARTIFACT)
@@ -748,8 +750,8 @@ class TestLayoutArtifactStrictness(unittest.TestCase):
         art["template_key"] = "chase"
         art["feature"] = {"type": "mission", "area_bbox": {"x": 0.25, "y": 0.6, "w": 0.5, "h": 0.05}}
         plan = mod.plan_prefab(_milestone_template(), mod.layout_from_artifact(art), STYLE, {})["plan"]
-        self.assertFalse(_node(plan, "MilestoneBar")["placed"])
-        self.assertIn("MilestoneBar", plan["report"]["estimated_positions"])
+        self.assertFalse(_node(plan, "MilestoneScroll")["placed"])
+        self.assertIn("MilestoneScroll", plan["report"]["estimated_positions"])
 
     def test_layout_source_counts_developer_boxes(self):
         art = copy.deepcopy(ARTIFACT)
@@ -1009,13 +1011,6 @@ class TestDeOverlapRules(unittest.TestCase):
                         self.assertGreaterEqual(v, -1e-6, n["name"])
                         self.assertLessEqual(v, 1 + 1e-6, n["name"])
 
-    def test_milestone_markers_are_part_of_the_bar_footprint(self):
-        bar = mod._node("MilestoneBar", "Panel", "zone", anchor_min=[0.1, 0.4], anchor_max=[0.9, 0.45])
-        self.assertEqual(mod._box(bar), [0.1, 0.35000000000000003, 0.9, 0.5])
-        mod._set_box(bar, [0.1, 0.55, 0.9, 0.70])
-        self.assertEqual(bar["anchor_min"], [0.1, 0.6])
-        self.assertEqual(bar["anchor_max"], [0.9, 0.65])
-
     def test_art_is_built_before_controls(self):
         plan = mod.plan_prefab(TEMPLATE, mod.layout_from_artifact(ARTIFACT), STYLE, {})["plan"]
         names = [n["name"] for n in plan["nodes"]]
@@ -1053,17 +1048,6 @@ class TestDeOverlapContainersAndOrder(unittest.TestCase):
         self.assertEqual(report["overlays"], [["MissionList", "SmallText"]])
         self.assertEqual(report["warnings"], [])
 
-    def test_moved_milestone_bar_keeps_a_usable_height_and_records_anchors(self):
-        wall = [mod._node("W%d" % i, "Panel", "text", placed=True, anchor_min=[0.0, i * 0.25],
-                          anchor_max=[1.0, i * 0.25 + 0.17]) for i in range(4)]  # 0.08 gaps
-        bar = mod._node("MilestoneBar", "Panel", "zone", placed=False, anchor_min=[0.1, 0.3], anchor_max=[0.9, 0.36])
-        report = {"warnings": []}
-        mod.resolve_overlaps(wall + [bar], report)
-        moves = [a for a in report["layout_adjustments"] if a["node"] == "MilestoneBar"]
-        self.assertEqual(len(moves), 1)
-        self.assertEqual(moves[0]["from"], [[0.1, 0.3], [0.9, 0.36]])  # anchors, not the marker footprint
-        self.assertGreaterEqual(bar["anchor_max"][1] - bar["anchor_min"][1], mod._MIN_SLOT - 1e-6)
-
     def test_badge_images_render_in_front_of_controls(self):
         t = copy.deepcopy(TEMPLATE)
         t["images"].append({"key": "badge_image", "name": "Badge", "index": 9, "canBeHidden": True, "customFields": []})
@@ -1092,12 +1076,12 @@ class TestDeOverlapContainersAndOrder(unittest.TestCase):
         art["template_key"] = "chase"
         art["feature"] = {"type": "milestone"}
         art["elements"].append({"key": "bar_image", "bucket": "images", "index": 10, "role": "bar_image",
-                                "bbox": {"x": 0.25, "y": 0.635, "w": 0.5, "h": 0.03}})  # markers graze ResourceArea
+                                "bbox": {"x": 0.25, "y": 0.635, "w": 0.5, "h": 0.03}})  # grazes ResourceArea
         plan = mod.plan_prefab(t, mod.layout_from_artifact(art), STYLE, {})["plan"]
         adjusted = {a["node"] for a in plan["report"]["layout_adjustments"]}
-        self.assertNotIn("MilestoneBar", adjusted)
+        self.assertNotIn("MilestoneScroll", adjusted)
         self.assertNotIn("ResourceArea", adjusted)
-        bar, art_node = _node(plan, "MilestoneBar"), _node(plan, "BarImage")
+        bar, art_node = _node(plan, "MilestoneScroll"), _node(plan, "BarImage")
         self.assertEqual((bar["anchor_min"], bar["anchor_max"]), (art_node["anchor_min"], art_node["anchor_max"]))
         for v in bar["anchor_min"] + bar["anchor_max"]:
             self.assertTrue(0.0 <= v <= 1.0)
@@ -1154,3 +1138,287 @@ class TestPlanCanvas(unittest.TestCase):
                          ("camera", 250, [1080.0, 1920.0], 0.3))
         self.assertEqual(canvas["source"], "PopupWithCanvas")
         self.assertTrue(any("camera" in n.lower() for n in plan["report"]["needs_developer"]))
+
+
+def _with_collect_all(t, key="collect_all_button", name="Collect All"):
+    t["buttons"].append({"key": key, "name": name, "index": 20, "canBeHidden": True,
+                         "clickActionType": ["collect_resource"], "customFields": []})
+    return t
+
+
+def _ms_artifact(unplaced=()):
+    art = copy.deepcopy(ARTIFACT)
+    art["template_key"] = "chase"
+    art["feature"] = {"type": "milestone"}
+    for e in art["elements"]:
+        if e["key"] in unplaced:
+            e["bbox"] = None
+            e["unplaced"] = True
+    return art
+
+
+def _plan_ms(template, artifact=False, unplaced=(), **opts):
+    layout = mod.layout_from_artifact(_ms_artifact(unplaced)) if artifact else None
+    result = mod.plan_prefab(template, layout, STYLE, opts)
+    assert result["ok"], result
+    return result["plan"]
+
+
+class TestMilestoneCtaMode(unittest.TestCase):
+    def test_one_placed_cta_slot_means_single(self):
+        plan = _plan_ms(_milestone_template(), artifact=True)
+        cta = next(n for n in plan["nodes"] if n.get("key") == "cta_button" and n["binding"] == "button")
+        ms = plan["milestone"]
+        self.assertEqual((ms["cta_mode"], ms["cta_mode_source"]), ("single", "template_cta_count"))
+        self.assertEqual(ms["single_cta"], {"key": "cta_button", "button_field": cta["field"],
+                                            "label_field": cta["field"] + "Label"})
+        self.assertEqual(ms["cta_slots"], ["cta_button"])
+
+    def test_no_cta_slot_means_per_step(self):
+        ms = _plan_ms(_milestone_template(buttons=["close_button"]))["milestone"]
+        self.assertEqual((ms["cta_mode"], ms["cta_mode_source"], ms["single_cta"]), ("per_step", "default", None))
+
+    def _two_cta_template(self):
+        t = _milestone_template()
+        t["buttons"].append({"key": "second_button", "name": "Second", "index": 6, "canBeHidden": False,
+                             "clickActionType": ["deep_link"], "customFields": []})
+        return t
+
+    def test_two_cta_slots_mean_per_step(self):
+        ms = _plan_ms(self._two_cta_template())["milestone"]
+        self.assertEqual((ms["cta_mode"], ms["cta_mode_source"], ms["single_cta"]), ("per_step", "default", None))
+        self.assertEqual(ms["cta_slots"], ["cta_button", "second_button"])
+
+    def test_unplaced_cta_slot_is_not_on_the_tip_image(self):
+        ms = _plan_ms(_milestone_template(), artifact=True, unplaced=("cta_button",))["milestone"]
+        self.assertEqual(ms["cta_slots"], [])
+        self.assertEqual((ms["cta_mode"], ms["cta_mode_source"]), ("per_step", "default"))
+
+    def test_override_single_without_slot_uses_main_button(self):
+        ms = _plan_ms(_milestone_template(buttons=["close_button"]), milestone_cta="single")["milestone"]
+        self.assertEqual(ms["cta_mode_source"], "override")
+        self.assertEqual(ms["single_cta"], {"key": None, "button_field": "milestoneMainButton",
+                                            "label_field": "milestoneMainButtonLabel"})
+
+    def test_override_per_step_wins_over_single_cta_slot(self):
+        ms = _plan_ms(_milestone_template(), milestone_cta="per_step")["milestone"]
+        self.assertEqual((ms["cta_mode"], ms["cta_mode_source"], ms["single_cta"]), ("per_step", "override", None))
+
+    def test_override_single_with_two_slots_warns(self):
+        plan = _plan_ms(self._two_cta_template(), milestone_cta="single")
+        self.assertEqual(plan["milestone"]["single_cta"]["key"], None)
+        self.assertTrue(any("--milestone-cta single with 2 CTA slots" in w for w in plan["report"]["warnings"]))
+
+    def test_collect_all_by_key_and_by_name(self):
+        by_key = _plan_ms(_with_collect_all(_milestone_template()))["milestone"]
+        self.assertEqual(by_key["collect_all"]["key"], "collect_all_button")
+        self.assertTrue(by_key["collect_all"]["can_be_hidden"])
+        self.assertEqual(by_key["collect_all"]["label_field"], by_key["collect_all"]["button_field"] + "Label")
+        self.assertNotIn("collect_all_button", by_key["cta_slots"])
+        self.assertEqual((by_key["cta_mode"], by_key["cta_slots"]), ("single", ["cta_button"]))
+        by_name = _plan_ms(_with_collect_all(_milestone_template(), key="claim_btn", name="Claim All"))["milestone"]
+        self.assertEqual(by_name["collect_all"]["key"], "claim_btn")
+        self.assertNotIn("claim_btn", by_name["cta_slots"])
+
+    def test_several_collect_all_slots_warn_and_first_by_index_wins(self):
+        t = _with_collect_all(_milestone_template())
+        t["buttons"].append({"key": "claim_all", "name": "Claim all", "index": 21, "canBeHidden": False,
+                             "clickActionType": ["collect_resource"], "customFields": []})
+        plan = _plan_ms(t)
+        self.assertEqual(plan["milestone"]["collect_all"]["key"], "collect_all_button")
+        self.assertTrue(any("collect-all" in w for w in plan["report"]["warnings"]))
+
+    def _with_info(self, t, actions=("custom", "close")):
+        t["buttons"].append({"key": "info_button", "name": "Info", "index": 7, "canBeHidden": False,
+                             "clickActionType": list(actions), "customFields": []})
+        return t
+
+    def test_info_button_with_custom_action_is_not_a_cta(self):
+        ms = _plan_ms(self._with_info(_milestone_template(buttons=["close_button"])))["milestone"]
+        self.assertEqual(ms["cta_slots"], [])
+        self.assertEqual((ms["cta_mode"], ms["cta_mode_source"]), ("per_step", "default"))
+
+    def test_info_button_beside_one_cta_keeps_single(self):
+        ms = _plan_ms(self._with_info(_milestone_template()))["milestone"]
+        self.assertEqual(ms["cta_slots"], ["cta_button"])
+        self.assertEqual((ms["cta_mode"], ms["single_cta"]["key"]), ("single", "cta_button"))
+
+    def test_info_button_role_is_never_a_cta(self):
+        t = self._with_info(_milestone_template(buttons=["close_button"]), actions=("deep_link",))
+        art = _ms_artifact()
+        art["elements"].append({"bucket": "buttons", "key": "info_button", "role": "info_button",
+                                "bbox": {"x": 0.1, "y": 0.04, "w": 0.08, "h": 0.06}})
+        plan = mod.plan_prefab(t, mod.layout_from_artifact(art), STYLE, {})["plan"]
+        self.assertEqual(plan["milestone"]["cta_slots"], [])
+        self.assertEqual(plan["milestone"]["cta_mode"], "per_step")
+        # without the role the same deep_link button would be the single CTA
+        art["elements"][-1]["role"] = "secondary_button"
+        plan = mod.plan_prefab(t, mod.layout_from_artifact(art), STYLE, {})["plan"]
+        self.assertEqual(plan["milestone"]["cta_slots"], ["info_button"])
+
+    def test_secondary_close_and_deep_link_button_still_counts(self):
+        t = _milestone_template(buttons=["close_button"])
+        t["buttons"].append({"key": "more_button", "name": "More", "index": 7, "canBeHidden": False,
+                             "clickActionType": ["close", "deep_link"], "customFields": []})
+        ms = _plan_ms(t)["milestone"]
+        self.assertEqual((ms["cta_mode"], ms["cta_slots"]), ("single", ["more_button"]))
+
+    def test_collect_all_pattern_needs_word_boundaries(self):
+        rx = mod._COLLECT_ALL_RE
+        for text in ("collect_all_button", "Collect All", "claim_all", "Get All", "btn_get-all", "collectall"):
+            self.assertTrue(rx.search(text), text)
+        for text in ("budget_all", "forget_all", "collect_allowance", "reclaim all", "get_allies"):
+            self.assertFalse(rx.search(text), text)
+        t = _with_collect_all(_milestone_template(), key="budget_all", name="Budget all")
+        ms = _plan_ms(t)["milestone"]
+        self.assertIsNone(ms["collect_all"])
+
+    def test_collect_all_ignored_on_standard_template(self):
+        plan = mod.plan_prefab(_with_collect_all(copy.deepcopy(TEMPLATE)), None, STYLE, {})["plan"]
+        self.assertNotIn("milestone", plan)
+
+    def test_report_summary(self):
+        plan = _plan_ms(_with_collect_all(_milestone_template()))
+        self.assertEqual(plan["report"]["milestone"], {"cta_mode": "single", "cta_mode_source": "template_cta_count",
+                                                       "collect_all": "collect_all_button"})
+
+    def test_cli_flag(self):
+        import contextlib
+        import io
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            tpath = os.path.join(tmp, "t.json")
+            with open(tpath, "w", encoding="utf-8") as fh:
+                json.dump(_milestone_template(), fh)
+            out = os.path.join(tmp, "plan.json")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(mod.main(["plan", "--template", tpath, "--milestone-cta", "per_step", "--out", out]), 0)
+            with open(out, encoding="utf-8") as fh:
+                self.assertEqual(json.load(fh)["milestone"]["cta_mode_source"], "override")
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
+                mod.main(["plan", "--template", tpath, "--milestone-cta", "bogus", "--out", out])
+            self.assertEqual(cm.exception.code, 2)
+
+
+def _ms_names(plan):
+    return [n["name"] for n in plan["nodes"]]
+
+
+class TestMilestoneScrollNodes(unittest.TestCase):
+    def test_scroll_chain(self):
+        plan = _plan_ms(_milestone_template(buttons=["close_button"]))
+        rows = [(n["name"], n["parent"], n["binding"], n["components"], n["field"], n["field_type"])
+                for n in plan["nodes"] if n["name"].startswith("Milestone")]
+        self.assertEqual(rows[:4], [
+            ("MilestoneScroll", "Panel", "scroll", ["ScrollRect"], "milestoneScroll", "ScrollRect"),
+            ("MilestoneViewport", "MilestoneScroll", "viewport", ["Image", "RectMask2D"], None, None),
+            ("MilestoneContent", "MilestoneViewport", "scroll_content",
+             ["HorizontalLayoutGroup", "ContentSizeFitter"], "milestoneContent", "RectTransform"),
+            ("MilestoneStep", "MilestoneContent", "milestone_step", [], "milestoneStepTemplate",
+             "KinoaInAppMilestoneStepView")])
+
+    def test_chain_geometry(self):
+        plan = _plan_ms(_milestone_template(buttons=["close_button"]))
+        viewport, content, step = _node(plan, "MilestoneViewport"), _node(plan, "MilestoneContent"), _node(plan, "MilestoneStep")
+        self.assertEqual((viewport["anchor_min"], viewport["anchor_max"]), ([0.0, 0.0], [1.0, 1.0]))
+        self.assertEqual((content["anchor_min"], content["anchor_max"]), ([0.0, 0.0], [0.0, 1.0]))
+        self.assertTrue(step["inactive"])
+        self.assertEqual(len(step["size"]), 2)
+
+    def test_step_button_only_in_per_step(self):
+        per_step = _plan_ms(_milestone_template(buttons=["close_button"]))
+        self.assertEqual(per_step["milestone"]["cta_mode"], "per_step")
+        self.assertTrue(_node(per_step, "MilestoneStep")["step_button"])
+        single = _plan_ms(_milestone_template(buttons=["close_button"]), milestone_cta="single")
+        self.assertFalse(_node(single, "MilestoneStep")["step_button"])
+
+    def test_single_slot_mode_builds_no_main_button(self):
+        plan = _plan_ms(_milestone_template(), artifact=True)
+        self.assertEqual(plan["milestone"]["single_cta"]["key"], "cta_button")
+        names = _ms_names(plan)
+        self.assertNotIn("MilestoneMainButton", names)
+        self.assertNotIn("MilestoneMainButtonLabel", names)
+        self.assertTrue(any(n.get("key") == "cta_button" and n["binding"] == "button" for n in plan["nodes"]))
+
+    def test_single_without_slot_keeps_main_button(self):
+        plan = _plan_ms(_milestone_template(buttons=["close_button"]), milestone_cta="single")
+        self.assertIsNone(plan["milestone"]["single_cta"]["key"])
+        self.assertIn("MilestoneMainButton", _ms_names(plan))
+        self.assertEqual(_node(plan, "MilestoneMainButtonLabel")["parent"], "MilestoneMainButton")
+
+    def test_per_step_keeps_main_button(self):
+        plan = _plan_ms(_milestone_template(buttons=["close_button"]))
+        self.assertIn("MilestoneMainButton", _ms_names(plan))
+
+    def test_scroll_prefers_feature_area_over_bar_image(self):
+        art = _ms_artifact()
+        art["feature"] = {"type": "milestone", "area_bbox": {"x": 0.2, "y": 0.5, "w": 0.6, "h": 0.1}}
+        art["elements"].append({"key": "bar_image", "bucket": "images", "index": 10, "role": "bar_image",
+                                "bbox": {"x": 0.3, "y": 0.7, "w": 0.4, "h": 0.03}})
+        plan = mod.plan_prefab(_milestone_template(), mod.layout_from_artifact(art), STYLE, {})["plan"]
+        scroll = _node(plan, "MilestoneScroll")
+        panel = plan["report"]["panel_bbox"]
+        amin, amax = mod.anchors_from_bbox({"x": 0.2, "y": 0.5, "w": 0.6, "h": 0.1}, panel)
+        self.assertTrue(scroll["placed"])
+        self.assertEqual((scroll["anchor_min"], scroll["anchor_max"]), (amin, amax))
+        self.assertNotIn("MilestoneScroll", plan["report"]["estimated_positions"])
+
+    def test_scroll_falls_back_to_bar_image_then_default(self):
+        layout = mod.layout_from_build(BUILD)
+        layout["elements"].append({"bucket": "images", "key": "bar_image", "role": "bar_image",
+                                   "bbox": {"x": 0.25, "y": 0.6, "w": 0.5, "h": 0.04}, "observed_text": None})
+        plan = mod.plan_prefab(_milestone_template(), layout, STYLE, {})["plan"]
+        scroll = _node(plan, "MilestoneScroll")
+        amin, amax = mod.anchors_from_bbox({"x": 0.25, "y": 0.6, "w": 0.5, "h": 0.04}, plan["report"]["panel_bbox"])
+        self.assertTrue(scroll["placed"])
+        self.assertEqual((scroll["anchor_min"], scroll["anchor_max"]), (amin, amax))
+        no_layout = mod.plan_prefab(_milestone_template(), None, STYLE, {})["plan"]
+        self.assertFalse(_node(no_layout, "MilestoneScroll")["placed"])
+        self.assertIn("MilestoneScroll", no_layout["report"]["estimated_positions"])
+        self.assertEqual(mod._ZONE_DEFAULT_ANCHORS["milestone_scroll"], ([0.05, 0.3], [0.95, 0.55]))
+
+    def _step_size(self, scroll_h_anchor, frame=(1080, 1920), panel_h=1.0):
+        plan = {"nodes": [], "ui": {"frame_size": list(frame)},
+                "report": {"estimated_positions": [], "warnings": []},
+                "milestone": {"cta_mode": "per_step", "cta_mode_source": "default", "cta_slots": [],
+                              "single_cta": None, "collect_all": None}}
+        area = {"x": 0.0, "y": 0.4, "w": 1.0, "h": scroll_h_anchor}
+        mod._add_feature(plan, _milestone_template(), {}, {"x": 0.0, "y": 0.0, "w": 1.0, "h": panel_h}, area)
+        return next(n for n in plan["nodes"] if n["name"] == "MilestoneStep")["size"]
+
+    def test_step_size_formula(self):
+        w, h = self._step_size(0.25)          # 1920 * 1.0 * 0.25 = 480 px -> h = 464
+        self.assertEqual((h, w), (464, 260))
+
+    def test_step_size_is_clamped(self):
+        w, h = self._step_size(0.02)          # ~38 px scroll -> floor
+        self.assertEqual((h, w), (120, 120))
+        w, h = self._step_size(0.10)          # 192 px -> h = 176, w = 132
+        self.assertEqual((h, w), (176, 132))
+
+    def test_every_node_carries_step_button(self):
+        for template in (_milestone_template(), _mission_template(), copy.deepcopy(TEMPLATE)):
+            if template["featureType"] == "milestone":
+                plan = _plan_ms(template)
+            else:
+                plan = mod.plan_prefab(template, None, STYLE, {})["plan"]
+            self.assertTrue(all("step_button" in n for n in plan["nodes"]), template["featureType"])
+        self.assertIs(mod._node("x", "Panel", "text")["step_button"], False)
+
+    def test_scroll_is_never_split(self):
+        scroll = mod._node("MilestoneScroll", "Panel", "scroll", ["ScrollRect"], placed=True,
+                           anchor_min=[0.1, 0.40], anchor_max=[0.9, 0.55])
+        text = mod._node("GrazingText", "Panel", "text", placed=True,
+                         anchor_min=[0.2, 0.53], anchor_max=[0.8, 0.62])
+        before = (list(scroll["anchor_min"]), list(scroll["anchor_max"]))
+        report = {"warnings": []}
+        mod.resolve_overlaps([scroll, text], report)
+        self.assertEqual((scroll["anchor_min"], scroll["anchor_max"]), before)
+        self.assertEqual([a for a in report["layout_adjustments"] if a["node"] == "MilestoneScroll"], [])
+
+    def test_scroll_names_are_reserved(self):
+        for name in ("MilestoneScroll", "MilestoneViewport", "MilestoneContent", "MilestoneStep"):
+            self.assertIn(name, mod.RESERVED_NODE_NAMES)
+        for fld in ("milestoneScroll", "milestoneContent", "milestoneStepTemplate"):
+            self.assertIn(fld, mod.RESERVED_FIELDS)
+        self.assertIn("MilestoneScroll", mod._CONTAINERS)

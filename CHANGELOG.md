@@ -4,6 +4,18 @@ All notable changes to the `kinoa-dashboard` plugin.
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning: [SemVer](https://semver.org/spec/v2.0.0.html). Consumers receive an update **only when `version` in [`plugin/.claude-plugin/plugin.json`](plugin/.claude-plugin/plugin.json) changes** — bump it (and add an entry here) as the final commit of every release PR, then tag the release commit on `main` as `vX.Y.Z`.
 
+## [Unreleased]
+
+### Added
+- `kinoa-inapp-template-to-prefab`: milestone templates render their steps as a **horizontal scroll** of step cards (`MilestoneScroll` → `MilestoneViewport` → `MilestoneContent` → `MilestoneStep`), one `KinoaInAppMilestoneStepView` per step. The list opens on the first ready step, else the first locked step, else the last.
+- Two **CTA modes**: a claim button on every step (`per_step`) or one CTA under the ladder that takes over the ready step's button (`single`). `plan --milestone-cta auto|per_step|single` (default `auto`: exactly one template CTA slot means `single`); the decision is written to `plan.milestone` and `report.milestone` (`cta_mode`, `cta_mode_source`, `collect_all`), and the skill's Phase 4 confirms with the developer when `auto` disagrees with the tip image.
+- **Collect-all**: a button whose key or name matches `(?:^|[\s_-])(collect|claim|get)[\s_-]*all(?:$|[\s_-])` (whole segments; `budget_all` does not count) claims ready steps in one `CollectMilestonesAsync` call and is active only while it has a step to claim. Like `MilestoneMainButton`, it collects by its own click action: a free one takes only the ready steps whose own button is free; a billing / ad / link one runs its action first and then takes every ready step. Info / rules buttons (`custom` action or `info_button` role) never count as the step CTA.
+- `KinoaInAppFeatureHooks.RunButtonAction` (`Func<InAppMessage, InAppCustomButton, Task<bool>>`; `generate --feature-action-runner Ns.Class.Method`): the game's own handler for a milestone button's billing / ad / link action; the step is collected only when it returns `true`. Unassigned, such buttons collect nothing and the hand-off carries the TODO. While a collect or the hook is running, milestone buttons ignore taps.
+- Two new user-owned shared files, `Shared/KinoaInAppFeatureHooks.cs` and `Shared/KinoaInAppMilestoneStepView.cs`. Existing projects only **gain** these files on a re-run: `KinoaInAppHooks.cs` and `KinoaInAppItemView.cs` are never touched.
+
+### Changed
+- Milestone plans must be produced by this version. `generate` refuses a milestone plan without the `milestone` block / `MilestoneScroll` node (written before the scroll ladder) with `milestone_plan_outdated` — re-run `plan` for the template; nothing is written. Standard and mission plans from 1.1.0 build unchanged.
+
 ## [1.1.0] — 2026-10-14
 
 ### Added

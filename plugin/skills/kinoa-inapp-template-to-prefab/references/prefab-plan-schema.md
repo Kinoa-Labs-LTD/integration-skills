@@ -15,7 +15,8 @@ Produced by `inapp_prefab_plan.py plan`, copied into the project as
 | `paths` | object | `out_dir`, `prefab_path`, `view_path`, `plan_path` — all project-relative |
 | `nodes` | array | flat GameObject list, parent-before-child order |
 | `customs` | array | `{key, kind, default, target_node, target_field}` — **every** template custom is listed. Only a boolean that matches a node (a zone root, or an image/text/button slot) gets `target_node` / `target_field`; non-booleans and unmatched booleans carry `null` targets (read them with `GetCustom<T>`), and an unmatched boolean is also added to `report.needs_developer` |
-| `report` | object | `layout_source`, `panel_bbox`, `unplaced`, `estimated_positions`, `layout_adjustments`, `overlays`, `warnings`, `unmapped_layout`, `client_zones`, `needs_developer` |
+| `milestone` | object, milestone templates only | the step-CTA decision: `cta_mode` (`per_step` / `single`), `cta_mode_source` (`override` / `template_cta_count` / `default`), `cta_slots` (template button keys counted as step CTAs), `single_cta` (`{key, button_field, label_field}`; `key` is `null` when the CTA goes onto the generated `MilestoneMainButton`; `null` in `per_step` mode) and `collect_all` (`{key, button_field, label_field, can_be_hidden}` or `null`). An additive block: `schema_version` stays `1.0`. Absent on every other template and on plans written before the scroll ladder |
+| `report` | object | `layout_source`, `panel_bbox`, `unplaced`, `estimated_positions`, `layout_adjustments`, `overlays`, `warnings`, `unmapped_layout`, `client_zones`, `needs_developer`, `milestone` (milestone templates: `{cta_mode, cta_mode_source, collect_all}`) |
 
 ## Layout sources
 
@@ -23,7 +24,7 @@ Produced by `inapp_prefab_plan.py plan`, copied into the project as
 
 | Flag | `kind` | Input |
 |---|---|---|
-| `--layout-artifact` (preferred) | `layout_artifact` | `<template_key>.layout.json` from kinoa-inapp-template-from-image (contract: `../../kinoa-inapp-template-from-image/references/layout-artifact.md`). Schema 1.x, normalized top-left coordinates; customs are skipped; `bbox: null` / `unplaced` elements go to `Unplaced`; `client_rendered[].role` positions the zones; `feature.area_bbox` positions `MissionList`, and `MilestoneBar` when no `bar_image` element was placed, only when the artifact's feature type matches the template's. The join is 1:1 on `(bucket, key)` with no key-only fallback: a `template_key` different from the template's key is refused (`layout_template_mismatch`, exit 2); a missing `template_key`, element or `area_bbox` boxes outside `[0, 1]` or of zero size, and other coordinate conventions are refused as `unreadable_input`; an out-of-range `client_rendered` box is dropped with a warning; template slots with no entry, duplicate entries, and index or feature-type disagreements become `warnings`; entries the template lacks go to `unmapped_layout`. `layout_source` also carries `template_key`, `sha256`, and the `hand_placed` / `adjusted` counts. |
+| `--layout-artifact` (preferred) | `layout_artifact` | `<template_key>.layout.json` from kinoa-inapp-template-from-image (contract: `../../kinoa-inapp-template-from-image/references/layout-artifact.md`). Schema 1.x, normalized top-left coordinates; customs are skipped; `bbox: null` / `unplaced` elements go to `Unplaced`; `client_rendered[].role` positions the zones; `feature.area_bbox` positions `MissionList`, and `MilestoneScroll` (the `bar_image` box when no area was drawn), only when the artifact's feature type matches the template's. The join is 1:1 on `(bucket, key)` with no key-only fallback: a `template_key` different from the template's key is refused (`layout_template_mismatch`, exit 2); a missing `template_key`, element or `area_bbox` boxes outside `[0, 1]` or of zero size, and other coordinate conventions are refused as `unreadable_input`; an out-of-range `client_rendered` box is dropped with a warning; template slots with no entry, duplicate entries, and index or feature-type disagreements become `warnings`; entries the template lacks go to `unmapped_layout`. `layout_source` also carries `template_key`, `sha256`, and the `hand_placed` / `adjusted` counts. |
 | `--build` | `build_result` | The from-image builder's raw `build_result.json` (`report.elements`, `report.client_rendered`, `report.source_image`), optionally corrected by `--confirmed`. |
 | `--layout` (legacy) | `layout_file` | A layout written against `layout-schema`. Kept for compatibility; the skill no longer produces it. |
 | none | `null` | Every slot goes to `Unplaced`. |
@@ -33,9 +34,9 @@ Produced by `inapp_prefab_plan.py plan`, copied into the project as
 | Field | Meaning |
 |---|---|
 | `name` | unique GameObject name; `parent` names another node or `null` for the prefab root |
-| `binding` | `dimmer` · `frame` · `panel` · `image` · `text` · `button` · `button_label` · `zone` · `strike` · `fill` · `markers` · `item_template` · `unplaced` |
-| `components` | subset of `Image`, `Button`, `Text`, `HorizontalLayoutGroup`, `VerticalLayoutGroup` (`Text` resolves to legacy or TMP per `ui.text_system`) |
-| `field` / `field_type` | the view's `[SerializeField]` to assign; types `GameObject`, `RectTransform`, `Image`, `Button`, `Text`, `KinoaInAppItemView` |
+| `binding` | `dimmer` · `frame` · `panel` · `image` · `text` · `button` · `button_label` · `zone` · `strike` · `fill` · `item_template` · `scroll` · `viewport` · `scroll_content` · `milestone_step` · `unplaced` |
+| `components` | subset of `Image`, `Button`, `Text`, `HorizontalLayoutGroup`, `VerticalLayoutGroup`, `ScrollRect`, `RectMask2D`, `ContentSizeFitter` (`Text` resolves to legacy or TMP per `ui.text_system`) |
+| `field` / `field_type` | the view's `[SerializeField]` to assign; types `GameObject`, `RectTransform`, `Image`, `Button`, `Text`, `ScrollRect`, `KinoaInAppItemView`, `KinoaInAppMilestoneStepView` |
 | `anchor_min` / `anchor_max` | uGUI anchors, offsets zero (stretch within the anchors) |
 | `size` | `[w,h]` centred fixed size — used instead of anchors (Frame, item templates) |
 | `placed` | for slot, zone and feature nodes: `true` only when the position came from a layout source; every such node listed in `report.estimated_positions` has `placed: false` (see below). Chrome nodes (`Dimmer`, `Frame`, `Panel`) and child helpers (button labels, `TimerText`, fills, …) default to `true`; the `Unplaced` container is an estimated position and is `false` |
@@ -44,6 +45,7 @@ Produced by `inapp_prefab_plan.py plan`, copied into the project as
 | `key` / `bucket` / `role` | the template slot this node renders |
 | `click_actions` / `custom_cta_names` | copied from the template button |
 | `sprite_guid` | optional sprite to assign to the node's Image |
+| `step_button` | on the `MilestoneStep` template node only: `true` in `per_step` mode, where the builder gives the step a `CollectButton` + `CollectLabel`; `false` in `single` mode, where the step has none and the ready step's button goes onto the single CTA. `false` everywhere else |
 
 ### `placed` and `Unplaced`
 
@@ -68,9 +70,50 @@ KinoaInApp_<Pascal>           (root, stretch; the view component lives here)
         ├── <slot nodes>      anchored from bbox, relative to Panel
         ├── <ButtonName>Label stretch child of its button
         ├── TimerZone / PriceBeforeSaleZone / ResourceArea / GrandPrizeArea   (inactive)
-        ├── MilestoneBar … / MissionList …                                       (feature)
+        ├── MilestoneScroll / MissionList …                                      (feature)
+        │   └── MilestoneViewport  →  MilestoneContent  →  MilestoneStep           (milestone: horizontal scroll; the step is an inactive template, cloned per step)
+        ├── MilestoneMainButton                                                  (milestone, only when no template button is the single CTA)
         └── Unplaced          VerticalLayoutGroup — slots with no bbox; starts at the bottom 30 %, may move to free space
 ```
+
+### Milestone ladder
+
+A milestone template renders its steps as a horizontal scroll:
+`MilestoneScroll` (`ScrollRect`, positioned from `feature.area_bbox` or the
+`bar_image` box) → `MilestoneViewport` (`Image` + `RectMask2D`, stretched) →
+`MilestoneContent` (`HorizontalLayoutGroup` + `ContentSizeFitter`) →
+`MilestoneStep` (inactive; a `KinoaInAppMilestoneStepView` with score, reward
+icon and amount, a fill, locked / collected marks and, in `per_step` mode, a
+collect button). The builder wires the `ScrollRect` to its viewport and
+content. `MilestoneScroll` is a container for de-overlap (never trimmed).
+`MilestoneMainButton` (the feature's progress button) is added only when no
+template button is the single CTA.
+
+A milestone plan must be produced by this version. `generate` refuses one that
+has no `milestone` block or no `MilestoneScroll` node (written before the scroll
+ladder) with `{"ok": false, "error": "milestone_plan_outdated", ...}` (exit 2,
+nothing written) — re-run `plan` for the template.
+
+### `--milestone-cta` and how the mode is chosen
+
+| Flag value | `cta_mode` | `cta_mode_source` |
+|---|---|---|
+| `per_step` / `single` | as given | `override` |
+| `auto` (default), exactly one CTA slot | `single` | `template_cta_count` |
+| `auto`, zero or several CTA slots | `per_step` | `default` |
+
+A **CTA slot** is a template button, other than the collect-all one, that
+offers an action other than `close` and `custom` (a button with no actions
+counts unless its key reads close / dismiss) and whose layout role is not
+`info_button`; with a layout source in play, only buttons placed on the tip
+image count. An info / rules button is never the CTA; a secondary button with
+`close` + `deep_link` still counts. The **collect-all** button is the first
+button (lowest `index`) whose key or name matches
+`(?:^|[\s_-])(collect|claim|get)[\s_-]*all(?:$|[\s_-])`, case-insensitive
+(whole segments: `claim_all`, `Get All` match, `budget_all` does not); further
+matches add a warning. `single` with no CTA slot
+puts the CTA on `MilestoneMainButton`; `--milestone-cta single` with two or
+more slots does the same and warns.
 
 ## Panel extent and de-overlap
 
@@ -88,7 +131,7 @@ anchor units, do not count as overlapping.
   box.
   - **Overlay (≥ 80 %):** kept as drawn and listed in `report.overlays`, for
     example a price inside the CTA.
-  - **Containers** (`MissionList`, `MilestoneBar`, `ResourceArea`,
+  - **Containers** (`MissionList`, `MilestoneScroll`, `ResourceArea`,
     `GrandPrizeArea`) are never trimmed. A box with at least 80 % of its area
     inside a container is an overlay, for example the resource area on a
     mission task list. When both boxes are containers, the smaller one is
@@ -102,11 +145,10 @@ anchor units, do not count as overlapping.
 - **Estimated (`placed: false`):** the node moves vertically, keeping its x
   span, to the nearest slot that collides with nothing already settled. It
   tries the full height, then half, then a quarter. It never shrinks below
-  0.02 of real height, markers aside. The `Unplaced` container is first sized
+  0.02 of real height. The `Unplaced` container is first sized
   to its rows (88 px each, plus a little padding), growing or shrinking, and
   is never shrunk below that later. With no room left, the node stays and a
   warning names every node it overlaps.
-- `MilestoneBar` counts with its markers, one bar height above and below.
 
 Every change is appended to `report.layout_adjustments` as
 `{node, reason: split_overlap | moved_to_free_space | sized_to_rows, with, from, to}`

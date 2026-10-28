@@ -32,16 +32,69 @@ is set (text from `ResolveStorePrice(packages, true)`); the resource area lists
 the first item-bearing button's `Resources`; the grand prize echoes the last
 milestone step's rewards.
 
-Features: milestones fill the bar (`Progress / last step Score`), spawn one
-`KinoaInAppItemView` per step, claim `Reached` steps via
-`Kinoa.Messaging.CollectMilestonesAsync` (0-based indexes) and rebind; missions
+Features: milestones spawn one `KinoaInAppMilestoneStepView` per step into a
+horizontal scroll (per-step fill from `Progress` between the previous and this
+step's `Score`, a locked / collected mark per status), claim `Reached` steps via
+`Kinoa.Messaging.CollectMilestonesAsync` (0-based indexes) and rebind (see
+*Milestone binding* below); missions
 spawn one row per `ActiveMissions` entry, claim `Reached` rows via
 `CollectMissionsProgressAsync(message, setNumber, [rowNumber])` and rebind.
-While a claim request is in flight the marker / row button is disabled, and it
+While a claim request is in flight the mission row button is disabled, and it
 is re-enabled if the request fails. Awarding the reward itself is the game's
 job: the `TODO(kinoa-prefab)` sits where the server confirmed the step
 (`Collected.Contains(index)`) for milestones, and names `mission.ProcessedResources`
 for missions.
+
+### Milestone binding
+
+- **Step list.** One `KinoaInAppMilestoneStepView` per `InAppMilestoneStep`.
+  The list scrolls to the first `Reached` step, else the first `Closed` one,
+  else the last; the focus is applied after the view becomes active, and the
+  latest `Bind` wins over an older pending focus. The grand prize still echoes
+  the last step's rewards.
+- **CTA mode** (from `plan.milestone`). `per_step`: every step carries its own
+  collect button, shown unless the step is `Collected` and interactable only
+  when it is `Reached`; the feature's progress button (`ActiveProgressButton`)
+  goes onto `MilestoneMainButton`, which acts on the `Reached` steps chosen by
+  the feature-button rule below. `single`: steps carry no button; the first
+  `Reached` step's button goes onto the single CTA (the template slot named in
+  `plan.milestone.single_cta`, else `MilestoneMainButton`), and with no
+  `Reached` step it shows `ActiveProgressButton`, or is hidden / keeps its
+  template binding. A collecting button with an empty label shows `Collect`.
+  A feature button kept visible with no slot in this bind loses its previous
+  listener and is not interactable.
+- **Collect-all.** The template button matched by `plan.milestone.collect_all`
+  is bound to the feature and claims the `Reached` steps chosen by the
+  feature-button rule in one `CollectMilestonesAsync` call; it is interactable
+  only while that list is not empty.
+- **Steps a feature button acts on** (`MilestoneMainButton` in `per_step`, and
+  collect-all) depend on the button's own `ClickConfig`. A free button (none,
+  `collect_resource`, `promise_rewards`) takes only the `Reached` steps whose
+  own button is free too: a step that must be bought, watched or opened is left
+  for its own button. A paid / ad / link button takes every `Reached` step,
+  because its own action runs first (`RunButtonAction`) and gates them all. The
+  single CTA always carries the first `Reached` step's own button.
+- **In-flight guard.** While a collect request or `RunButtonAction` is running,
+  every milestone button ignores taps, including a feature button whose action
+  is `close`. The template's own close button is unaffected. This is why
+  `KinoaInAppFeatureHooks.RunButtonAction` must always complete (return `false`
+  on cancel or failure): a task that never finishes leaves the milestone
+  buttons inert.
+
+Click resolution for a milestone feature button (step, single CTA, collect-all
+or main button):
+
+| Button's `ClickConfig` | Result |
+|---|---|
+| `close` | closes the view |
+| none, `collect_resource` or `promise_rewards` | collects the step(s) via `CollectMilestonesAsync` |
+| any other action (billing, soft billing, ad, link, ...) and `KinoaInAppFeatureHooks.RunButtonAction` assigned | runs the hook; collects the step(s) only when it returns `true` (a throw or `false` collects nothing) |
+| any other action and the hook **not** assigned | one `WarnMissing` warning; nothing is collected |
+
+Every accepted tap also sends `in_app_click` and raises `ButtonClicked`. The
+server response is the source of truth: a fresh `InApp` in it rebinds the view,
+else collected steps are marked collected locally. A failed or throwing request
+logs a warning and rebinds the unchanged message.
 
 ## `KinoaInAppHooks` (shared, static)
 
@@ -49,16 +102,38 @@ for missions.
 |---|---|---|
 | `LoadSpriteFromUrl` | `Func<string, Task<Sprite>>` | `WebUrl` images |
 | `ResolveStorePrice` | `Func<InAppStorePackages, bool usePreSalePackage, string>` | CTA price (`false`), struck pre-sale price (`true`) |
-| `ResolveResourceIcon` | `Func<string resourceKey, Sprite>` | resource area, grand prize, markers |
+| `ResolveResourceIcon` | `Func<string resourceKey, Sprite>` | resource area, grand prize |
 
 Unassigned delegates log one warning per use (`WarnMissing`). The skill wires
 an existing game method when the developer names one; it never writes one.
+
+## `KinoaInAppFeatureHooks` (shared, static)
+
+| Delegate | Signature | Used for |
+|---|---|---|
+| `RunButtonAction` | `Func<InAppMessage, InAppCustomButton, Task<bool>>` | a milestone button's paid / ad / link action; return `true` once it completed so the step is collected. Always complete: return `false` on cancel or failure (milestone buttons ignore taps while it runs). Never grant the reward here: the view collects through Kinoa |
+
+Unassigned: one warning per use and nothing collected for such a button. It
+is a separate file from `KinoaInAppHooks` on purpose (see the compatibility
+rule below). Written for every plan, because the Editor builder needs the step
+view type in any project; standard and mission views never call it.
 
 ## `KinoaInAppItemView` (shared)
 
 `SetLabel`, `SetValue` (hides when empty), `SetIcon` (hides when null),
 `SetFill(0..1)`, `SetButton(interactable, UnityAction)`. Built by the Editor
 builder with children `Icon`, `Label`, `Value`, `Fill` and a root `Button`.
+Used by mission rows and resource items.
+
+## `KinoaInAppMilestoneStepView` (shared)
+
+One step of the milestone ladder: `SetScore`, `SetReward(icon, amount)`,
+`SetProgress(0..1)`, `SetStatus(InAppMilestoneStatus)` (locked mark for
+`Closed` / `Unknown`, collected mark for `Collected`) and
+`SetCollect(visible, interactable, label, onClick)`. Built by the Editor
+builder with children `Score`, `RewardIcon`, `RewardAmount`, `Progress`,
+`LockedMark`, `CollectedMark` and, in `per_step` mode, `CollectButton` /
+`CollectLabel`.
 
 ## `KinoaInAppPrefabBuilder` (Editor)
 
@@ -83,7 +158,21 @@ runtime. A plan written before these settings existed gets the defaults.
 |---|---|---|
 | `<Pascal>/KinoaInApp<Pascal>View.cs`, plan copy | tool | every run (view needs `--overwrite` when it exists) |
 | `Editor/KinoaInAppPrefabBuilder.cs` | tool | **always refreshed** |
-| `Shared/KinoaInAppHooks.cs`, `Shared/KinoaInAppItemView.cs` | user | only when absent; `--force-shared` rewrites them |
+| `Shared/KinoaInAppHooks.cs`, `Shared/KinoaInAppItemView.cs`, `Shared/KinoaInAppFeatureHooks.cs`, `Shared/KinoaInAppMilestoneStepView.cs` | user | only when absent; `--force-shared` rewrites them |
+
+**Compatibility rule.** An existing user-owned Shared file is never required
+to change for a newer release: a new feature that needs a new delegate or view
+gets a **new file** (this is why `RunButtonAction` lives in
+`KinoaInAppFeatureHooks`, not in `KinoaInAppHooks`). A re-run on a project from
+an earlier release therefore only **adds** `KinoaInAppFeatureHooks.cs` and
+`KinoaInAppMilestoneStepView.cs`; `KinoaInAppHooks.cs` and
+`KinoaInAppItemView.cs` are never touched. A milestone plan must come from this
+version: `generate` refuses one without the `milestone` block / `MilestoneScroll`
+node (written before the scroll ladder) with `milestone_plan_outdated` and writes
+nothing — re-run `plan` for the template.
+`generate` takes `--feature-action-runner Ns.Class.Method` for
+`RunButtonAction`; like the other hook options it is not applied when the
+existing file is kept, and says so in `warnings`.
 
 `generate` prints one JSON object: `written`, `skipped`, `warnings` (e.g. a
 hook option not applied because the existing hooks file was kept), `snippets`

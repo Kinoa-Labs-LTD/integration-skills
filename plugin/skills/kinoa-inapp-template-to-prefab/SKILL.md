@@ -219,9 +219,9 @@ holds it to that:
   duplicate entry, and every element whose `index` or the feature type
   disagrees with the record — usually an artifact that predates a template
   edit. Artifact entries the template does not have go to `unmapped_layout`.
-- `feature.area_bbox` positions the mission task list, or the milestone bar
-  when no `bar_image` element was placed, instead of default anchors — only
-  when the artifact's feature type matches the template's.
+- `feature.area_bbox` positions the mission task list, or the milestone step
+  list (the `bar_image` box when no area was drawn), instead of default
+  anchors — only when the artifact's feature type matches the template's.
 
 Option C without an envelope — from `build_result.json`:
 
@@ -242,8 +242,9 @@ file as-is.
 Read `report` and show it: `layout_source` (which kind positioned the plan),
 `unplaced` slots, `estimated_positions` (zones and feature UIs placed at
 defaults), `unmapped_layout`, `client_zones` that will be built,
-`needs_developer`, and every entry of `warnings` (including slot renames made
-to avoid name clashes and artifact/template disagreements).
+`needs_developer`, `milestone` (milestone templates, see below), and every
+entry of `warnings` (including slot renames made to avoid name clashes and
+artifact/template disagreements).
 
 The planner removes the overlaps between top-level texts, buttons and zones
 that it can remove safely, and reports the rest. The panel spans every
@@ -256,7 +257,7 @@ Then:
 - Two placed boxes that only graze each other are trimmed to meet halfway.
 - Intended overlays are kept as drawn and listed in `report.overlays`. These
   are a box mostly inside another, like a price on the CTA, or anything on a
-  container (task list, milestone bar, resource area). Badges are exempt
+  container (task list, milestone step list, resource area). Badges are exempt
   entirely.
 - A substantial partial overlap is left as drawn, with a warning.
 
@@ -265,6 +266,35 @@ before and after anchors) and every overlap warning. A trim or a warning
 usually means the vision pass drew a box too large; the developer fixes it on
 the from-image confirmation page or in the prefab. Art is built behind
 controls and copy and never takes clicks.
+
+### Milestone templates — one CTA per step, or a single CTA
+
+A milestone template (`featureType: milestone`) renders its steps as a
+horizontal scroll (`MilestoneScroll`), one `KinoaInAppMilestoneStepView` per
+step. What differs between mockups is where the claim button lives. Look at
+the tip image (or the mockup the layout came from) and decide:
+
+- A claim button on **every step** ⇒ re-run `plan` with `--milestone-cta per_step`.
+- **Exactly one** CTA under the ladder, which takes over the ready step's
+  button ⇒ `--milestone-cta single`.
+- Neither is clear ⇒ leave `--milestone-cta auto`. The planner then counts the
+  template's CTA slots: exactly one ⇒ `single`, otherwise `per_step`.
+
+A button whose key or name reads "collect / claim / get all" as whole words
+(`claim_all`, `Get All`; not `budget_all`) is recognised as the
+**collect-all** button and is never counted as a step CTA. A free collect-all
+(collect / promise rewards) claims the ready steps that are free themselves;
+a paid / ad / link one runs its own action first and then claims every ready
+step. Info / rules buttons (a `custom` action or the `info_button` role) are
+never counted as step CTAs either.
+
+Show `report.milestone` to the developer: `cta_mode`, `cta_mode_source`
+(`override` for the flag, `template_cta_count` or `default` for `auto`) and
+`collect_all` (the button key, or `null`). When `auto` decided from the slot
+count and the image disagrees (say `single` was chosen but every step in the
+image carries its own button), confirm with `AskUserQuestion` and re-run `plan`
+with the flag. Warnings about several collect-all buttons or about a `single`
+override with several CTA slots go into the hand-off.
 
 ### Hooks — find the game's methods, never write them
 
@@ -277,6 +307,16 @@ the candidates found, or **"leave a TODO"** — the default when nothing fits):
 | image loader (`KinoaInAppHooks.LoadSpriteFromUrl`) | `Task<Sprite>`, `DownloadHandlerTexture`, `LoadSprite`, `GetTexture(` | `static Task<Sprite> M(string url)` |
 | store price (`ResolveStorePrice`) | `localizedPriceString`, `LocalizedPrice`, `ProductMetadata` | `static string M(InAppStorePackages p, bool usePreSalePackage)` |
 | resource icon (`ResolveResourceIcon`) | `GetIcon(`, `IconFor`, `Sprite Get(` | `static Sprite M(string resourceKey)` |
+
+Milestone templates add a fourth hook, with the same rule:
+
+| Hook | Grep for | Required shape |
+|---|---|---|
+| feature button action (`KinoaInAppFeatureHooks.RunButtonAction`) | `HandleInAppButtonClick`, `RunClickAction`, `BillingService`, `ShowRewardedAd` | `static Task<bool> M(InAppMessage message, InAppCustomButton button)` |
+
+It runs a milestone step's non-collect action (billing, soft billing, ad, link)
+through the game's own handler; the step is collected only when it returns
+`true`. If nothing in the game has that shape, leave the TODO.
 
 Read the chosen method before wiring it. If its shape differs (instance
 method, other parameters), do **not** adapt it from here — leave the TODO and
@@ -291,19 +331,34 @@ python "${CLAUDE_SKILL_DIR}/inapp_prefab_plan.py" generate \
   --plan .kinoa-inapp-prefab/<key>/<key>.inapp-plan.json \
   --project-root <unity project root> \
   --facade present|absent [--facade-namespace <ns>] \
-  [--image-loader Ns.Class.Method] [--price-resolver ...] [--resource-icon-resolver ...]
+  [--image-loader Ns.Class.Method] [--price-resolver ...] [--resource-icon-resolver ...] \
+  [--feature-action-runner Ns.Class.Method]
 ```
 
 Every run writes the view, the plan copy and `Editor/KinoaInAppPrefabBuilder.cs`
-(tool-owned — always refreshed). `Shared/KinoaInAppHooks.cs` and
-`Shared/KinoaInAppItemView.cs` are **user-owned**: written only when absent,
-and kept untouched afterwards (`--force-shared` rewrites them). Surface every
-entry of the output's `warnings` — notably a hook option (`--image-loader`,
-`--price-resolver`, `--resource-icon-resolver`) that was **not applied**
-because the existing `KinoaInAppHooks.cs` was kept: tell the developer to
-assign it in that file, or confirm a `--force-shared` re-run.
+(tool-owned — always refreshed). `Shared/KinoaInAppHooks.cs`,
+`Shared/KinoaInAppItemView.cs`, `Shared/KinoaInAppFeatureHooks.cs` and
+`Shared/KinoaInAppMilestoneStepView.cs` are **user-owned**: written only when
+absent, and kept untouched afterwards (`--force-shared` rewrites them). Surface
+every entry of the output's `warnings` — notably a hook option
+(`--image-loader`, `--price-resolver`, `--resource-icon-resolver`,
+`--feature-action-runner`) that was **not applied** because the existing hooks
+file (`KinoaInAppHooks.cs` / `KinoaInAppFeatureHooks.cs`) was kept: tell the
+developer to assign it in that file, or confirm a `--force-shared` re-run.
+
+Pass `--feature-action-runner Ns.Class.Method` when the game already has a
+method with the `Func<InAppMessage, InAppCustomButton, Task<bool>>` shape
+(Phase 4, milestone hooks); otherwise leave the TODO. `KinoaInAppFeatureHooks.cs`
+and `KinoaInAppMilestoneStepView.cs` are written for **every** plan, because
+the Editor builder needs the step view type in any project; standard and mission
+runs simply never use them. A re-run on a project generated by an earlier
+release only **adds** those two files: the existing `KinoaInAppHooks.cs` and
+`KinoaInAppItemView.cs` are never touched. A milestone plan must come from this
+version: `generate` refuses one without the `milestone` block / `MilestoneScroll`
+node with `milestone_plan_outdated` (nothing written) — re-run `plan`.
 
 `view_exists` ⇒ confirm with the developer, then re-run with `--overwrite`.
+`milestone_plan_outdated` ⇒ a milestone plan written before the scroll ladder: re-run `plan` for the template (there is no legacy milestone view).
 `shared_text_system_mismatch` ⇒ the project already has shared files for the
 other text system: keep the existing one (re-run `plan` with the matching
 `text_system` in `style_probe.json`) rather than forcing with `--force-shared`.
@@ -354,7 +409,13 @@ Summarise, in this order: prefab path · view class · fields assigned ·
 `warnings` from `generate` and `plan` · unplaced slots and estimated positions ·
 snippets shown but not applied (if the developer declined the facade constant +
 allowlist arm, say plainly that clicks on the view are ignored until they are
-applied) · next steps (assign the hooks in the game's bootstrap; **TODO:
+applied) · next steps (assign the hooks in the game's bootstrap; for a
+**milestone** template whose `milestonesActionTypes` or `mainActionTypes`, or
+whose collect-all slot's own `clickActionType`, contain anything outside
+`collect_resource`, `promise_rewards` and `close`, add
+the TODO *assign `KinoaInAppFeatureHooks.RunButtonAction`* — until it is
+assigned, those buttons collect nothing (list that TODO only for such
+templates; for every other template it can be ignored); **TODO:
 check or align the `Canvas`, `CanvasScaler` and `GraphicRaycaster` on the
 prefab root** — the builder adds them with the settings copied from a
 reference pop-up that has its own canvas, or else pop-up defaults (overlay,
@@ -376,6 +437,10 @@ in Unity and what was not. State these facts every time:
 - **`MissionText` may be a template.** A mission-row text can carry a
   placeholder (the SDK demo replaces `"[]"` with the goal score); the game side
   must substitute it — the generated view shows the Dashboard text as-is.
+- **Milestone buttons ignore taps while one is running.** While a collect
+  request or the game's `RunButtonAction` is in flight, every milestone button
+  ignores taps (a second purchase must not start), including a feature button
+  whose action is `close`. The template's own close button is unaffected.
 - **Editor asmdef.** If the output folder sits under a game assembly
   definition, the `Editor/` subfolder needs its own Editor-only asmdef, or its
   `UnityEditor` references break player builds.

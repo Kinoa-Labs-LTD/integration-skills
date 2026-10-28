@@ -70,6 +70,27 @@
         "plugin/skills/kinoa-inapp-template-to-prefab/evals/fixtures/one-cta/summer_bundle.layout.json",
         "plugin/skills/kinoa-inapp-template-to-prefab/evals/fixtures/one-cta/template_one_cta.json"
       ]
+    },
+    {
+      "id": 10,
+      "name": "milestone-single-cta-reassigns-step-cta",
+      "prompt": "Build the prefab for our milestone template 55555555-5555-5555-5555-555555555555. Its tip image shows a horizontal ladder of milestone steps with exactly one big CTA button underneath it, and no button on the individual steps.",
+      "expected_output": "At Phase 4 the skill looks at the tip image, sees exactly one CTA under the ladder and plans with `--milestone-cta single` (or, when `auto` already chose `single`, shows report.milestone with cta_mode single and its source). It shows report.milestone (cta_mode, cta_mode_source, collect_all). When `auto` decided from the template's slot count and the image disagrees, it confirms with AskUserQuestion and re-runs `plan` with the flag instead of hand-editing the plan JSON. The generated view moves the ready step's CTA onto the single CTA button; the steps carry no collect button.",
+      "files": []
+    },
+    {
+      "id": 11,
+      "name": "milestone-collect-all-button",
+      "prompt": "Generate the prefab for milestone template 55555555-5555-5555-5555-555555555555. The template has the buttons `claim_all`, `main_cta` and `close`. Make sure the claim-all button works.",
+      "expected_output": "The planner recognises `claim_all` as the collect-all button (key or name matching collect/claim/get + all) and records it in report.milestone.collect_all; it is not counted as a step CTA, so `main_cta` is the only CTA slot and `auto` picks `single`. The skill reports the collect-all key in the hand-off. The generated view claims the reached steps with one CollectMilestonesAsync call from that button (a free claim_all takes only reached steps whose own button is free; a paid/ad/link one runs its action first and then takes every reached step) and keeps it disabled while it has no step to claim. The skill does not rename or re-key the button, and writes no collect code of its own.",
+      "files": []
+    },
+    {
+      "id": 12,
+      "name": "milestone-paid-step-needs-game-hook",
+      "prompt": "Generate the milestone prefab for template 55555555-5555-5555-5555-555555555555. Its milestonesActionTypes are collect_resource and billing, and our game has no method that routes a button through its purchase flow yet.",
+      "expected_output": "Because `billing` is outside collect_resource, promise_rewards and close, the skill asks (Phase 4 hooks) which game method to wire as KinoaInAppFeatureHooks.RunButtonAction (Func<InAppMessage, InAppCustomButton, Task<bool>>); with none that fits it leaves the `TODO(kinoa-prefab)` and does NOT write a purchase handler. The Phase 7 hand-off lists the TODO 'assign KinoaInAppFeatureHooks.RunButtonAction' and says that until it is assigned the paid step CTAs collect nothing. A re-run on an existing project only adds KinoaInAppFeatureHooks.cs and KinoaInAppMilestoneStepView.cs; the existing KinoaInAppHooks.cs and KinoaInAppItemView.cs are untouched.",
+      "files": []
     }
   ]
 }

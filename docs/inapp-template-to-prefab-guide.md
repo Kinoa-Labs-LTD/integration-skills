@@ -110,11 +110,15 @@ plainly what was verified in Unity and what was not.
 | `Assets/Kinoa/InApps/<Name>/<key>.inapp-plan.json` | Generated | The plan the prefab is built from |
 | `Assets/Kinoa/InApps/Editor/KinoaInAppPrefabBuilder.cs` | Tool-owned | Builds any plan into a prefab; refreshed on every run |
 | `Assets/Kinoa/InApps/Shared/KinoaInAppHooks.cs` | **Yours** | Where you assign your image loader, price lookup and icon lookup |
-| `Assets/Kinoa/InApps/Shared/KinoaInAppItemView.cs` | **Yours** | The row used for reward items, milestone markers and mission rows |
+| `Assets/Kinoa/InApps/Shared/KinoaInAppItemView.cs` | **Yours** | The row used for reward items and mission rows |
+| `Assets/Kinoa/InApps/Shared/KinoaInAppFeatureHooks.cs` | **Yours** | Where you assign the method that runs a milestone button's purchase, ad or link action |
+| `Assets/Kinoa/InApps/Shared/KinoaInAppMilestoneStepView.cs` | **Yours** | One step of the milestone ladder: score, reward, progress, locked and collected marks, claim button |
 | `.kinoa-inapp-prefab/<key>/` | Working files | Inputs and intermediate files of the run. Keep them out of git. |
 
-The two **yours** files are written once and never overwritten afterwards, so
-your edits to them are safe across runs. Another folder than
+The four **yours** files are written once and never overwritten afterwards, so
+your edits to them are safe across runs. If you ran an earlier release of this
+module, a new run only adds the two milestone files; your existing hooks and
+item view are left exactly as they are. Another folder than
 `Assets/Kinoa/InApps` can be requested.
 
 ## What the generated code does
@@ -140,13 +144,42 @@ not configured as template slots. The prefab includes a hidden area for each
 zone the template can use, and the view shows and fills it from the message.
 The timer counts down and shows days when more than one remains.
 
-**Missions and milestones.** For progression templates the view builds the
-milestone bar with a marker per step, or one row per mission, from the
-message. Steps and missions the player can claim get an active button that
-calls the SDK's collect method. The button is disabled while the request is in
-flight, so a double tap never claims twice. Granting the rewards to the
-player's economy is a marked to-do, placed exactly where the server has
-confirmed the claim.
+**Missions and milestones.** For progression templates the view builds one
+row per mission, or, for a milestone template, a horizontal scroll with one
+card per step (score, reward, progress, a locked or collected mark). The list
+opens on the first step the player can claim, else the first locked step, else
+the last one. Steps and missions the player can claim get an active button
+that calls the SDK's collect method. A mission row's button is disabled while
+its request is in flight. While a request is running, the milestone buttons
+ignore taps, so a double tap never claims or buys twice.
+Granting the rewards to the player's economy is a marked to-do, placed exactly
+where the server has confirmed the claim.
+
+Milestone designs differ in where the claim button sits, and the module
+supports both:
+
+- **A button on every step.** Each card has its own claim button.
+- **One button under the ladder.** The cards have no button; the single
+  button takes over the claim of the step that is ready.
+
+The module picks one from the template's buttons and tells you which it
+chose. If the design shows the other one, say so and run it again with that
+choice. A button named like "Collect all" or "Claim all" claims ready steps
+at once. If that button is itself a plain claim, it claims only the ready
+steps that are a plain claim too: a step that must be bought, watched or opened
+keeps waiting for its own button. If the button is itself a purchase, an ad or
+a link, its action runs first and then it claims every ready step. It is only
+active while it has a step to claim. The same rule applies to the main button
+under a ladder whose cards have their own buttons. Info or rules buttons never
+count as the claim button.
+
+A step button that needs more than a plain claim, such as a purchase, an ad
+or a link, is handed to your own game code: you assign the method in
+`KinoaInAppFeatureHooks.RunButtonAction`. The step is claimed only after that
+method reports success. Your method must always finish, returning `false` when
+the player cancels or the action fails: the milestone buttons ignore taps until
+it does. Until you assign it, those buttons claim nothing. The module never
+writes a purchase handler for you.
 
 ## Layout and overlaps
 
@@ -192,7 +225,9 @@ takes taps meant for them.
    covers. The hand-off includes a code snippet for it.
 5. **Fill the marked to-dos** in the view, such as reward granting, routing
    when there is no facade, and addressable images. Every one carries
-   `TODO(kinoa-prefab)`.
+   `TODO(kinoa-prefab)`. For a milestone template with purchase, ad or link
+   buttons, also assign `KinoaInAppFeatureHooks.RunButtonAction` to a method of
+   yours that runs the button's action and returns whether it succeeded.
 6. **Activate the template** on the Dashboard when the operator configures the
    first in-app on it.
 
@@ -215,6 +250,10 @@ That was a bug in early builds of this module, fixed since. If you still see
 it, your installed plugin copy predates the fix. A plan file whose report has
 no `panel_bbox` comes from the old planner. Reinstall the plugin, re-run the
 module for the template and rebuild the prefab.
+
+**Generation stopped with `milestone_plan_outdated`.** A milestone template's plan file
+was written before the milestone scroll ladder existed. Run the module again for that
+template so it plans afresh; nothing was written by the refused run.
 
 **The module stopped right away saying there is no Unity MCP.** Install one
 of the three supported servers, open the project in Unity and start its
@@ -249,6 +288,14 @@ meant to be kept; you can discard the change.
 **The `Editor` folder breaks our player build.** If the output folder sits
 under one of your assembly definitions, give its `Editor/` subfolder its own
 Editor-only assembly definition.
+
+**A milestone step's button does nothing.** If its action is a purchase, an
+ad or a link, it needs `KinoaInAppFeatureHooks.RunButtonAction` assigned; the
+Unity console shows a warning until it is. A plain claim works without it.
+
+**The milestone design has one button, but every card got its own.** The
+module chooses from the template's buttons. Run it again and ask for a single
+button under the ladder (the other way round works the same).
 
 **A mission row shows `[]` in its text.** Mission text can carry a
 placeholder that your game substitutes, such as the goal score. The view

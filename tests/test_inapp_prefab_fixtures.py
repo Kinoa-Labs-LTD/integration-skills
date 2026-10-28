@@ -58,6 +58,8 @@ class TestSkillDoc(unittest.TestCase):
         # the hand-off must tell the developer to set up the canvas; the builder adds none
         for component in ("`Canvas`", "`CanvasScaler`", "`GraphicRaycaster`"):
             self.assertIn(component, doc)
+        for token in ("--milestone-cta", "--feature-action-runner", "KinoaInAppFeatureHooks", "KinoaInAppMilestoneStepView"):
+            self.assertIn(token, doc)
         self.assertIn("never write", doc.lower())
         self.assertIn("Never `cat ~/.kinoa/session.env`", doc)   # the doc forbids it, never instructs it
         for ref in ("prefab-plan-schema.md", "generated-code-contract.md"):
@@ -75,7 +77,8 @@ class TestRepoWiring(unittest.TestCase):
         self.assertEqual(evals["skill_name"], "kinoa-inapp-template-to-prefab")
         names = {e["name"] for e in evals["evals"]}
         for needed in ("stops-without-unity-mcp", "never-writes-image-download", "prefers-layout-recognition-output",
-                       "no-trigger-for-template-creation"):
+                       "no-trigger-for-template-creation", "milestone-single-cta-reassigns-step-cta",
+                       "milestone-collect-all-button", "milestone-paid-step-needs-game-hook"):
             self.assertIn(needed, names)
 
     def test_claude_md_changelog_and_handoffs(self):
@@ -83,3 +86,5 @@ class TestRepoWiring(unittest.TestCase):
         self.assertIn("kinoa-inapp-template-to-prefab", self._read("CHANGELOG.md"))
         self.assertIn("kinoa-inapp-template-to-prefab", self._read("plugin", "skills", "kinoa-inapp-template-from-image", "SKILL.md"))
         self.assertIn("Unity prefab", self._read("docs", "inapp-template-generation-guide.md"))
+        self.assertIn("## [Unreleased]", self._read("CHANGELOG.md"))
+        self.assertIn("KinoaInAppMilestoneStepView", self._read("docs", "inapp-template-to-prefab-guide.md"))
