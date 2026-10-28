@@ -1,0 +1,201 @@
+{
+  "id": "44444444-4444-4444-4444-444444444444",
+  "name": "Daily Missions",
+  "key": "daily_missions",
+  "description": "",
+  "gameId": "11111111-1111-1111-1111-111111111111",
+  "status": "draft",
+  "tipImageUrl": null,
+  "featureType": "mission",
+  "features": {
+    "mission": {
+      "key": "missions",
+      "name": "Missions",
+      "progressBar": {
+        "display": "show_for_all_sets_combined",
+        "completionBarCta": [
+          "collect_resource"
+        ]
+      },
+      "completionCta": [
+        "collect_resource"
+      ],
+      "activeProgressCta": [
+        "deep_link"
+      ],
+      "maxPlacements": 10,
+      "maxSetsCount": 7,
+      "minPlacements": 1,
+      "minSetsCount": 1
+    }
+  },
+  "images": [
+    {
+      "key": "background_image",
+      "name": "Background Image",
+      "index": 1,
+      "description": "",
+      "canBeHidden": true,
+      "customFields": []
+    }
+  ],
+  "buttons": [
+    {
+      "key": "close_button",
+      "name": "Close",
+      "index": 0,
+      "description": "",
+      "canBeHidden": true,
+      "customFields": [],
+      "clickActionType": [
+        "close"
+      ]
+    },
+    {
+      "key": "collect_all_button",
+      "name": "Collect All",
+      "index": 8,
+      "description": "",
+      "canBeHidden": true,
+      "customFields": [],
+      "clickActionType": [
+        "collect_resource"
+      ]
+    },
+    {
+      "key": "reach_all_button",
+      "name": "Reach All",
+      "index": 9,
+      "description": "",
+      "canBeHidden": true,
+      "customFields": [],
+      "clickActionType": [
+        "deep_link"
+      ]
+    },
+    {
+      "key": "collect_all_milestones_button",
+      "name": "Collect All Milestones",
+      "index": 10,
+      "description": "",
+      "canBeHidden": true,
+      "customFields": [],
+      "clickActionType": [
+        "collect_resource"
+      ]
+    }
+  ],
+  "texts": [
+    {
+      "key": "header",
+      "name": "Header",
+      "index": 2,
+      "nullable": false,
+      "description": "",
+      "canBeHidden": true,
+      "customFields": [
+        {
+          "key": "text_color",
+          "kind": "string",
+          "name": "Text Color",
+          "nullable": true,
+          "description": "",
+          "defaultValue": "#FFFFFF"
+        }
+      ]
+    },
+    {
+      "key": "upper_text",
+      "name": "Upper Text",
+      "index": 3,
+      "nullable": true,
+      "description": "",
+      "canBeHidden": true,
+      "customFields": [
+        {
+          "key": "text_color",
+          "kind": "string",
+          "name": "Text Color",
+          "nullable": true,
+          "description": "",
+          "defaultValue": "#FFFFFF"
+        }
+      ]
+    },
+    {
+      "key": "resource_badge",
+      "name": "Resource Badge",
+      "index": 4,
+      "nullable": true,
+      "description": "",
+      "canBeHidden": true,
+      "customFields": [
+        {
+          "key": "text_color",
+          "kind": "string",
+          "name": "Text Color",
+          "nullable": true,
+          "description": "",
+          "defaultValue": "#FFFFFF"
+        },
+        {
+          "key": "badge_color",
+          "kind": "string",
+          "name": "Badge Color",
+          "nullable": true,
+          "description": "",
+          "defaultValue": ""
+        }
+      ]
+    },
+    {
+      "key": "price_cut_badge",
+      "name": "Price Cut Badge",
+      "index": 5,
+      "nullable": true,
+      "description": "",
+      "canBeHidden": true,
+      "customFields": [
+        {
+          "key": "text_color",
+          "kind": "string",
+          "name": "Text Color",
+          "nullable": true,
+          "description": "",
+          "defaultValue": "#FFFFFF"
+        }
+      ]
+    },
+    {
+      "key": "fine_print",
+      "name": "Fine Print",
+      "index": 6,
+      "nullable": true,
+      "description": "",
+      "canBeHidden": true,
+      "customFields": [
+        {
+          "key": "text_color",
+          "kind": "string",
+          "name": "Text Color",
+          "nullable": true,
+          "description": "",
+          "defaultValue": "#FFFFFF"
+        }
+      ]
+    }
+  ],
+  "customs": [
+    {
+      "key": "show_resource_area",
+      "kind": "boolean",
+      "name": "Show Resource Area",
+      "index": 7,
+      "nullable": true,
+      "description": "Operator switch for the resource area",
+      "canBeHidden": true,
+      "customFields": [],
+      "defaultValue": false
+    }
+  ]
+}

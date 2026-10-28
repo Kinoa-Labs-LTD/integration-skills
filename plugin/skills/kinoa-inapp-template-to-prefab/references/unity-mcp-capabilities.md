@@ -3,7 +3,7 @@
 | Capability | CoderGamester `mcp-unity` (prefix `mcp__mcp-unity__`) | CoplayDev `unity-mcp` (prefix `mcp__unity-mcp__` / `mcp__UnityMCP__`) | IvanMurzak `Unity-MCP` |
 |---|---|---|---|
 | liveness probe (read-only) | `get_scene_info` | `manage_editor` (action `get_state`) | `editor-application-get-state` |
-| refresh / recompile | `recompile_scripts` | `refresh_unity` | `assets-refresh` |
+| refresh / recompile | `execute_menu_item` `Assets/Refresh`, then `recompile_scripts` (`recompile_scripts` alone does not import new `.cs` files) | `refresh_unity` | `assets-refresh` |
 | run a menu item | `execute_menu_item` | `execute_menu_item` | `reflection-method-call` on `Kinoa.InApps.Editor.KinoaInAppPrefabBuilder.BuildAll` |
 | read console | `get_console_logs` | `read_console` | `console-get-logs` |
 | inspect result | `get_gameobject` / file on disk | `manage_prefabs` / file on disk | `gameobject-find` / file on disk |

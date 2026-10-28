@@ -110,14 +110,16 @@ plainly what was verified in Unity and what was not.
 | `Assets/Kinoa/InApps/<Name>/<key>.inapp-plan.json` | Generated | The plan the prefab is built from |
 | `Assets/Kinoa/InApps/Editor/KinoaInAppPrefabBuilder.cs` | Tool-owned | Builds any plan into a prefab; refreshed on every run |
 | `Assets/Kinoa/InApps/Shared/KinoaInAppHooks.cs` | **Yours** | Where you assign your image loader, price lookup and icon lookup |
-| `Assets/Kinoa/InApps/Shared/KinoaInAppItemView.cs` | **Yours** | The row used for reward items and mission rows |
-| `Assets/Kinoa/InApps/Shared/KinoaInAppFeatureHooks.cs` | **Yours** | Where you assign the method that runs a milestone button's purchase, ad or link action |
-| `Assets/Kinoa/InApps/Shared/KinoaInAppMilestoneStepView.cs` | **Yours** | One step of the milestone ladder: score, reward, progress, locked and collected marks, claim button |
+| `Assets/Kinoa/InApps/Shared/KinoaInAppItemView.cs` | **Yours** | The row used for reward items (the resource area and the rewards on a mission card) |
+| `Assets/Kinoa/InApps/Shared/KinoaInAppFeatureHooks.cs` | **Yours** | Where you assign the method that runs a milestone (or mission-bar) button's purchase, ad or link action |
+| `Assets/Kinoa/InApps/Shared/KinoaInAppMilestoneStepView.cs` | **Yours** | One step of a milestone ladder (a milestone template's, or a mission template's progress bar): score, reward, progress, locked and collected marks, claim button |
+| `Assets/Kinoa/InApps/Shared/KinoaInAppMissionRowView.cs` | **Yours** | One mission card: placement, text, status, progress, rewards, action and dismiss buttons |
+| `Assets/Kinoa/InApps/Shared/KinoaInAppTabView.cs` | **Yours** | One mission-set tab |
 | `.kinoa-inapp-prefab/<key>/` | Working files | Inputs and intermediate files of the run. Keep them out of git. |
 
-The four **yours** files are written once and never overwritten afterwards, so
+The six **yours** files are written once and never overwritten afterwards, so
 your edits to them are safe across runs. If you ran an earlier release of this
-module, a new run only adds the two milestone files; your existing hooks and
+module, a new run only adds the new files; your existing hooks and
 item view are left exactly as they are. Another folder than
 `Assets/Kinoa/InApps` can be requested.
 
@@ -144,14 +146,12 @@ not configured as template slots. The prefab includes a hidden area for each
 zone the template can use, and the view shows and fills it from the message.
 The timer counts down and shows days when more than one remains.
 
-**Missions and milestones.** For progression templates the view builds one
-row per mission, or, for a milestone template, a horizontal scroll with one
-card per step (score, reward, progress, a locked or collected mark). The list
-opens on the first step the player can claim, else the first locked step, else
-the last one. Steps and missions the player can claim get an active button
-that calls the SDK's collect method. A mission row's button is disabled while
-its request is in flight. While a request is running, the milestone buttons
-ignore taps, so a double tap never claims or buys twice.
+**Milestones.** For a milestone template the view builds a horizontal scroll
+with one card per step (score, reward, progress, a locked or collected mark).
+The list opens on the first step the player can claim, else the first locked
+step, else the last one. Steps the player can claim get an active button that
+calls the SDK's collect method. While a request is running, the milestone
+buttons ignore taps, so a double tap never claims or buys twice.
 Granting the rewards to the player's economy is a marked to-do, placed exactly
 where the server has confirmed the claim.
 
@@ -180,6 +180,47 @@ method reports success. Your method must always finish, returning `false` when
 the player cancels or the action fails: the milestone buttons ignore taps until
 it does. Until you assign it, those buttons claim nothing. The module never
 writes a purchase handler for you.
+
+**Missions.** A mission template gets a tab per mission set (the previous set
+first, labelled `Set 1 (prev)`, then `Set 2`), a vertically scrolling list of
+mission cards and, when the template shows a progress bar, that bar as a
+milestone ladder: the same horizontal scroll of step cards a milestone template
+gets, one per bar step. Cards are ordered Reached, Active, Collected, then by
+placement. Each card shows its placement (`P1`), text, status, progress and
+rewards, plus an action and a dismiss **×**:
+
+- **Collect** appears on a completed mission that carries a completion CTA
+  and claims it through the SDK.
+- **Go** appears on a mission in progress that carries a progression
+  CTA and raises a `MissionCtaClicked` event (with the mission's set number) for your game to route, because per-mission CTAs are not template buttons. The to-do in the view says how: a deep link or web link goes to your game's router; a *show ad* CTA reports the mission as reached through `Kinoa.Messaging.ReachMissionsProgress` once the ad has finished, then refreshes the view with the returned message; a *close* CTA closes the pop-up.
+- **×** appears on completed and collected missions and deletes that mission's
+  progress on the server, then hides the card.
+
+A bar step the player can claim has its own claim button, which works exactly
+like a milestone step's: a plain claim claims it; a purchase, an ad or a link
+runs your `KinoaInAppFeatureHooks.RunButtonAction` first and claims the step
+only when it reports success — never for free.
+
+*Reach all*, *Collect all* and *Collect all milestones* buttons exist only when
+the template declares a button whose key or name says so; the view then shows
+each one only while there is something to act on. These buttons bypass the SDK
+sample's `KinoaUiService`: a tap sends the click event and runs the mission
+call directly. *Collect all milestones* claims the ready bar steps by the same
+rule as a milestone "Collect all" button. That includes the case where its own
+action is an ad or a link rather than a purchase: that action also gates steps
+that must be bought, and your `RunButtonAction` decides whether they are
+claimed — the same as on a milestone template. Every request disables the tabs
+and buttons until it returns.
+
+The look comes from the design: the mockup module records the geometry and
+colours of the tabs, the cards and the progress bar in the layout file, and the
+prefab is built from them (the bar's box places the step ladder, so it should
+cover the bar with its markers and rewards). Any part the layout has no box for
+gets a neutral default, listed in the plan report. Granting rewards for a
+collected mission or bar step, and routing a **Go** tap, are marked to-dos.
+Grant a mission's rewards only when the SDK's response shows it as no longer
+completed-and-unclaimed (collected or removed), as the SDK sample does — not
+for every mission you asked to collect.
 
 ## Layout and overlaps
 
@@ -291,11 +332,28 @@ Editor-only assembly definition.
 
 **A milestone step's button does nothing.** If its action is a purchase, an
 ad or a link, it needs `KinoaInAppFeatureHooks.RunButtonAction` assigned; the
-Unity console shows a warning until it is. A plain claim works without it.
+Unity console shows a warning until it is. A plain claim works without it. The
+same holds for a step of a mission template's progress bar.
 
 **The milestone design has one button, but every card got its own.** The
 module chooses from the template's buttons. Run it again and ask for a single
 button under the ladder (the other way round works the same).
+
+**Collect all / Reach all / Collect all milestones are missing.** The module
+only builds them when the template has a button whose key or name says so (for
+example `collect_all` or `reach_all`). Add such a button to the template and run
+the module again. `Collect all milestones` also needs the template's progress
+bar to be shown.
+
+**The mission cards look generic.** The layout file has no missions geometry,
+so tabs, cards and bar use neutral defaults. Re-derive the layout from the
+template's tip image (the mockup module's path for templates that already exist
+on the Dashboard) and run this module again.
+
+**The mission progress bar's steps are squeezed.** The layout's box for the bar
+covered only the bar line. The plan report warns about it; re-derive the layout
+so the bar's box includes its markers and rewards, or resize `MissionBarScroll`
+in the built prefab.
 
 **A mission row shows `[]` in its text.** Mission text can carry a
 placeholder that your game substitutes, such as the goal score. The view

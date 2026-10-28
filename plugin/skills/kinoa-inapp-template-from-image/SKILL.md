@@ -202,6 +202,14 @@ nowhere on the canvas. They become `unsupported` entries without a `bbox`.
 For `milestone` count the markers into `feature.detected.milestone_count`; for
 `mission` count the rows into `mission_count` and the groups into `set_count`.
 
+For `mission` also bound, when visible, the tab strip and one tab, the task
+list, **one representative card** (the first fully visible one) and the
+combined bar — with its step markers and rewards, the whole progress area: the
+prefab skill renders it as a ladder of step cards — into `detected.parts`. Bound that same card's inner parts into
+`detected.row_parts`, and sample their colours as `#RRGGBB` into
+`detected.style`. Omit anything not visible; never invent. These are geometry
+for the prefab skill, never template elements.
+
 **Read the progression CTAs off the art too, when they are legible** — these
 feed the feature's CTA menus, and anything you cannot read is simply omitted
 (never guess a menu): a task's claim/buy control wording → mission
@@ -421,7 +429,9 @@ configuration**:
    transports came up empty — is the ONLY case that means the record has no tip
    image: then ask the developer for the mockup the template was built from. No
    image at all → stop and say so; a layout is never invented.
-3. Run the Phase 2 vision analysis on that image (same rules, same schema).
+3. Run the Phase 2 vision analysis on that image (same rules, same schema;
+   includes the missions geometry above — the prefab skill builds the missions
+   UI from it).
 4. Gate the pair:
 
    ```bash

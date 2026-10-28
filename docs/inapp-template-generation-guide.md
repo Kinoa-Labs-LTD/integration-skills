@@ -86,7 +86,12 @@ the base for any later revision) and its **layout** (`<key>.layout.json`) —
 where each confirmed element sits on the design, normalized coordinates plus
 the client-rendered zones. The layout file is the input for downstream UI
 generation tooling, such as generating the pop-up's prefab in your game
-project.
+project. For mission templates the vision pass also records the geometry and
+colours of the missions UI (tabs, task list, one representative card and its
+inner parts, the combined bar with its step markers and rewards) in the
+layout file, so the prefab module can build its mission tabs, cards and
+progress-bar ladder to look like the mockup. These are never
+template elements.
 
 Two deliberate boundaries:
 

@@ -13,7 +13,7 @@ own by the consumer's author.
 
 ```json
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "template_key": "journey_offer",
   "source_image": { "width": 434, "height": 964, "sha256": "…", "path": "…" },
   "coordinates": { "space": "normalized", "origin": "top-left" },
@@ -39,7 +39,21 @@ own by the consumer's author.
   "client_rendered": [
     { "role": "timer", "bbox": { "x": 0.28, "y": 0.185, "w": 0.34, "h": 0.04 } }
   ],
-  "feature": { "type": "mission", "area_bbox": { "x": 0.06, "y": 0.30, "w": 0.88, "h": 0.55 } }
+  "feature": {
+    "type": "mission",
+    "area_bbox": { "x": 0.06, "y": 0.30, "w": 0.88, "h": 0.55 },
+    "parts": {
+      "tabs": { "x": 0.06, "y": 0.26, "w": 0.88, "h": 0.05 },
+      "task_list": { "x": 0.06, "y": 0.32, "w": 0.88, "h": 0.40 },
+      "row": { "x": 0.06, "y": 0.32, "w": 0.88, "h": 0.12 },
+      "progress_bar": { "x": 0.06, "y": 0.78, "w": 0.88, "h": 0.05 }
+    },
+    "row_parts": {
+      "title": { "x": 0.14, "y": 0.33, "w": 0.45, "h": 0.04 },
+      "action_button": { "x": 0.72, "y": 0.34, "w": 0.18, "h": 0.06 }
+    },
+    "style": { "card": "#1E2A44", "progress_fill": "#3FD07A", "action": "#F5A623" }
+  }
 }
 ```
 
@@ -69,9 +83,31 @@ own by the consumer's author.
 - **`feature.area_bbox`** (optional; mission/milestone) marks the region the
   progression UI (task list / progress bar) occupies on the mockup. Absent when
   the vision pass could not bound it.
+- **Missions geometry** — `feature.parts`, `feature.row_parts` and
+  `feature.style` (mission only; each present only when non-empty after
+  validation). `parts` bounds the screen-level pieces (`tabs`, `tab`,
+  `task_list`, `row`, `progress_bar` — the combined bar together with its step
+  markers and rewards, which the prefab skill renders as a ladder of step
+  cards); `row_parts` the inner pieces of **one
+  representative card** — the same card as `parts.row` — (`placement_badge`,
+  `title`, `sub_mission`, `status`, `progress_track`, `progress_text`,
+  `rewards`, `action_button`, `dismiss_button`); `style` samples colours as
+  `#RRGGBB` / `#RRGGBBAA` (`card`, `card_text`, `accent`, `progress_track`,
+  `progress_fill`, `action`, `dismiss`, `tab_text`, `tab_selected`, `bar_track`,
+  `bar_fill`). All of it is **advisory**: an invalid bbox, a malformed colour or
+  an unknown key is dropped with a warning naming it, and `row_parts` without a
+  valid `parts.row` are dropped whole. None of it is template elements — a card
+  is a feature-layer instance, never a slot — and the colours are approximate,
+  sampled from the mockup. Ignored (with a warning) on non-mission templates.
 - **`source_image.sha256`** fingerprints the exact image the boxes were drawn
   against — compare it before rendering a layout over a different export of
   the same design.
+
+## Schema history
+
+- `1.0` — initial contract.
+- `1.1` — adds the optional mission `feature.parts` / `row_parts` / `style`,
+  additively. Consumers read the major only; a `1.0` artifact stays valid.
 
 ## Precision promise
 

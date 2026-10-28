@@ -544,6 +544,13 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("elements", out["shape"])
 
+    def test_schema_documents_mission_geometry(self):
+        code, out = self.run_cli(["schema"])
+        self.assertEqual(code, 0)
+        detected = out["shape"]["feature"]["detected"]
+        for key in ("parts", "row_parts", "style"):
+            self.assertIn(key, detected)
+
     def test_build_from_stdin_round_trips(self):
         import io
         from contextlib import redirect_stdout
@@ -1076,6 +1083,46 @@ class TestBuildLayout(unittest.TestCase):
         self.assertNotIn("area_bbox", layout["feature"])
         self.assertTrue(any("area_bbox dropped" in w for w in rep["warnings"]))
 
+    def _mission_ana(self, **detected):
+        ana = copy.deepcopy(self.ana)
+        ana["feature"] = {"type": "mission",
+                          "detected": dict({"area_bbox": {"x": 0.05, "y": 0.3, "w": 0.9, "h": 0.6}}, **detected)}
+        return ana
+
+    def test_mission_parts_row_parts_and_style_reach_the_artifact(self):
+        ana = self._mission_ana(parts={"tabs": {"x": 0.05, "y": 0.25, "w": 0.9, "h": 0.05},
+                                       "row": {"x": 0.05, "y": 0.32, "w": 0.9, "h": 0.12}},
+                                row_parts={"title": {"x": 0.12, "y": 0.33, "w": 0.5, "h": 0.04}},
+                                style={"card": "#1E2A44", "progress_fill": "#3FD07A"})
+        payload, report = build_mod.build_payload(ana)
+        layout, rep = build_mod.build_layout(payload, _geometry_for(payload, report), ana)
+        self.assertEqual(layout["schema_version"], "1.1")
+        self.assertEqual(set(layout["feature"]["parts"]), {"tabs", "row"})
+        self.assertEqual(layout["feature"]["row_parts"]["title"], {"x": 0.12, "y": 0.33, "w": 0.5, "h": 0.04})
+        self.assertEqual(layout["feature"]["style"], {"card": "#1E2A44", "progress_fill": "#3FD07A"})
+        self.assertEqual(rep["errors"], [])
+
+    def test_bad_mission_geometry_is_dropped_with_named_warnings(self):
+        ana = self._mission_ana(parts={"tabs": {"x": 2, "y": 0, "w": 1, "h": 1},
+                                       "shelf": {"x": 0, "y": 0, "w": 0.1, "h": 0.1}},
+                                row_parts={"title": {"x": 0.1, "y": 0.1, "w": 0.1, "h": 0.1}},
+                                style={"card": "navy", "glow": "#FFFFFF"})
+        payload, report = build_mod.build_payload(ana)
+        layout, rep = build_mod.build_layout(payload, _geometry_for(payload, report), ana)
+        for gone in ("parts", "row_parts", "style"):
+            self.assertNotIn(gone, layout["feature"])
+        for name in ("parts.tabs", "parts.shelf", "row_parts", "style.card", "style.glow"):
+            self.assertTrue(any(name in w for w in rep["warnings"]), name)
+
+    def test_mission_geometry_ignored_on_other_feature_types(self):
+        ana = copy.deepcopy(self.ana)
+        ana["feature"] = {"type": "milestone",
+                          "detected": {"parts": {"row": {"x": 0.1, "y": 0.1, "w": 0.5, "h": 0.1}}}}
+        payload, report = build_mod.build_payload(ana)
+        layout, rep = build_mod.build_layout(payload, _geometry_for(payload, report), ana)
+        self.assertNotIn("parts", layout["feature"])
+        self.assertTrue(any("mission" in w and "parts" in w for w in rep["warnings"]))
+
     def test_client_rendered_falls_back_to_the_analysis(self):
         geometry = copy.deepcopy(self.geometry)
         del geometry["client_rendered"]
@@ -1110,6 +1157,16 @@ class TestValidateLayout(unittest.TestCase):
         self.payload, report = build_mod.build_payload(ana)
         self.layout, _ = build_mod.build_layout(
             self.payload, _geometry_for(self.payload, report), ana)
+
+    def test_validate_accepts_layout_1_0_and_1_1(self):
+        for version in ("1.0", "1.1"):
+            layout = copy.deepcopy(self.layout)
+            layout["schema_version"] = version
+            res = build_mod.validate_layout(layout)
+            self.assertFalse(any("schema_version" in w for w in res["warnings"]), version)
+        layout = copy.deepcopy(self.layout)
+        layout["schema_version"] = "2.0"
+        self.assertTrue(any("schema_version" in w for w in build_mod.validate_layout(layout)["warnings"]))
 
     def test_built_layout_validates_against_its_payload(self):
         res = build_mod.validate_layout(self.layout, self.payload)

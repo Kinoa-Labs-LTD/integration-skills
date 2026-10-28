@@ -143,7 +143,10 @@ geometry deliverable is **`<template_key>.layout.json`**, the layout artifact
 Every element there carries the template's own key, bucket and index, a
 normalized top-left bbox (or `bbox: null` + `unplaced`), plus the
 client-rendered zones, the source image size and, for mission/milestone
-templates, `feature.area_bbox`. Ask which source to use (one question,
+templates, `feature.area_bbox`. For mission templates, an artifact of schema
+`1.1` also carries the missions UI geometry and colours — `feature.parts`,
+`feature.row_parts` and `feature.style` — that the prefab's tabs, cards and bar
+are built from. Ask which source to use (one question,
 recommended first):
 
 - **A — An existing `<template_key>.layout.json` (recommended).** The developer
@@ -178,7 +181,8 @@ recommended first):
     ```
 
     Add `--analysis <analysis.json>` if the developer kept it; it fills the
-    source image path and the feature area.
+    source image path, the feature area and, for a mission template, the
+    missions geometry and colours.
   - **Only `build_result.json` exists:** plan from it with `--build` (Phase 4,
     option C). Its geometry is the raw, unconfirmed vision pass — say so in the
     hand-off.
@@ -195,6 +199,16 @@ python -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read(
 
 A different hash means the boxes were drawn against another export of the
 design — say so and ask whether to continue.
+
+**Missions geometry check (mission templates).** Read the chosen artifact for
+`feature.parts`. When it has none (a `1.0` artifact, or a vision pass that could
+not bound the mission UI), the missions UI — tabs, task list, cards and the
+progress-bar ladder —
+is built with **neutral default proportions and colours** instead of the
+mockup's look. Say so, and offer path B (re-derive the artifact from the
+template's tip image) before planning; keep the artifact only when the developer
+declines or the template has no tip image. Path B's `remap` gate and
+confirmation page apply as above.
 
 ## Phase 4 — Plan
 
@@ -219,9 +233,15 @@ holds it to that:
   duplicate entry, and every element whose `index` or the feature type
   disagrees with the record — usually an artifact that predates a template
   edit. Artifact entries the template does not have go to `unmapped_layout`.
-- `feature.area_bbox` positions the mission task list, or the milestone step
-  list (the `bar_image` box when no area was drawn), instead of default
-  anchors — only when the artifact's feature type matches the template's.
+- `feature.area_bbox` positions the mission task list (when `feature.parts`
+  has no `task_list`), or the milestone step list (the `bar_image` box when no
+  area was drawn), instead of default anchors — only when the artifact's
+  feature type matches the template's. For a mission template, `feature.parts` /
+  `row_parts` / `style` position and colour the tabs, the scrolling task list,
+  the one card template and the progress-bar ladder (`parts.progress_bar`
+  places its scroll; `style.bar_track` tints the ladder's backdrop and
+  `style.bar_fill` each step's progress fill); a part the artifact has no box
+  for takes a neutral default.
 
 Option C without an envelope — from `build_result.json`:
 
@@ -244,7 +264,19 @@ Read `report` and show it: `layout_source` (which kind positioned the plan),
 defaults), `unmapped_layout`, `client_zones` that will be built,
 `needs_developer`, `milestone` (milestone templates, see below), and every
 entry of `warnings` (including slot renames made to avoid name clashes and
-artifact/template disagreements).
+artifact/template disagreements). For a mission template also read out:
+
+- `report.mission_actions` — which of `reach_all`, `collect_all` and
+  `collect_all_milestones` were found among the template's buttons (the key of
+  the wired button, or `null`). Those buttons drive the missions feature and
+  bypass `KinoaUiService`; a template that declares none gets none, and a
+  look-alike that stayed an ordinary button is explained in `warnings`.
+- `report.mission_geometry` — `source` (`layout_artifact` or `defaults`) and
+  `defaulted`, the nodes that got a neutral default because the artifact had no
+  box for them. Offer path B again when many are defaulted. A warning that the
+  progress bar area is too short for its ladder steps means `parts.progress_bar`
+  bounded only the bar line: offer path B (bound the bar with its markers and
+  rewards) or tell the developer to resize `MissionBarScroll` in the prefab.
 
 The planner removes the overlaps between top-level texts, buttons and zones
 that it can remove safely, and reports the rest. The panel spans every
@@ -336,26 +368,30 @@ python "${CLAUDE_SKILL_DIR}/inapp_prefab_plan.py" generate \
 ```
 
 Every run writes the view, the plan copy and `Editor/KinoaInAppPrefabBuilder.cs`
-(tool-owned — always refreshed). `Shared/KinoaInAppHooks.cs`,
-`Shared/KinoaInAppItemView.cs`, `Shared/KinoaInAppFeatureHooks.cs` and
-`Shared/KinoaInAppMilestoneStepView.cs` are **user-owned**: written only when
-absent, and kept untouched afterwards (`--force-shared` rewrites them). Surface
-every entry of the output's `warnings` — notably a hook option
-(`--image-loader`, `--price-resolver`, `--resource-icon-resolver`,
+(tool-owned — always refreshed). Six shared files are **user-owned**:
+`Shared/KinoaInAppHooks.cs`, `Shared/KinoaInAppItemView.cs`,
+`Shared/KinoaInAppFeatureHooks.cs`, `Shared/KinoaInAppMilestoneStepView.cs`,
+`Shared/KinoaInAppMissionRowView.cs` and `Shared/KinoaInAppTabView.cs`. They are
+written only when absent, and kept untouched afterwards (`--force-shared`
+rewrites them). Surface every entry of the output's `warnings` — notably a hook
+option (`--image-loader`, `--price-resolver`, `--resource-icon-resolver`,
 `--feature-action-runner`) that was **not applied** because the existing hooks
 file (`KinoaInAppHooks.cs` / `KinoaInAppFeatureHooks.cs`) was kept: tell the
 developer to assign it in that file, or confirm a `--force-shared` re-run.
 
 Pass `--feature-action-runner Ns.Class.Method` when the game already has a
 method with the `Func<InAppMessage, InAppCustomButton, Task<bool>>` shape
-(Phase 4, milestone hooks); otherwise leave the TODO. `KinoaInAppFeatureHooks.cs`
-and `KinoaInAppMilestoneStepView.cs` are written for **every** plan, because
-the Editor builder needs the step view type in any project; standard and mission
-runs simply never use them. A re-run on a project generated by an earlier
-release only **adds** those two files: the existing `KinoaInAppHooks.cs` and
+(Phase 4, milestone hooks — a mission template's progress-bar steps use the
+same hook); otherwise leave the TODO. All six shared files are emitted for
+**every** plan (written only when absent), because the always-refreshed Editor builder references every
+shared view type in any project; a run simply never uses the ones its feature
+does not need. A re-run on a project generated by an earlier release only
+**adds** the new files: the existing `KinoaInAppHooks.cs` and
 `KinoaInAppItemView.cs` are never touched. A milestone plan must come from this
 version: `generate` refuses one without the `milestone` block / `MilestoneScroll`
-node with `milestone_plan_outdated` (nothing written) — re-run `plan`.
+node with `milestone_plan_outdated` (nothing written) — re-run `plan`. The same
+holds for a mission plan from before the tabs / cards / progress-bar ladder
+tree (`mission_plan_outdated`).
 
 `view_exists` ⇒ confirm with the developer, then re-run with `--overwrite`.
 `milestone_plan_outdated` ⇒ a milestone plan written before the scroll ladder: re-run `plan` for the template (there is no legacy milestone view).
@@ -380,9 +416,14 @@ route through a popup manager.
 ## Phase 6 — Build in Unity
 
 1. **Refresh + compile** via the server's refresh tool (table in
-   [`references/unity-mcp-capabilities.md`](references/unity-mcp-capabilities.md)).
+   [`references/unity-mcp-capabilities.md`](references/unity-mcp-capabilities.md);
+   for mcp-unity that is `execute_menu_item` `Assets/Refresh` and then
+   `recompile_scripts` — `recompile_scripts` alone does not import new files).
    Wait for the compile to finish, then read the console with the
-   server's console tool and look for `error CS`. Errors in generated files ⇒
+   server's console tool and look for `error CS`. A `CS0246` on a type
+   declared in a file `generate` just wrote means the new assets were not
+   imported yet: refresh and recompile again rather than re-generating.
+   Other errors in generated files ⇒
    fix the generator input (wrong facade namespace, TMP missing → legacy),
    re-run `generate --overwrite`, repeat. Never patch generated C# by hand.
    An error in a kept `Shared/*.cs` file is not fixed by `--overwrite`; after
@@ -412,7 +453,9 @@ allowlist arm, say plainly that clicks on the view are ignored until they are
 applied) · next steps (assign the hooks in the game's bootstrap; for a
 **milestone** template whose `milestonesActionTypes` or `mainActionTypes`, or
 whose collect-all slot's own `clickActionType`, contain anything outside
-`collect_resource`, `promise_rewards` and `close`, add
+`collect_resource`, `promise_rewards` and `close` — or a **mission** template
+with a shown progress bar whose `progressBar.completionBarCta`, or whose
+collect-all-milestones slot's own `clickActionType`, does — add
 the TODO *assign `KinoaInAppFeatureHooks.RunButtonAction`* — until it is
 assigned, those buttons collect nothing (list that TODO only for such
 templates; for every other template it can be ignored); **TODO:
@@ -434,13 +477,43 @@ in Unity and what was not. State these facts every time:
 - **The builder works in the open scene.** `BuildAll` builds the prefab through
   the open scene, so Unity may prompt to save the current scene (or leave it
   dirty). Tell the developer before they run it, or when you ran it.
+- **Mission feature-action buttons bypass the facade.** A button wired to
+  reach all / collect all / collect all milestones (`report.mission_actions`)
+  sends `in_app_click`, raises `ButtonClicked`, and runs the mission call
+  itself — `KinoaUiService` never sees the click, so its `clickActionType`
+  routing does not apply to them.
+- **Dismiss deletes progress on the server.** The × on a `Reached` or
+  `Collected` mission card calls `DeleteMissionsProgress`, which removes that
+  row's progress server-side; it is not a local hide. Tell the developer.
+- **Mission TODOs.** Per-row CTAs are not template buttons, so the facade cannot
+  route them. List the open `TODO(kinoa-prefab)` items by name: granting a
+  collected row's `CompletionCta` / `ProcessedResources`; collect all's
+  grant, for each collected row; routing a Go click's `ProgressionCta` (the
+  view raises `MissionCtaClicked(view, setNumber, mission, cta)` and then
+  always logs a warning — a subscriber does not suppress it; it stays until
+  the developer resolves the TODO in the generated view): `deep_link` /
+  `web_link` go to the game's router, `show_ad` calls
+  `Kinoa.Messaging.ReachMissionsProgress(Message, setNumber, new List<int> { mission.RowNumber })`
+  after the ad completes and then `Bind(response.Data)`, `close` calls
+  `Close()`; and applying a claimed bar step's `step.Button.Resources` (its
+  `ClickConfig` is already resolved by the view: the progress bar is the
+  milestone ladder, so a paid / ad / link step runs `RunButtonAction` before it
+  is collected, exactly like a milestone step). Both collect grants apply only to
+  rows that the returned `response.Data` shows as no longer `Reached`
+  (`Collected` or removed), as the SDK sample does — never to every requested
+  row.
+- **Missions look.** Say which parts of the missions UI came from the layout
+  artifact and which are neutral defaults (`report.mission_geometry`).
 - **`MissionText` may be a template.** A mission-row text can carry a
   placeholder (the SDK demo replaces `"[]"` with the goal score); the game side
   must substitute it — the generated view shows the Dashboard text as-is.
 - **Milestone buttons ignore taps while one is running.** While a collect
   request or the game's `RunButtonAction` is in flight, every milestone button
   ignores taps (a second purchase must not start), including a feature button
-  whose action is `close`. The template's own close button is unaffected.
+  whose action is `close`. The template's own close button is unaffected. On a
+  mission template the same holds for every mission control (tabs, cards, bar
+  steps, feature-action buttons) while a mission request or a bar step's
+  `RunButtonAction` is in flight.
 - **Editor asmdef.** If the output folder sits under a game assembly
   definition, the `Editor/` subfolder needs its own Editor-only asmdef, or its
   `UnityEditor` references break player builds.

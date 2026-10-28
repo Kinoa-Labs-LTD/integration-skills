@@ -1047,7 +1047,24 @@ def match_templates(analysis, templates):
 # them without ever turning them into slots. Boxes express layout intent
 # (anchoring, proportions, relative placement), not pixel-perfect UI.
 
-LAYOUT_SCHEMA_VERSION = "1.0"
+LAYOUT_SCHEMA_VERSION = "1.1"
+# Schema majors this validator accepts without a warning: 1.1 only adds the
+# optional mission feature.parts / row_parts / style, so 1.0 artifacts stay valid.
+LAYOUT_ACCEPTED_VERSIONS = ("1.0", "1.1")
+
+# Mission geometry (all advisory, never template elements — like area_bbox).
+# `parts` bounds the screen-level pieces, `row_parts` the inner pieces of ONE
+# representative card (parts.row), `style` samples that card's colours.
+MISSION_PARTS = ("tabs", "tab", "task_list", "row", "progress_bar")
+MISSION_ROW_PARTS = (
+    "placement_badge", "title", "sub_mission", "status", "progress_track",
+    "progress_text", "rewards", "action_button", "dismiss_button",
+)
+MISSION_STYLE_KEYS = (
+    "card", "card_text", "accent", "progress_track", "progress_fill", "action",
+    "dismiss", "tab_text", "tab_selected", "bar_track", "bar_fill",
+)
+_HEX_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$")
 
 
 def _bbox_problems(bbox, where):
@@ -1073,13 +1090,73 @@ def _layout_bbox(bbox):
     return {field: float(bbox[field]) for field in ("x", "y", "w", "h")}
 
 
+def _bbox_block(block, allowed, where, warnings):
+    """Validated {name: bbox} copy of an analysis block; anything invalid is
+    dropped with a warning naming it (advisory, like feature.area_bbox)."""
+    out = {}
+    if not isinstance(block, dict):
+        warnings.append(f"{where} dropped — must be an object of name -> bbox")
+        return out
+    for name, bbox in block.items():
+        if name not in allowed:
+            warnings.append(f"{where}.{name} dropped — unknown key (allowed: {', '.join(allowed)})")
+            continue
+        errs, warns = _bbox_problems(bbox, f"{where}.{name}")
+        if errs:
+            warnings.extend(errs)
+            warnings.append(f"{where}.{name} dropped — invalid bbox")
+            continue
+        warnings.extend(warns)
+        out[name] = _layout_bbox(bbox)
+    return out
+
+
+def _mission_geometry(detected, warnings):
+    """The mission-only `parts` / `row_parts` / `style` feature blocks, each
+    present only when non-empty after validation."""
+    out = {}
+    parts = detected.get("parts")
+    if parts is not None:
+        clean = _bbox_block(parts, MISSION_PARTS, "feature.parts", warnings)
+        if clean:
+            out["parts"] = clean
+    row_parts = detected.get("row_parts")
+    if row_parts is not None:
+        if "row" not in out.get("parts", {}):
+            warnings.append("feature.row_parts dropped — no valid parts.row to anchor the card's inner parts")
+        else:
+            clean = _bbox_block(row_parts, MISSION_ROW_PARTS, "feature.row_parts", warnings)
+            if clean:
+                out["row_parts"] = clean
+    style = detected.get("style")
+    if style is not None:
+        if not isinstance(style, dict):
+            warnings.append("feature.style dropped — must be an object of name -> #RRGGBB")
+        else:
+            clean = {}
+            for name, color in style.items():
+                if name not in MISSION_STYLE_KEYS:
+                    warnings.append(
+                        f"feature.style.{name} dropped — unknown key (allowed: {', '.join(MISSION_STYLE_KEYS)})"
+                    )
+                elif not (isinstance(color, str) and _HEX_COLOR.match(color)):
+                    warnings.append(f"feature.style.{name} dropped — {color!r} is not #RRGGBB or #RRGGBBAA")
+                else:
+                    clean[name] = color
+            if clean:
+                out["style"] = clean
+    return out
+
+
 def build_layout(payload, geometry, analysis=None):
     """Join a (confirmed) payload with its geometry into the layout artifact.
 
     `geometry` is the page hand-back's `geometry` block: `source_image`
     (fingerprint), `elements` ([{key, bucket, bbox|null, role, ...}]) and
     `client_rendered`. `analysis` is optional and only fills what geometry
-    cannot know: the source image path/size and `feature.detected.area_bbox`.
+    cannot know: the source image path/size, `feature.detected.area_bbox` and,
+    for mission templates, the `feature.detected.parts` / `row_parts` / `style`
+    geometry (artifact 1.1).
     """
     errors, warnings, unplaced = [], [], []
     geometry = geometry or {}
@@ -1174,6 +1251,17 @@ def build_layout(payload, geometry, analysis=None):
             warnings.extend(warns)
             feature["area_bbox"] = _layout_bbox(area)
 
+    detected = (analysis.get("feature") or {}).get("detected") or {}
+    if feature["type"] == "mission":
+        feature.update(_mission_geometry(detected, warnings))
+    else:
+        present = [k for k in ("parts", "row_parts", "style") if detected.get(k)]
+        if present:
+            warnings.append(
+                "feature.detected." + "/".join(present)
+                + " ignored — mission geometry applies only to mission templates"
+            )
+
     layout = {
         "schema_version": LAYOUT_SCHEMA_VERSION,
         "template_key": payload.get("key"),
@@ -1191,9 +1279,9 @@ def validate_layout(layout, payload=None):
     errors, warnings = [], []
     if not isinstance(layout, dict):
         return {"ok": False, "errors": ["layout must be a JSON object"], "warnings": []}
-    if layout.get("schema_version") != LAYOUT_SCHEMA_VERSION:
+    if layout.get("schema_version") not in LAYOUT_ACCEPTED_VERSIONS:
         warnings.append(
-            f"layout schema_version {layout.get('schema_version')!r} != {LAYOUT_SCHEMA_VERSION!r}"
+            f"layout schema_version {layout.get('schema_version')!r} not in {list(LAYOUT_ACCEPTED_VERSIONS)!r}"
         )
     coords = layout.get("coordinates") or {}
     if coords.get("space") != "normalized" or coords.get("origin") != "top-left":
@@ -1456,6 +1544,9 @@ def cmd_schema(args):
                         "main_actions": "milestone: actions readable on the bar's main CTA during progression ('custom' is not accepted in milestone menus)",
                         "milestone_actions": "milestone: actions readable on marker/claim buttons ('custom' is not accepted in milestone menus)",
                         "area_bbox": "optional, mission/milestone: bbox of the region the progression UI (task list / progress bar) occupies",
+                        "parts": "optional, mission only: {tabs, tab, task_list, row, progress_bar} -> bbox; row = ONE representative card (the first fully visible one). Geometry for the prefab skill, never template elements",
+                        "row_parts": "optional, mission only, needs parts.row: {placement_badge, title, sub_mission, status, progress_track, progress_text, rewards, action_button, dismiss_button} -> bbox of that same card's inner parts",
+                        "style": "optional, mission only: {card, card_text, accent, progress_track, progress_fill, action, dismiss, tab_text, tab_selected, bar_track, bar_fill} -> sampled colour '#RRGGBB' or '#RRGGBBAA'",
                     },
                 },
                 "elements": [
@@ -1492,6 +1583,8 @@ def cmd_schema(args):
                 "detected.*_count rather than fabricate a number — the builder defaults sanely.",
                 "detected.area_bbox never affects the payload — it feeds the layout artifact "
                 "(`layout` subcommand), marking where the progression UI sits on the mockup.",
+                "detected.parts / row_parts / style (mission only) are advisory the same way: an "
+                "invalid bbox, colour or unknown key is dropped with a warning, never fails the build.",
             ],
         }
     )
@@ -1660,7 +1753,7 @@ def main(argv=None):
     src = p_layout.add_mutually_exclusive_group(required=True)
     src.add_argument("--envelope", help="Confirmed page hand-back ({payload, geometry, ...}) — the normal input.")
     src.add_argument("--build", help="Pre-confirmation build result — geometry is the raw vision pass.")
-    p_layout.add_argument("--analysis", help="Optional analysis JSON: fills source-image path/size and feature.detected.area_bbox.")
+    p_layout.add_argument("--analysis", help="Optional analysis JSON: fills source-image path/size, feature.detected.area_bbox and, for mission templates, the feature.parts / row_parts / style geometry.")
     p_layout.add_argument("--out", help="Write the bare layout artifact here (<template_key>.layout.json).")
     p_layout.set_defaults(func=cmd_layout)
 

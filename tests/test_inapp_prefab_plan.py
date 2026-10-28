@@ -9,6 +9,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILL = os.path.join(REPO, "plugin", "skills", "kinoa-inapp-template-to-prefab")
 HELPER = os.path.join(SKILL, "inapp_prefab_plan.py")
 FIX = os.path.join(SKILL, "evals", "fixtures", "one-cta")
+FIX_MISSIONS = os.path.join(SKILL, "evals", "fixtures", "missions")
 
 _spec = importlib.util.spec_from_file_location("inapp_prefab_plan", HELPER)
 mod = importlib.util.module_from_spec(_spec)
@@ -22,6 +23,11 @@ def _load(name):
 
 TEMPLATE = _load("template_one_cta.json")
 BUILD = _load("build_result_one_cta.json")
+with open(os.path.join(FIX_MISSIONS, "template_missions.json"), encoding="utf-8") as _fh:
+    MISSIONS = json.load(_fh)
+with open(os.path.join(FIX_MISSIONS, "daily_missions.layout.json"), encoding="utf-8") as _fh:
+    ART_RAW = json.load(_fh)
+ART = mod.layout_from_artifact(ART_RAW)
 STYLE = {"text_system": "legacy", "font_guid": "e7a63bee4e93df34ca0dd3548b336621", "tmp_font_guid": None,
          "root_size": [900.0, 1400.0], "close_sprite_guid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
          "base_classes": ["OfferPopup"], "prefabs": [], "warnings": []}
@@ -379,12 +385,48 @@ class TestFeatures(unittest.TestCase):
 
     def test_mission_nodes_with_and_without_bar(self):
         plan = mod.plan_prefab(_mission_template(), None, STYLE, {})["plan"]
-        self.assertEqual(_node(plan, "MissionList")["field_type"], "RectTransform")
+        # the task list is the shared scroll chain, vertical: rows live under MissionViewport/MissionRows
+        self.assertEqual(_node(plan, "MissionList")["field_type"], "ScrollRect")
+        self.assertEqual(_node(plan, "MissionList")["components"], ["ScrollRect"])
+        self.assertEqual(_node(plan, "MissionRows")["components"], ["VerticalLayoutGroup", "ContentSizeFitter"])
         self.assertEqual(_node(plan, "MissionRow")["field"], "missionRowTemplate")
-        self.assertEqual(_node(plan, "MissionBarFill")["field"], "missionBarFill")
+        self.assertEqual(_node(plan, "MissionRow")["field_type"], "KinoaInAppMissionRowView")
+        self.assertEqual(_node(plan, "MissionBarStep")["field"], "missionBarStepTemplate")
         self.assertIn("MissionList", plan["report"]["estimated_positions"])
+        names = [n["name"] for n in plan["nodes"]]
+        for name in ("MissionBar", "MissionBarFill", "MissionBarMarkers", "MissionBarMarker"):
+            self.assertNotIn(name, names)   # the bar-and-markers shape is gone: the bar is a milestone ladder
         plan2 = mod.plan_prefab(_mission_template("dont_show_at_all"), None, STYLE, {})["plan"]
-        self.assertNotIn("MissionBar", [n["name"] for n in plan2["nodes"]])
+        names2 = [n["name"] for n in plan2["nodes"]]
+        for name in ("MissionBarScroll", "MissionBarViewport", "MissionBarContent", "MissionBarStep"):
+            self.assertNotIn(name, names2)
+        self.assertIn("MissionTabs", names2)
+
+    def test_part_nodes_only_live_under_tab_or_row_templates(self):
+        # The builder fails a build on a tab_part / row_part with no template above it; slot nodes with a
+        # layout role must never be such parts.
+        art = mod.layout_from_artifact(ARTIFACT)
+        standard = mod.plan_prefab(TEMPLATE, mod.layout_from_build(BUILD), STYLE, {})["plan"]
+        standard_art = mod.plan_prefab(TEMPLATE, art, STYLE, {})["plan"]
+        milestone_template = _milestone_template()
+        milestone_art = copy.deepcopy(ARTIFACT)
+        milestone_art["template_key"] = milestone_template["key"]
+        milestone = mod.plan_prefab(milestone_template, mod.layout_from_artifact(milestone_art), STYLE, {})["plan"]
+        self.assertTrue(any(n.get("role") for n in milestone["nodes"]), "fixture slots should carry layout roles")
+        self.assertTrue(any(n.get("role") for n in standard_art["nodes"]), "fixture slots should carry layout roles")
+        for plan in (standard, standard_art, milestone):
+            self.assertEqual([n["name"] for n in plan["nodes"] if n["binding"] in ("tab_part", "row_part")], [])
+        mission = mod.plan_prefab(MISSIONS, ART, STYLE, {})["plan"]
+        by_name = {n["name"]: n for n in mission["nodes"]}
+        parts = [n for n in mission["nodes"] if n["binding"] in ("tab_part", "row_part")]
+        self.assertTrue(parts)
+        for node in parts:
+            parent, found = node["parent"], None
+            while parent and not found:
+                anc = by_name[parent]
+                found = anc if anc["binding"] in ("tab_template", "mission_row_template") else None
+                parent = anc["parent"]
+            self.assertIsNotNone(found, "%s has no tab/row template ancestor" % node["name"])
 
 
 class TestLayoutFile(unittest.TestCase):
@@ -515,7 +557,7 @@ class TestPlacedFlagConsistency(unittest.TestCase):
         plan = mod.plan_prefab(_mission_template(), None, STYLE, {})["plan"]
         mission_list = _node(plan, "MissionList")
         self.assertFalse(mission_list["placed"])
-        mission_bar = _node(plan, "MissionBar")
+        mission_bar = _node(plan, "MissionBarScroll")
         self.assertFalse(mission_bar["placed"])
 
     def test_milestone_nodes_without_layout_have_placed_false(self):
@@ -1422,3 +1464,328 @@ class TestMilestoneScrollNodes(unittest.TestCase):
         for fld in ("milestoneScroll", "milestoneContent", "milestoneStepTemplate"):
             self.assertIn(fld, mod.RESERVED_FIELDS)
         self.assertIn("MilestoneScroll", mod._CONTAINERS)
+
+
+class TestMissionActions(unittest.TestCase):
+    def test_mission_action_detection(self):
+        f = mod.mission_action
+        self.assertEqual(f({"key": "collect_all_button", "name": "x"}), "collect_all")
+        self.assertEqual(f({"key": "btn_1", "name": "Claim All"}), "collect_all")
+        self.assertEqual(f({"key": "reachAll", "name": ""}), "reach_all")
+        self.assertEqual(f({"key": "collect_all_milestones", "name": ""}), "collect_all_milestones")
+        self.assertEqual(f({"key": "btn_2", "name": "Claim all bar rewards"}), "collect_all_milestones")
+        for key, name in (("collect_button", "Collect"), ("collect_resources", "Collect resources"),
+                          ("reach_level", "Reach level"), ("cta_button", "CTA")):
+            self.assertIsNone(f({"key": key, "name": name}), key)
+
+    def test_feature_actions_marked_and_reported(self):
+        plan = mod.plan_prefab(MISSIONS, None, STYLE, {})["plan"]
+        self.assertEqual(_node(plan, "CollectAllButton")["feature_action"], "collect_all")
+        self.assertEqual(_node(plan, "ReachAllButton")["feature_action"], "reach_all")
+        self.assertEqual(_node(plan, "CollectAllMilestonesButton")["feature_action"], "collect_all_milestones")
+        self.assertIsNone(_node(plan, "CloseButton")["feature_action"])
+        self.assertEqual(plan["report"]["mission_actions"], {"reach_all": "reach_all_button", "collect_all": "collect_all_button",
+                                                             "collect_all_milestones": "collect_all_milestones_button"})
+
+    def test_feature_actions_only_on_mission_templates(self):
+        t = copy.deepcopy(MISSIONS); t["featureType"] = "standard"; t["features"] = {}
+        plan = mod.plan_prefab(t, None, STYLE, {})["plan"]
+        self.assertIsNone(_node(plan, "CollectAllButton")["feature_action"])
+        self.assertNotIn("mission_actions", plan["report"])
+
+    def test_duplicate_feature_action_keeps_lowest_index(self):
+        t = copy.deepcopy(MISSIONS)
+        t["buttons"].append({"key": "claim_all", "name": "Claim all", "index": 12, "canBeHidden": True,
+                             "customFields": [], "clickActionType": ["collect_resource"]})
+        plan = mod.plan_prefab(t, None, STYLE, {})["plan"]
+        self.assertEqual(plan["report"]["mission_actions"]["collect_all"], "collect_all_button")
+        self.assertIsNone(_node(plan, "ClaimAllButton")["feature_action"])
+        self.assertTrue(any("claim_all" in w and "collect_all" in w for w in plan["report"]["warnings"]))
+
+    def test_duplicate_feature_action_sorts_by_index_not_list_order(self):
+        t = copy.deepcopy(MISSIONS)
+        for slot in t["buttons"]:
+            if slot["key"] != "close_button":
+                slot["index"] += 1                     # make room for an index below collect_all_button's
+        t["buttons"].append({"key": "claim_all", "name": "Claim all", "index": 8, "canBeHidden": True,
+                             "customFields": [], "clickActionType": ["collect_resource"]})   # last in the list, lowest index
+        plan = mod.plan_prefab(t, None, STYLE, {})["plan"]
+        self.assertEqual(plan["report"]["mission_actions"]["collect_all"], "claim_all")
+        self.assertEqual(_node(plan, "ClaimAllButton")["feature_action"], "collect_all")
+        self.assertIsNone(_node(plan, "CollectAllButton")["feature_action"])
+        self.assertTrue(any("collect_all_button" in w and "claim_all" in w for w in plan["report"]["warnings"]))
+
+    def test_feature_action_buttons_do_not_request_zones(self):
+        self.assertNotIn("resource_area", mod.plan_prefab(MISSIONS, None, STYLE, {})["plan"]["report"]["client_zones"])
+
+    def test_collect_all_milestones_needs_a_bar(self):
+        t = copy.deepcopy(MISSIONS); t["features"]["mission"]["progressBar"] = {"display": "dont_show_at_all"}
+        plan = mod.plan_prefab(t, None, STYLE, {})["plan"]
+        self.assertIsNone(plan["report"]["mission_actions"]["collect_all_milestones"])
+        self.assertTrue(any("collect_all_milestones_button" in w and "progress bar" in w for w in plan["report"]["warnings"]))
+
+
+class TestMissionGeometry(unittest.TestCase):
+    def test_mission_node_tree_shape(self):
+        plan = mod.plan_prefab(MISSIONS, None, STYLE, {})["plan"]
+        for name, parent, binding in (("MissionTabs", "Panel", "zone"), ("MissionTab", "MissionTabs", "tab_template"),
+                                      ("MissionList", "Panel", "scroll"), ("MissionViewport", "MissionList", "viewport"),
+                                      ("MissionRows", "MissionViewport", "scroll_content"),
+                                      ("MissionRow", "MissionRows", "mission_row_template"), ("MissionRowDismiss", "MissionRow", "row_part"),
+                                      ("MissionRowReward", "MissionRowRewards", "item_template"),
+                                      ("MissionBarScroll", "Panel", "scroll"), ("MissionBarViewport", "MissionBarScroll", "viewport"),
+                                      ("MissionBarContent", "MissionBarViewport", "scroll_content"),
+                                      ("MissionBarStep", "MissionBarContent", "milestone_step")):
+            n = _node(plan, name)
+            self.assertEqual((n["parent"], n["binding"]), (parent, binding), name)
+        self.assertEqual(_node(plan, "MissionRowTitle")["role"], "titleText")
+        self.assertIsNone(_node(plan, "MissionRowTitle")["field"])
+        names = [n["name"] for n in plan["nodes"]]
+        self.assertTrue(all(names.index(n["parent"]) < names.index(n["name"]) for n in plan["nodes"] if n["parent"]))
+        self.assertTrue({"MissionTabs", "MissionList", "MissionBarScroll"} <= set(mod._CONTAINERS))
+        self.assertEqual(plan["report"]["mission_geometry"]["source"], "defaults")
+
+    def test_mission_geometry_from_artifact(self):
+        plan = mod.plan_prefab(MISSIONS, ART, STYLE, {})["plan"]
+        feat = ART_RAW["feature"]
+        close = lambda a, b: all(abs(x - y) < 1e-3 for x, y in zip(a, b))   # report.panel_bbox is rounded to 4 places
+        self.assertTrue(close(_node(plan, "MissionList")["anchor_min"], mod.anchors_from_bbox(feat["parts"]["task_list"], plan["report"]["panel_bbox"])[0]))
+        self.assertEqual(_node(plan, "MissionRowTitle")["anchor_min"], mod.anchors_from_bbox(feat["row_parts"]["title"], feat["parts"]["row"])[0])
+        fw, fh = plan["ui"]["frame_size"]
+        self.assertEqual(_node(plan, "MissionRow")["size"], [round(feat["parts"]["row"]["w"] * fw, 1), round(feat["parts"]["row"]["h"] * fh, 1)])
+        self.assertEqual(_node(plan, "MissionRow")["color"], feat["style"]["card"])
+        self.assertEqual(_node(plan, "MissionBarStep")["color"], feat["style"]["bar_fill"])      # each step's progress fill
+        self.assertEqual(_node(plan, "MissionBarViewport")["color"], feat["style"]["bar_track"])  # the ladder's backdrop
+        self.assertEqual(plan["report"]["mission_geometry"]["defaulted"], [])
+
+    def test_mission_geometry_falls_back_per_part(self):
+        art = copy.deepcopy(ART_RAW); del art["feature"]["row_parts"]["status"]; del art["feature"]["parts"]["tabs"]
+        plan = mod.plan_prefab(MISSIONS, mod.layout_from_artifact(art), STYLE, {})["plan"]
+        self.assertEqual(sorted(plan["report"]["mission_geometry"]["defaulted"]), ["MissionRowStatus", "MissionTabs"])
+        self.assertEqual(_node(plan, "MissionRowStatus")["anchor_min"], [0.77, 0.66])
+
+    def test_invalid_part_and_colour_degrade_with_warning(self):
+        art = copy.deepcopy(ART_RAW); art["feature"]["parts"]["row"] = {"x": 2, "y": 0, "w": 1, "h": 1}; art["feature"]["style"]["card"] = "blue"
+        layout = mod.layout_from_artifact(art)          # must not raise
+        plan = mod.plan_prefab(MISSIONS, layout, STYLE, {})["plan"]
+        self.assertIsNone(_node(plan, "MissionRow")["color"])
+        self.assertIn("MissionRow", plan["report"]["mission_geometry"]["defaulted"])
+        self.assertTrue(any("parts.row" in w for w in plan["report"]["warnings"]))
+
+    # --- beyond the brief: the contract details the planner relies on
+
+    def test_fixture_joins_its_template_cleanly(self):
+        report = mod.plan_prefab(MISSIONS, ART, STYLE, {})["report"]
+        self.assertEqual([w for w in report["warnings"] if "layout artifact" in w], [])
+        self.assertEqual(report["unmapped_layout"], [])
+        geo = report["mission_geometry"]
+        self.assertEqual(geo["source"], "layout_artifact")
+        self.assertEqual(geo["parts"], list(mod.MISSION_PARTS))
+        self.assertEqual(geo["row_parts"], list(mod.MISSION_ROW_PARTS))
+        self.assertEqual(geo["style"], list(mod.MISSION_STYLE_KEYS))
+
+    def test_every_node_carries_color(self):
+        for template, layout in ((MISSIONS, ART), (TEMPLATE, mod.layout_from_build(BUILD)), (_milestone_template(), None)):
+            plan = mod.plan_prefab(template, layout, STYLE, {})["plan"]
+            self.assertTrue(all("color" in n for n in plan["nodes"]))
+        standard = mod.plan_prefab(TEMPLATE, mod.layout_from_build(BUILD), STYLE, {})["plan"]
+        self.assertTrue(all(n["color"] is None for n in standard["nodes"]))
+        self.assertNotIn("mission_geometry", standard["report"])
+
+    def test_card_children_follow_the_row_and_colours_follow_style(self):
+        plan = mod.plan_prefab(MISSIONS, ART, STYLE, {})["plan"]
+        feat = ART_RAW["feature"]
+        for name, part in (("MissionRowPlacement", "placement_badge"), ("MissionRowDismiss", "dismiss_button"),
+                           ("MissionRowProgress", "progress_track"), ("MissionRowAction", "action_button")):
+            amin, amax = mod.anchors_from_bbox(feat["row_parts"][part], feat["parts"]["row"])
+            self.assertEqual((_node(plan, name)["anchor_min"], _node(plan, name)["anchor_max"]), (amin, amax), name)
+            self.assertIsNone(_node(plan, name)["field"])
+        fw, fh = plan["ui"]["frame_size"]
+        self.assertEqual(_node(plan, "MissionTab")["size"], [round(feat["parts"]["tab"]["w"] * fw, 1), round(feat["parts"]["tab"]["h"] * fh, 1)])
+        self.assertEqual(_node(plan, "MissionTab")["color"], "#00000000")
+        for name, key in (("MissionTabLabel", "tab_text"), ("MissionTabSelected", "tab_selected"), ("MissionRowPlacement", "accent"),
+                          ("MissionRowActionLabel", "card_text"), ("MissionRowProgressFill", "progress_fill"),
+                          ("MissionRowAction", "action"), ("MissionRowDismiss", "dismiss"), ("MissionBarViewport", "bar_track"),
+                          ("MissionBarStep", "bar_fill")):
+            self.assertEqual(_node(plan, name)["color"], feat["style"][key], name)
+        self.assertEqual(_node(plan, "MissionRowProgressFill")["role"], "progressFill")
+        self.assertTrue(_node(plan, "MissionRow")["inactive"] and _node(plan, "MissionTab")["inactive"])
+
+    def test_panel_level_parts_are_placed_from_the_artifact(self):
+        plan = mod.plan_prefab(MISSIONS, ART, STYLE, {})["plan"]
+        feat = ART_RAW["feature"]
+        panel = plan["report"]["panel_bbox"]
+        close = lambda a, b: all(abs(x - y) < 1e-3 for x, y in zip(a, b))
+        for name, part in (("MissionTabs", "tabs"), ("MissionBarScroll", "progress_bar")):
+            node = _node(plan, name)
+            self.assertTrue(close(node["anchor_min"] + node["anchor_max"], sum(mod.anchors_from_bbox(feat["parts"][part], panel), [])), name)
+            self.assertTrue(node["placed"], name)
+            self.assertNotIn(name, plan["report"]["estimated_positions"])
+        self.assertEqual(plan["report"]["layout_adjustments"], [])
+
+    def test_task_list_falls_back_to_area_bbox(self):
+        art = copy.deepcopy(ART_RAW); del art["feature"]["parts"]["task_list"]
+        plan = mod.plan_prefab(MISSIONS, mod.layout_from_artifact(art), STYLE, {})["plan"]
+        self.assertTrue(_node(plan, "MissionList")["placed"])
+        self.assertNotIn("MissionList", plan["report"]["mission_geometry"]["defaulted"])
+        del art["feature"]["area_bbox"]
+        plan = mod.plan_prefab(MISSIONS, mod.layout_from_artifact(art), STYLE, {})["plan"]
+        self.assertIn("MissionList", plan["report"]["mission_geometry"]["defaulted"])
+
+    def test_missing_row_defaults_every_card_part(self):
+        art = copy.deepcopy(ART_RAW); del art["feature"]["parts"]["row"]
+        layout = mod.layout_from_artifact(art)
+        self.assertEqual(layout["feature_row_parts"], {})
+        self.assertTrue(any("row_parts" in w for w in layout["warnings"]))
+        plan = mod.plan_prefab(MISSIONS, layout, STYLE, {})["plan"]
+        defaulted = plan["report"]["mission_geometry"]["defaulted"]
+        self.assertEqual(sorted(defaulted), sorted(["MissionRow", "MissionRowPlacement", "MissionRowTitle", "MissionRowSubMission",
+                                                    "MissionRowStatus", "MissionRowProgress", "MissionRowProgressText",
+                                                    "MissionRowRewards", "MissionRowAction", "MissionRowDismiss"]))
+        self.assertEqual(_node(plan, "MissionRow")["size"], [900.0, 180.0])
+
+    def test_unknown_and_malformed_feature_blocks_only_warn(self):
+        art = copy.deepcopy(ART_RAW)
+        art["feature"]["parts"]["banner"] = {"x": 0.1, "y": 0.1, "w": 0.1, "h": 0.1}
+        art["feature"]["style"]["glow"] = "#FFFFFF"
+        art["feature"]["row_parts"] = ["not", "an", "object"]
+        layout = mod.layout_from_artifact(art)
+        self.assertNotIn("banner", layout["feature_parts"])
+        self.assertNotIn("glow", layout["feature_style"])
+        self.assertEqual(layout["feature_row_parts"], {})
+        for needle in ("parts.banner", "style.glow", "row_parts"):
+            self.assertTrue(any(needle in w for w in layout["warnings"]), needle)
+
+    def test_feature_blocks_ignored_when_feature_types_disagree(self):
+        art = copy.deepcopy(ART_RAW); art["feature"]["type"] = "milestone"
+        plan = mod.plan_prefab(MISSIONS, mod.layout_from_artifact(art), STYLE, {})["plan"]
+        self.assertEqual(plan["report"]["mission_geometry"]["source"], "defaults")
+        self.assertIsNone(_node(plan, "MissionRow")["color"])
+
+    def test_bar_less_template_has_no_bar_geometry(self):
+        t = copy.deepcopy(MISSIONS); t["features"]["mission"]["progressBar"] = {"display": "dont_show_at_all"}
+        plan = mod.plan_prefab(t, ART, STYLE, {})["plan"]
+        self.assertNotIn("MissionBarScroll", [n["name"] for n in plan["nodes"]])
+        self.assertNotIn("MissionBarScroll", plan["report"]["mission_geometry"]["defaulted"])
+
+    def test_new_names_are_reserved(self):
+        for name in ("MissionTabs", "MissionTab", "MissionViewport", "MissionRows", "MissionRowTitle",
+                     "MissionBarScroll", "MissionBarViewport", "MissionBarContent", "MissionBarStep"):
+            self.assertIn(name, mod.MISSION_RESERVED_NODE_NAMES)
+        for name in ("MissionList", "MissionRow", "MissionBar", "MissionBarFill"):   # the release's names: global
+            self.assertIn(name, mod.RESERVED_NODE_NAMES)
+        for fld in ("missionTabsRoot", "missionTabTemplate", "missionScroll", "missionRowsRoot",
+                    "missionBarScroll", "missionBarContent", "missionBarStepTemplate"):
+            self.assertIn(fld, mod.MISSION_RESERVED_FIELDS)
+        for fld in ("missionListRoot", "missionRowTemplate", "missionBarRoot", "missionBarFill"):
+            self.assertIn(fld, mod.RESERVED_FIELDS)
+
+
+class TestMissionOnlyReservedNames(unittest.TestCase):
+    """The names the missions UI adds are reserved on mission templates only: a standard or milestone template
+       keeps exactly the names the milestone base (6d5deb8) gave its slots."""
+
+    # RESERVED_* exactly as shipped by the milestone base
+    BASE_NODE_NAMES = {"Dimmer", "Frame", "Panel", "Unplaced", "TimerZone", "TimerText", "PriceBeforeSaleZone",
+                       "PriceBeforeSaleText", "PriceBeforeSaleStrike", "ResourceArea", "ResourceItem",
+                       "GrandPrizeArea", "GrandPrizeImage", "GrandPrizeText", "MilestoneMainButton",
+                       "MilestoneMainButtonLabel", "MilestoneScroll", "MilestoneViewport", "MilestoneContent",
+                       "MilestoneStep", "MissionList", "MissionRow", "MissionBar", "MissionBarFill"}
+    BASE_FIELDS = {"dimmer", "panel", "timerRoot", "timerText", "priceBeforeSaleRoot", "priceBeforeSaleText",
+                   "resourceAreaRoot", "resourceItemTemplate", "grandPrizeRoot", "grandPrizeImage", "grandPrizeText",
+                   "milestoneMainButton", "milestoneMainButtonLabel", "missionListRoot", "missionRowTemplate",
+                   "missionBarRoot", "missionBarFill", "milestoneScroll", "milestoneContent", "milestoneStepTemplate"}
+
+    def test_global_sets_are_the_bases(self):
+        self.assertEqual(mod.RESERVED_NODE_NAMES, self.BASE_NODE_NAMES)
+        self.assertEqual(mod.RESERVED_FIELDS, self.BASE_FIELDS)
+        self.assertFalse(mod.MISSION_RESERVED_NODE_NAMES & mod.RESERVED_NODE_NAMES)
+        self.assertFalse(mod.MISSION_RESERVED_FIELDS & mod.RESERVED_FIELDS)
+        mission = mod.plan_prefab(MISSIONS, ART, STYLE, {})["plan"]
+        added = {n["name"] for n in mission["nodes"] if n["name"].startswith("Mission")} - mod.RESERVED_NODE_NAMES
+        self.assertEqual(added, mod.MISSION_RESERVED_NODE_NAMES)   # every name the missions UI adds is reserved for it
+        fields = {n["field"] for n in mission["nodes"] if (n["field"] or "").startswith("mission")} - mod.RESERVED_FIELDS
+        self.assertEqual(fields, mod.MISSION_RESERVED_FIELDS)
+
+    def _with_slot(self, template, key):
+        t = copy.deepcopy(template)
+        t["texts"].append({"key": key, "name": key, "index": 30, "canBeHidden": True, "customFields": []})
+        return t
+
+    def test_standard_and_milestone_slots_keep_their_names(self):
+        for template in (TEMPLATE, _milestone_template()):
+            plan = mod.plan_prefab(self._with_slot(template, "mission_tabs"), None, STYLE, {})["plan"]
+            node = next(n for n in plan["nodes"] if n.get("key") == "mission_tabs")
+            self.assertEqual((node["name"], node["field"]), ("MissionTabsText", "missionTabsText"))
+            self.assertFalse(any("mission_tabs" in w and "renamed" in w for w in plan["report"]["warnings"]))
+
+    def test_the_reservation_is_gated_by_feature_type(self):
+        # slot names always end in Image / Text / Button, so no real key reaches a mission name today: prove the
+        # gate itself by reserving a slot-shaped name for missions for the duration of the test
+        saved = (set(mod.MISSION_RESERVED_NODE_NAMES), set(mod.MISSION_RESERVED_FIELDS))
+        mod.MISSION_RESERVED_NODE_NAMES.add("MissionTabsText")
+        mod.MISSION_RESERVED_FIELDS.add("missionTabsText")
+        try:
+            standard = mod.plan_prefab(self._with_slot(TEMPLATE, "mission_tabs"), None, STYLE, {})["plan"]
+            milestone = mod.plan_prefab(self._with_slot(_milestone_template(), "mission_tabs"), None, STYLE, {})["plan"]
+            mission = mod.plan_prefab(self._with_slot(MISSIONS, "mission_tabs"), None, STYLE, {})["plan"]
+        finally:
+            mod.MISSION_RESERVED_NODE_NAMES.clear(); mod.MISSION_RESERVED_NODE_NAMES.update(saved[0])
+            mod.MISSION_RESERVED_FIELDS.clear(); mod.MISSION_RESERVED_FIELDS.update(saved[1])
+        name = lambda plan: next(n["name"] for n in plan["nodes"] if n.get("key") == "mission_tabs")
+        self.assertEqual(name(standard), "MissionTabsText")
+        self.assertEqual(name(milestone), "MissionTabsText")
+        self.assertEqual(name(mission), "MissionTabsText2")
+
+
+class TestMissionLadderNodes(unittest.TestCase):
+    """Rule 2: the mission ProgressBarState is planned as the milestone ladder (the same scroll chain + step template)."""
+
+    def test_ladder_chain_and_step(self):
+        plan = mod.plan_prefab(MISSIONS, ART, STYLE, {})["plan"]
+        rows = [(n["name"], n["parent"], n["binding"], n["components"], n["field"], n["field_type"])
+                for n in plan["nodes"] if n["name"].startswith("MissionBar")]
+        self.assertEqual(rows, [
+            ("MissionBarScroll", "Panel", "scroll", ["ScrollRect"], "missionBarScroll", "ScrollRect"),
+            ("MissionBarViewport", "MissionBarScroll", "viewport", ["Image", "RectMask2D"], None, None),
+            ("MissionBarContent", "MissionBarViewport", "scroll_content", ["HorizontalLayoutGroup", "ContentSizeFitter"],
+             "missionBarContent", "RectTransform"),
+            ("MissionBarStep", "MissionBarContent", "milestone_step", [], "missionBarStepTemplate", "KinoaInAppMilestoneStepView")])
+        step = _node(plan, "MissionBarStep")
+        self.assertTrue(step["step_button"])    # every step claims through its own button (the milestone per_step look)
+        self.assertTrue(step["inactive"])
+        scroll = _node(plan, "MissionBarScroll")
+        self.assertIsNone(scroll["scroll_axis"])   # horizontal, like the milestone ladder
+        self.assertEqual(step["size"], mod._step_size(plan, plan["report"]["panel_bbox"], scroll["anchor_min"], scroll["anchor_max"]))
+
+    def test_ladder_matches_the_milestone_ladder_shape(self):
+        milestone = mod.plan_prefab(_milestone_template(buttons=["close_button"]), None, STYLE, {})["plan"]
+        mission = mod.plan_prefab(MISSIONS, ART, STYLE, {})["plan"]
+        shape = lambda plan, prefix: [(n["binding"], n["components"], n["field_type"], n["step_button"])
+                                      for n in plan["nodes"] if n["name"] in tuple(prefix + s for s in ("Scroll", "Viewport", "Content", "Step"))]
+        self.assertEqual(shape(mission, "MissionBar"), shape(milestone, "Milestone"))
+
+    def test_progress_bar_part_places_the_ladder(self):
+        plan = mod.plan_prefab(MISSIONS, ART, STYLE, {})["plan"]
+        scroll = _node(plan, "MissionBarScroll")
+        self.assertTrue(scroll["placed"])
+        amin, amax = mod.anchors_from_bbox(ART_RAW["feature"]["parts"]["progress_bar"], plan["report"]["panel_bbox"])
+        close = lambda a, b: all(abs(x - y) < 1e-3 for x, y in zip(a, b))
+        self.assertTrue(close(scroll["anchor_min"] + scroll["anchor_max"], amin + amax))
+        self.assertFalse(any("ladder steps need" in w for w in plan["report"]["warnings"]))
+
+    def test_thin_progress_bar_is_reported(self):
+        art = copy.deepcopy(ART_RAW)
+        art["feature"]["parts"]["progress_bar"] = {"x": 0.1, "y": 0.76, "w": 0.8, "h": 0.02}   # the bar line alone
+        plan = mod.plan_prefab(MISSIONS, mod.layout_from_artifact(art), STYLE, {})["plan"]
+        self.assertTrue(any("MissionBarScroll" in w and "ladder steps need" in w for w in plan["report"]["warnings"]))
+
+    def test_default_ladder_band_fits_a_step(self):
+        plan = mod.plan_prefab(MISSIONS, None, STYLE, {})["plan"]
+        self.assertIn("MissionBarScroll", plan["report"]["estimated_positions"])
+        self.assertFalse(any("ladder steps need" in w for w in plan["report"]["warnings"]))
+
+    def test_ladder_is_a_container_and_never_split(self):
+        self.assertIn("MissionBarScroll", mod._CONTAINERS)
+        plan = mod.plan_prefab(MISSIONS, ART, STYLE, {})["plan"]
+        self.assertEqual([a for a in plan["report"]["layout_adjustments"] if a["node"].startswith("MissionBar")], [])
