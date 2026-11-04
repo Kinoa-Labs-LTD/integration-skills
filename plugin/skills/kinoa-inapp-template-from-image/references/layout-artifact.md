@@ -89,6 +89,37 @@ own by the consumer's author.
   score area and the grand prize from these boxes. They are never template
   elements. The tag is additive: other entries keep the `{role, bbox}` shape and
   `schema_version` stays `"1.1"`.
+- **Mission feature regions** — in a mission layout, `client_rendered` entries
+  for the roles `mission_area` (the missions UI: tabs, task cards and, when the
+  template shows it, the combined progress bar) and `mission_progress_bar`
+  carry `"feature": "mission"`. Path B (`remap`) bounds the area from the tip
+  image's `feature.detected.area_bbox`, else the union of the valid
+  `detected.parts` among `tabs` / `tab` / `task_list` / `row` (plus
+  `progress_bar` when the template shows the bar); with neither there is no
+  `mission_area` and a warning says the prefab uses default geometry. Whether
+  the bar exists comes from the **template**, not the image: it is shown unless
+  `features.mission.progressBar.display` is `dont_show_at_all`. A
+  `detected.progress_bar: false` flag wins over a `parts.progress_bar` box:
+  the box is then ignored everywhere (no region, not in the area, nothing
+  absorbed from it).
+  `mission_progress_bar` (the `detected.parts.progress_bar` box) is emitted only
+  when the template shows it; when the template hides it, an `area_bbox` is
+  narrowed to the non-bar parts (when there are any), `feature.parts.progress_bar`
+  is dropped from the artifact with a warning, and a bar on the image is
+  reported as `report.mismatch.progress_bar_unexpected` (a shown bar missing on
+  the image is `progress_bar_missing`). Tip-image elements lying at least 80 %
+  inside the area (or inside a shown bar) — a card's Claim button, task text,
+  reward art — are mission content, unless they enclose it (an element at
+  least as large as the area, or containing it, such as a full-image
+  background or a frame, is chrome and still matches its slot): `remap` keeps them out of slot matching and
+  lists them in `report.mission_feature.absorbed`, never as slots or
+  mismatches. A template slot that really sits inside the area therefore shows
+  as unmatched and is placed by hand on the page. In a mission layout the
+  `mission_area` region's box **is** `feature.area_bbox`: it takes precedence
+  over the analysis's `detected.area_bbox` (the two are equal unless `remap`
+  narrowed the area around a hidden bar, and the narrowed box is the one the
+  consumer must use) and fills in when the analysis has none. Additive:
+  `schema_version` stays `"1.1"`.
 - **`feature.area_bbox`** (optional; mission/milestone) marks the region the
   progression UI (task list / progress bar) occupies on the mockup. Absent when
   the vision pass could not bound it.

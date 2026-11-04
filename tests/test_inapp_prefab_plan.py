@@ -1996,3 +1996,121 @@ class TestMilestoneRegions(unittest.TestCase):
         self.assertEqual(name(standard), "MilestoneProgressText")
         self.assertEqual(name(mission), "MilestoneProgressText")
         self.assertEqual(name(milestone), "MilestoneProgressText2")
+
+# --------------------------------------------------------------------------- mission-feature regions (from-image path B)
+
+GOLDEN_MISSION_REGIONS = os.path.join(REPO, "tests", "golden", "mission_regions")
+MISSION_AREA_ZONE = {"x": 0.05, "y": 0.16, "w": 0.9, "h": 0.66}
+MISSION_BAR_ZONE = {"x": 0.06, "y": 0.72, "w": 0.88, "h": 0.1}
+
+
+def _mission_region_artifact(area=False, parts=("tabs", "tab", "task_list", "row", "progress_bar"),
+                             zones=(("mission_area", MISSION_AREA_ZONE), ("mission_progress_bar", MISSION_BAR_ZONE))):
+    """The missions fixture artifact, with only the given feature geometry plus the mission-feature regions."""
+    art = copy.deepcopy(ART_RAW)
+    if not area:
+        del art["feature"]["area_bbox"]
+    art["feature"]["parts"] = {p: b for p, b in art["feature"]["parts"].items() if p in parts}
+    for role, bbox in zones:
+        art["client_rendered"].append({"role": role, "bbox": dict(bbox), "feature": "mission"})
+    return art
+
+
+def _plan_mission_regions(template=None, **art):
+    result = mod.plan_prefab(template or MISSIONS, mod.layout_from_artifact(_mission_region_artifact(**art)), STYLE, {})
+    assert result["ok"], result
+    return result["plan"]
+
+
+def _frozen_mission_region_cases():
+    """Plans that must not move with the mission-feature regions (goldens rendered before the change)."""
+    hidden = copy.deepcopy(MISSIONS)
+    hidden["features"]["mission"]["progressBar"]["display"] = "dont_show_at_all"
+    return {
+        "mission_artifact": (MISSIONS, ART),
+        "mission_hidden_bar": (hidden, ART),
+        "standard_artifact": (TEMPLATE, mod.layout_from_artifact(ARTIFACT)),
+        "milestone_regions": (_region_template(), mod.layout_from_artifact(_region_artifact())),
+    }
+
+
+def _frozen_dump(template, layout):
+    import hashlib
+    plan = mod.plan_prefab(copy.deepcopy(template), copy.deepcopy(layout), STYLE, {})["plan"]
+    files = mod.generate_code(plan, {})["files"]
+    digests = {path: hashlib.sha256(text.encode("utf-8")).hexdigest() for path, text in sorted(files.items())}
+    return json.dumps({"plan": plan, "files_sha256": digests}, indent=2, ensure_ascii=False) + "\n"
+
+
+class TestMissionRegions(unittest.TestCase):
+    """The mission-feature regions in client_rendered stand in for feature.area_bbox / parts.progress_bar."""
+
+    def test_region_roles_are_known_on_mission_only(self):
+        plan = _plan_mission_regions(area=True)
+        self.assertEqual([u for u in plan["report"]["unmapped_layout"] if "zone" in u], [])
+        art = copy.deepcopy(ARTIFACT)
+        for role, bbox in (("mission_area", MISSION_AREA_ZONE), ("mission_progress_bar", MISSION_BAR_ZONE)):
+            art["client_rendered"].append({"role": role, "bbox": dict(bbox), "feature": "mission"})
+        standard = mod.plan_prefab(TEMPLATE, mod.layout_from_artifact(art), STYLE, {})["plan"]
+        for role in mod.MISSION_REGION_ROLES:
+            self.assertIn({"zone": role}, standard["report"]["unmapped_layout"])
+        art["template_key"] = "chase"
+        art["feature"] = {"type": "milestone"}
+        milestone = mod.plan_prefab(_region_template(), mod.layout_from_artifact(art), STYLE, {})["plan"]
+        for role in mod.MISSION_REGION_ROLES:
+            self.assertIn({"zone": role}, milestone["report"]["unmapped_layout"])
+
+    def test_mission_area_is_the_feature_area_fallback(self):
+        plan = _plan_mission_regions(parts=("tabs", "tab", "row", "progress_bar"))   # no task_list: it takes the area
+        panel = plan["report"]["panel_bbox"]
+        _assert_anchors(self, _node(plan, "MissionList"), MISSION_AREA_ZONE, panel)
+        self.assertTrue(_node(plan, "MissionList")["placed"])
+        self.assertNotIn("MissionList", plan["report"]["mission_geometry"]["defaulted"])
+
+    def test_area_bbox_wins_over_the_region(self):
+        far = {"x": 0.0, "y": 0.0, "w": 0.2, "h": 0.2}
+        plan = _plan_mission_regions(area=True, parts=("tabs", "tab", "row", "progress_bar"),
+                                     zones=(("mission_area", far),))
+        _assert_anchors(self, _node(plan, "MissionList"), ART_RAW["feature"]["area_bbox"], plan["report"]["panel_bbox"])
+
+    def test_mission_area_joins_the_panel(self):
+        tall = {"x": 0.02, "y": 0.1, "w": 0.96, "h": 0.85}
+        plan = _plan_mission_regions(zones=(("mission_area", tall),))
+        panel = plan["report"]["panel_bbox"]
+        self.assertLessEqual(panel["x"], 0.02 + 1e-4)
+        self.assertGreaterEqual(panel["y"] + panel["h"], 0.95 - 1e-4)
+
+    def test_mission_progress_bar_is_the_parts_fallback(self):
+        plan = _plan_mission_regions(parts=("tabs", "tab", "task_list", "row"))
+        _assert_anchors(self, _node(plan, "MissionBarScroll"), MISSION_BAR_ZONE, plan["report"]["panel_bbox"])
+        self.assertTrue(_node(plan, "MissionBarScroll")["placed"])
+        self.assertNotIn("MissionBarScroll", plan["report"]["mission_geometry"]["defaulted"])
+        self.assertIn("progress_bar", plan["report"]["mission_geometry"]["parts"])
+
+    def test_parts_progress_bar_wins_over_the_region(self):
+        plan = _plan_mission_regions()
+        _assert_anchors(self, _node(plan, "MissionBarScroll"), ART_RAW["feature"]["parts"]["progress_bar"],
+                        plan["report"]["panel_bbox"])
+
+    def test_progress_bar_region_unused_when_the_template_hides_the_bar(self):
+        hidden = copy.deepcopy(MISSIONS)
+        hidden["features"]["mission"]["progressBar"]["display"] = "dont_show_at_all"
+        far_bar = {"x": 0.06, "y": 0.97, "w": 0.88, "h": 0.02}      # below everything else on the fixture
+        plan = _plan_mission_regions(hidden, parts=("tabs", "tab", "task_list", "row"),
+                                     zones=(("mission_progress_bar", far_bar),))
+        without = _plan_mission_regions(hidden, parts=("tabs", "tab", "task_list", "row"), zones=())
+        self.assertNotIn("MissionBarScroll", [n["name"] for n in plan["nodes"]])
+        self.assertNotIn("progress_bar", plan["report"]["mission_geometry"]["parts"])
+        self.assertEqual(plan["report"]["panel_bbox"], without["report"]["panel_bbox"])   # the hidden bar's box stays out
+        self.assertEqual([u for u in plan["report"]["unmapped_layout"] if "zone" in u], [])
+
+    def test_regions_are_inert_when_area_and_parts_are_present(self):
+        base = mod.plan_prefab(MISSIONS, ART, STYLE, {})
+        with_regions = mod.plan_prefab(MISSIONS, mod.layout_from_artifact(_mission_region_artifact(area=True)), STYLE, {})
+        self.assertEqual(json.dumps(with_regions, sort_keys=False), json.dumps(base, sort_keys=False))
+
+    def test_frozen_plans_and_files(self):
+        # goldens rendered from a2dfb64's planner with these exact inputs
+        for name, (template, layout) in _frozen_mission_region_cases().items():
+            with open(os.path.join(GOLDEN_MISSION_REGIONS, name + ".json"), encoding="utf-8", newline="") as fh:
+                self.assertEqual(_frozen_dump(template, layout), fh.read(), name)

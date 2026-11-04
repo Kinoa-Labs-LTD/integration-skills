@@ -1429,6 +1429,407 @@ class TestMilestoneFeatureRegions(unittest.TestCase):
         self.assertEqual(set(layout["client_rendered"][-1]), {"role", "bbox"})
 
 
+GOLDEN_FROM_IMAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden", "from_image")
+
+# Mission tip-image geometry shared by the mission-area tests: a tab strip, the
+# task list with one representative card, and the combined progress bar.
+M_TABS = {"x": 0.06, "y": 0.17, "w": 0.88, "h": 0.05}
+M_TAB = {"x": 0.06, "y": 0.17, "w": 0.28, "h": 0.05}
+M_LIST = {"x": 0.06, "y": 0.23, "w": 0.88, "h": 0.46}
+M_ROW = {"x": 0.06, "y": 0.23, "w": 0.88, "h": 0.1}
+M_BAR = {"x": 0.06, "y": 0.7, "w": 0.88, "h": 0.1}
+M_AREA = {"x": 0.05, "y": 0.16, "w": 0.9, "h": 0.66}
+ALL_PARTS = {"tabs": M_TABS, "tab": M_TAB, "task_list": M_LIST, "row": M_ROW, "progress_bar": M_BAR}
+NO_BAR_PARTS = {"tabs": M_TABS, "tab": M_TAB, "task_list": M_LIST, "row": M_ROW}
+BAR_PRIZE = {"role": "prize_image", "bbox": {"x": 0.3, "y": 0.72, "w": 0.05, "h": 0.05}}
+
+
+def _mission_record(display="show_for_all_sets_combined"):
+    """A mission record with a header, a close and a screen-level Collect All.
+    display None = the record's progressBar carries no display at all."""
+    ana = analysis(
+        [
+            {"role": "background_image", "bbox": {"x": 0, "y": 0, "w": 1, "h": 1}},
+            {"role": "close_button", "bbox": {"x": 0.85, "y": 0.02, "w": 0.08, "h": 0.05}},
+            {"role": "header", "bbox": {"x": 0.2, "y": 0.05, "w": 0.6, "h": 0.06}},
+            {"role": "collect_button", "suggested_key": "collect_all", "observed_text": "Collect all",
+             "bbox": {"x": 0.3, "y": 0.86, "w": 0.4, "h": 0.06}},
+        ],
+        feature={"type": "mission", "detected": {"mission_count": 3}},
+    )
+    payload, _ = build_mod.build_payload(ana)
+    record = copy.deepcopy(dict(payload, id="tpl-mission", status="active"))
+    if display is None:
+        del record["features"]["mission"]["progressBar"]["display"]
+    else:
+        record["features"]["mission"]["progressBar"]["display"] = display
+    return record
+
+
+def _mission_tip(parts=None, area=None, progress_bar=None, extra=(), collect_all_box=None):
+    """A tip-image analysis: header + close + Collect All outside the missions
+    area, a card's Claim button and a task text inside it."""
+    detected = {}
+    if parts is not None:
+        detected["parts"] = copy.deepcopy(parts)
+    if area is not None:
+        detected["area_bbox"] = dict(area)
+    if progress_bar is not None:
+        detected["progress_bar"] = progress_bar
+    els = [
+        {"role": "background_image", "bbox": {"x": 0, "y": 0, "w": 1, "h": 1}},
+        {"role": "close_button", "bbox": {"x": 0.85, "y": 0.02, "w": 0.08, "h": 0.05}},
+        {"role": "header", "bbox": {"x": 0.2, "y": 0.05, "w": 0.6, "h": 0.06}, "observed_text": "Daily"},
+        {"role": "collect_button", "suggested_key": "collect_all", "observed_text": "Collect all",
+         "bbox": collect_all_box or {"x": 0.3, "y": 0.86, "w": 0.4, "h": 0.06}},
+        {"role": "collect_button", "observed_text": "Claim",
+         "bbox": {"x": 0.72, "y": 0.3, "w": 0.2, "h": 0.026}},
+        {"role": "body_text", "observed_text": "Win 3 games",
+         "bbox": {"x": 0.15, "y": 0.4, "w": 0.5, "h": 0.03}},
+    ] + copy.deepcopy(list(extra))
+    ana = analysis(els, feature={"type": "mission", "detected": detected})
+    ana["source_image"] = {"path": "tip.png", "width": 720, "height": 960}
+    return ana
+
+
+def _assert_box(test, got, want):
+    test.assertIsNotNone(got)
+    for f in ("x", "y", "w", "h"):
+        test.assertAlmostEqual(got[f], want[f], places=6, msg=f)
+
+
+def _frozen_remap_cases():
+    """Standard and milestone remap inputs whose outputs are frozen as goldens
+    (rendered from the code before the mission-area change)."""
+    std = copy.deepcopy(ONE_CTA)
+    std["source_image"] = {"path": "tip.png", "width": 720, "height": 960}
+    std_payload, _ = build_mod.build_payload(copy.deepcopy(std))
+    std_record = dict(std_payload, id="tpl-1", status="draft")
+    std_extra = copy.deepcopy(std)
+    std_extra["elements"] = [el for el in std["elements"] if el["role"] != "fine_print"] + [
+        {"role": "cta_button", "suggested_key": "second_cta", "observed_text": "$9.99",
+         "bbox": {"x": 0.1, "y": 0.9, "w": 0.3, "h": 0.06}},
+        {"role": "body_text", "observed_text": "inside", "bbox": {"x": 0.3, "y": 0.3, "w": 0.1, "h": 0.05}},
+    ]
+    std_extra["feature"] = {"type": "standard", "detected": {"area_bbox": {"x": 0.2, "y": 0.2, "w": 0.6, "h": 0.6}}}
+
+    ms_els = [
+        {"role": "background_image", "bbox": {"x": 0, "y": 0, "w": 1, "h": 1}},
+        {"role": "close_button", "bbox": {"x": 0.8, "y": 0.02, "w": 0.1, "h": 0.05}},
+    ]
+    ms_payload, _ = build_mod.build_payload(analysis(copy.deepcopy(ms_els), feature={"type": "milestone"}))
+    ms_record = dict(ms_payload, id="tpl-m", status="active")
+    ms_tip = analysis(copy.deepcopy(ms_els) + [
+        {"role": "bar_image", "bbox": {"x": 0.1, "y": 0.5, "w": 0.8, "h": 0.1}},
+        {"role": "score_icon_image", "bbox": {"x": 0.05, "y": 0.5, "w": 0.1, "h": 0.1}},
+        {"role": "prize_image", "bbox": {"x": 0.3, "y": 0.5, "w": 0.1, "h": 0.1}},
+        {"role": "grand_prize_area", "bbox": {"x": 0.4, "y": 0.2, "w": 0.2, "h": 0.2}},
+        {"role": "header", "bbox": {"x": 0.3, "y": 0.52, "w": 0.1, "h": 0.05}, "observed_text": "H"},
+    ], feature={"type": "milestone", "detected": {"area_bbox": {"x": 0.05, "y": 0.45, "w": 0.9, "h": 0.2},
+                                                  "parts": {"row": {"x": 0.1, "y": 0.5, "w": 0.5, "h": 0.1}}}})
+    ms_tip["source_image"] = {"path": "tip.png", "width": 720, "height": 960}
+    return {"standard": (std_record, std), "standard_mismatch": (std_record, std_extra),
+            "milestone": (ms_record, ms_tip)}
+
+
+def _frozen_layout_cases():
+    """Standard, milestone and mission-with-bar build_layout inputs frozen as goldens."""
+    out = {}
+    std = copy.deepcopy(ONE_CTA)
+    std["source_image"] = {"path": "art/mockup.png", "width": 720, "height": 960}
+    payload, report = build_mod.build_payload(copy.deepcopy(std))
+    out["standard"] = (payload, _geometry_for(payload, report), std)
+    rec, tip = _frozen_remap_cases()["milestone"]
+    res = build_mod.remap_record(rec, tip)
+    out["milestone"] = (res["payload"], _geometry_for(res["payload"], res["report"]), tip)
+    mission_payload = build_mod._record_payload(_mission_record())
+    geometry = {"source_image": {"sha256": "f" * 64, "width": 720, "height": 960, "filename": "tip.png"},
+                "elements": [{"key": "header", "bucket": "texts", "role": "header",
+                              "bbox": {"x": 0.2, "y": 0.05, "w": 0.6, "h": 0.06}}],
+                "client_rendered": [{"role": "timer", "bbox": {"x": 0.4, "y": 0.81, "w": 0.2, "h": 0.03}}]}
+    out["mission_with_bar"] = (mission_payload, geometry, _mission_tip(parts=ALL_PARTS, area=M_AREA))
+    return out
+
+
+def _dump(obj):
+    return json.dumps(obj, indent=2, ensure_ascii=False) + "\n"
+
+
+def _read_golden(name):
+    with open(os.path.join(GOLDEN_FROM_IMAGE, name), encoding="utf-8", newline="") as fh:
+        return fh.read()
+
+
+class TestFrozenStandardAndMilestone(unittest.TestCase):
+    """Goldens rendered from the code before the mission-area change (a2dfb64):
+    standard and milestone remap output, and standard / milestone /
+    mission-with-bar artifacts, must stay byte-identical."""
+
+    def test_remap_output_is_frozen(self):
+        for name, (record, tip) in _frozen_remap_cases().items():
+            got = build_mod.remap_record(copy.deepcopy(record), copy.deepcopy(tip))
+            self.assertEqual(_dump(got), _read_golden("remap_%s.json" % name), name)
+
+    def test_layout_output_is_frozen(self):
+        for name, (payload, geometry, ana) in _frozen_layout_cases().items():
+            layout, rep = build_mod.build_layout(copy.deepcopy(payload), copy.deepcopy(geometry), copy.deepcopy(ana))
+            self.assertEqual(_dump({"layout": layout, "report": rep}), _read_golden("layout_%s.json" % name), name)
+
+
+class TestMissionFeatureArea(unittest.TestCase):
+    """Path B on a mission record: the missions area on the tip image becomes a
+    client-rendered mission-feature region; content inside it is absorbed."""
+
+    def _remap(self, record=None, **tip):
+        res = build_mod.remap_record(record or _mission_record(), _mission_tip(**tip))
+        self.assertTrue(res["ok"], res)
+        return res, res["report"]
+
+    def test_constant_copy(self):
+        self.assertEqual(build_mod.MISSION_FEATURE_REGIONS, {
+            "mission_area": "Mission feature: the missions UI (tabs, task cards and, when the template shows it, "
+                            "the combined progress bar). The client draws it here.",
+            "mission_progress_bar": "Mission feature: the combined milestone progress bar across all sets. "
+                                    "The client draws it here; it exists only when the template's "
+                                    "progressBar.display shows it.",
+        })
+
+    def test_shown_bar_with_parts(self):
+        res, rep = self._remap(parts=ALL_PARTS, extra=[BAR_PRIZE])
+        # the in-card Claim and the task text are absorbed: neither matched nor unslotted
+        self.assertNotIn("unslotted_elements", rep["mismatch"])
+        self.assertEqual(rep["mission_feature"]["absorbed"], [
+            {"role": "collect_button", "bucket": "buttons", "observed_text": "Claim"},
+            {"role": "body_text", "bucket": "texts", "observed_text": "Win 3 games"},
+            {"role": "prize_image", "bucket": "images", "observed_text": ""},
+        ])
+        by_key = {t["key"]: t for t in rep["elements"]}
+        # the card's Claim never lands on the template's Collect All: the real one (outside) does
+        self.assertEqual(by_key["collect_all"]["bbox"], {"x": 0.3, "y": 0.86, "w": 0.4, "h": 0.06})
+        self.assertEqual(set(by_key), {"background_image", "close_button", "header", "collect_all"})
+        self.assertNotIn("unmatched_slots", rep["mismatch"])
+        regions = [c for c in rep["client_rendered"] if c.get("feature") == "mission"]
+        self.assertEqual([c["role"] for c in regions], ["mission_area", "mission_progress_bar"])
+        for c in regions:
+            self.assertEqual(c["reason"], build_mod.MISSION_FEATURE_REGIONS[c["role"]])
+        _assert_box(self, regions[0]["bbox"], {"x": 0.06, "y": 0.17, "w": 0.88, "h": 0.63})
+        self.assertEqual(regions[1]["bbox"], M_BAR)
+        mf = rep["mission_feature"]
+        self.assertEqual(mf["area_source"], "parts")
+        _assert_box(self, mf["area_bbox"], regions[0]["bbox"])
+        self.assertEqual(mf["progress_bar"], {"template": "shown", "display": "show_for_all_sets_combined",
+                                              "on_image": True})
+        for k in ("progress_bar_missing", "progress_bar_unexpected"):
+            self.assertNotIn(k, rep["mismatch"])
+        self.assertFalse([w for w in rep["warnings"] if "stale tip image" in w])
+        self.assertTrue(res["validation"]["ok"])
+
+    def test_area_bbox_is_the_source_when_given(self):
+        _res, rep = self._remap(parts=ALL_PARTS, area=M_AREA)
+        self.assertEqual(rep["mission_feature"]["area_source"], "area_bbox")
+        self.assertEqual(rep["mission_feature"]["area_bbox"], M_AREA)
+        area = next(c for c in rep["client_rendered"] if c["role"] == "mission_area")
+        self.assertEqual(area["bbox"], M_AREA)
+
+    def test_invalid_area_bbox_falls_back_to_parts(self):
+        _res, rep = self._remap(parts=ALL_PARTS, area={"x": 2, "y": 0, "w": 1, "h": 1})
+        self.assertEqual(rep["mission_feature"]["area_source"], "parts")
+
+    def test_hidden_bar_without_bar_on_image(self):
+        _res, rep = self._remap(_mission_record("dont_show_at_all"), parts=NO_BAR_PARTS)
+        self.assertEqual([c["role"] for c in rep["client_rendered"]], ["mission_area"])
+        for k in ("progress_bar_missing", "progress_bar_unexpected"):
+            self.assertNotIn(k, rep["mismatch"])
+        self.assertEqual(rep["mission_feature"]["progress_bar"],
+                         {"template": "hidden", "display": "dont_show_at_all", "on_image": False})
+        _assert_box(self, rep["mission_feature"]["area_bbox"], {"x": 0.06, "y": 0.17, "w": 0.88, "h": 0.52})
+
+    def test_hidden_bar_with_bar_on_image(self):
+        _res, rep = self._remap(_mission_record("dont_show_at_all"), parts=ALL_PARTS, area=M_AREA,
+                                extra=[BAR_PRIZE])
+        self.assertEqual(
+            rep["mismatch"]["progress_bar_unexpected"],
+            "the tip image shows a combined progress bar but the template hides it "
+            "(progressBar.display dont_show_at_all) — likely a stale tip image")
+        self.assertNotIn("mission_progress_bar", [c["role"] for c in rep["client_rendered"]])
+        # the area is narrowed to the non-bar parts, so the bar's art is not absorbed
+        mf = rep["mission_feature"]
+        self.assertEqual(mf["area_source"], "parts")
+        _assert_box(self, mf["area_bbox"], {"x": 0.06, "y": 0.17, "w": 0.88, "h": 0.52})
+        self.assertTrue(any("narrowed" in w and "progress bar" in w for w in rep["warnings"]))
+        self.assertEqual([u["role"] for u in rep["mismatch"]["unslotted_elements"]], ["prize_image"])
+        self.assertNotIn("prize_image", [a["role"] for a in mf["absorbed"]])
+        self.assertEqual(mf["progress_bar"], {"template": "hidden", "display": "dont_show_at_all", "on_image": True})
+
+    def test_hidden_bar_elements_inside_an_unnarrowed_area_are_not_absorbed(self):
+        # only the bar box and an area_bbox: nothing to narrow to, but the bar's art still surfaces
+        _res, rep = self._remap(_mission_record("dont_show_at_all"), parts={"progress_bar": M_BAR}, area=M_AREA,
+                                extra=[BAR_PRIZE])
+        self.assertEqual(rep["mission_feature"]["area_source"], "area_bbox")
+        self.assertIn("progress_bar_unexpected", rep["mismatch"])
+        self.assertEqual([u["role"] for u in rep["mismatch"]["unslotted_elements"]], ["prize_image"])
+
+    def test_progress_bar_flag_true_counts_as_on_image(self):
+        _res, rep = self._remap(_mission_record("dont_show_at_all"), parts=NO_BAR_PARTS, progress_bar=True)
+        self.assertIn("progress_bar_unexpected", rep["mismatch"])
+        self.assertTrue(rep["mission_feature"]["progress_bar"]["on_image"])
+
+    def test_progress_bar_flag_false_wins_over_a_box(self):
+        # the flag wins: parts.progress_bar is treated as absent everywhere
+        _res, rep = self._remap(parts=ALL_PARTS, progress_bar=False, extra=[BAR_PRIZE])
+        mf = rep["mission_feature"]
+        self.assertFalse(mf["progress_bar"]["on_image"])
+        self.assertIn("progress_bar_missing", rep["mismatch"])
+        self.assertNotIn("mission_progress_bar", [c["role"] for c in rep["client_rendered"]])
+        _assert_box(self, mf["area_bbox"], {"x": 0.06, "y": 0.17, "w": 0.88, "h": 0.52})   # bar not in the union
+        self.assertNotIn("prize_image", [a["role"] for a in mf["absorbed"]])
+        self.assertEqual([u["role"] for u in rep["mismatch"]["unslotted_elements"]], ["prize_image"])
+
+    def test_progress_bar_flag_false_on_a_hidden_bar(self):
+        # no bar on the image, none in the template: nothing to narrow, nothing to report
+        _res, rep = self._remap(_mission_record("dont_show_at_all"), parts=ALL_PARTS, area=M_AREA,
+                                progress_bar=False)
+        self.assertEqual(rep["mission_feature"]["area_source"], "area_bbox")
+        self.assertEqual(rep["mission_feature"]["area_bbox"], M_AREA)
+        self.assertFalse([w for w in rep["warnings"] if "narrowed" in w])
+        for k in ("progress_bar_missing", "progress_bar_unexpected"):
+            self.assertNotIn(k, rep["mismatch"])
+
+    def test_enclosing_chrome_is_never_absorbed(self):
+        big = {"x": 0.04, "y": 0.06, "w": 0.92, "h": 0.9}
+        tip = _mission_tip(parts=ALL_PARTS, area=big)
+        for el in tip["elements"]:
+            if el["role"] == "header":
+                el["bbox"] = {"x": 0.2, "y": 0.0, "w": 0.6, "h": 0.055}
+        tip["elements"].append({"role": "decoration_image", "bbox": {"x": 0.03, "y": 0.05, "w": 0.94, "h": 0.92}})
+        res = build_mod.remap_record(_mission_record(), tip)
+        rep = res["report"]
+        by_key = {t["key"]: t for t in rep["elements"]}
+        # the full-image background is 83 % inside the area but encloses it: it still matches its slot
+        self.assertEqual(by_key["background_image"]["bbox"], {"x": 0, "y": 0, "w": 1, "h": 1})
+        self.assertIn("header", by_key)
+        self.assertIn("close_button", by_key)
+        absorbed = [a["role"] for a in rep["mission_feature"]["absorbed"]]
+        self.assertIn("body_text", absorbed)
+        self.assertIn("collect_button", absorbed)
+        self.assertNotIn("background_image", absorbed)
+        self.assertNotIn("decoration_image", absorbed)   # a frame around the area is chrome, not content
+        self.assertIn("decoration_image", [u["role"] for u in rep["mismatch"]["unslotted_elements"]])
+
+    def test_shown_bar_missing_on_image(self):
+        _res, rep = self._remap(parts=NO_BAR_PARTS)
+        self.assertEqual(
+            rep["mismatch"]["progress_bar_missing"],
+            "the template shows the combined progress bar (progressBar.display show_for_all_sets_combined) "
+            "but the tip image has none")
+        self.assertIn(rep["mismatch"]["progress_bar_missing"], rep["warnings"])
+        self.assertNotIn("mission_progress_bar", [c["role"] for c in rep["client_rendered"]])
+
+    def test_unset_display_counts_as_shown(self):
+        _res, rep = self._remap(_mission_record(None), parts=NO_BAR_PARTS)
+        self.assertEqual(
+            rep["mismatch"]["progress_bar_missing"],
+            "the template shows the combined progress bar (progressBar.display <unset>) but the tip image has none")
+        self.assertEqual(rep["mission_feature"]["progress_bar"],
+                         {"template": "shown", "display": None, "on_image": False})
+
+    def test_no_area_detected(self):
+        _res, rep = self._remap(progress_bar=True)
+        self.assertIn("mission area not detected on the tip image — the prefab places the missions UI on "
+                      "default geometry", rep["warnings"])
+        self.assertNotIn("mission_area", [c["role"] for c in rep["client_rendered"]])
+        mf = rep["mission_feature"]
+        self.assertEqual((mf["area_bbox"], mf["area_source"], mf["absorbed"]), (None, None, []))
+        # with no area nothing is absorbed: the in-card elements fall back to today's handling
+        self.assertIn("unslotted_elements", rep["mismatch"])
+
+    def test_slot_inside_the_area_ends_up_unmatched(self):
+        inside = {"x": 0.3, "y": 0.5, "w": 0.3, "h": 0.05}
+        _res, rep = self._remap(parts=ALL_PARTS, collect_all_box=inside)
+        self.assertEqual(rep["mismatch"]["unmatched_slots"], ["buttons.collect_all"])
+        self.assertNotIn("collect_all", [t["key"] for t in rep["elements"]])
+        self.assertIn("collect_button", [a["role"] for a in rep["mission_feature"]["absorbed"]])
+
+    def test_client_rendered_roles_are_never_absorbed(self):
+        timer = {"role": "timer", "bbox": {"x": 0.4, "y": 0.4, "w": 0.1, "h": 0.03}}
+        _res, rep = self._remap(parts=ALL_PARTS, extra=[timer])
+        self.assertEqual(rep["client_rendered"][0]["role"], "timer")
+        self.assertNotIn("feature", rep["client_rendered"][0])
+        self.assertNotIn("timer", [a["role"] for a in rep["mission_feature"]["absorbed"]])
+
+    def test_other_feature_types_have_no_mission_summary(self):
+        for name, (record, tip) in _frozen_remap_cases().items():
+            self.assertNotIn("mission_feature", build_mod.remap_record(record, tip)["report"], name)
+
+    # --- build_layout
+
+    def test_build_layout_tags_mission_regions(self):
+        res, rep = self._remap(parts=ALL_PARTS)
+        geom = _geometry_for(res["payload"], rep)          # an older page drops the tag
+        self.assertNotIn("feature", geom["client_rendered"][0])
+        layout, lrep = build_mod.build_layout(res["payload"], geom, _mission_tip(parts=ALL_PARTS))
+        self.assertEqual(lrep["errors"], [])
+        self.assertEqual([(c["role"], c.get("feature")) for c in layout["client_rendered"]],
+                         [("mission_area", "mission"), ("mission_progress_bar", "mission")])
+        self.assertTrue(build_mod.validate_layout(layout, res["payload"])["ok"])
+
+    def test_build_layout_honours_the_geometry_mission_tag(self):
+        payload = build_mod._record_payload(_mission_record())
+        geom = {"source_image": {}, "elements": [],
+                "client_rendered": [{"role": "timer", "bbox": M_TAB, "feature": "mission"}]}
+        layout, _ = build_mod.build_layout(payload, geom, None)
+        self.assertEqual(layout["client_rendered"], [{"role": "timer", "bbox": M_TAB, "feature": "mission"}])
+
+    def test_build_layout_area_falls_back_to_the_region(self):
+        res, rep = self._remap(parts=ALL_PARTS)
+        geom = _geometry_for(res["payload"], rep)
+        layout, _ = build_mod.build_layout(res["payload"], geom, _mission_tip(parts=ALL_PARTS))
+        _assert_box(self, layout["feature"]["area_bbox"], {"x": 0.06, "y": 0.17, "w": 0.88, "h": 0.63})
+        layout, _ = build_mod.build_layout(res["payload"], geom, None)
+        _assert_box(self, layout["feature"]["area_bbox"], {"x": 0.06, "y": 0.17, "w": 0.88, "h": 0.63})
+        # the region wins over an analysis area_bbox (they agree unless remap narrowed the area)
+        layout, _ = build_mod.build_layout(res["payload"], geom, _mission_tip(parts=ALL_PARTS, area=M_AREA))
+        _assert_box(self, layout["feature"]["area_bbox"], {"x": 0.06, "y": 0.17, "w": 0.88, "h": 0.63})
+
+    def test_narrowed_area_reaches_the_artifact(self):
+        record = _mission_record("dont_show_at_all")
+        tip = _mission_tip(parts=ALL_PARTS, area=M_AREA)
+        res = build_mod.remap_record(record, tip)
+        narrowed = res["report"]["mission_feature"]["area_bbox"]
+        _assert_box(self, narrowed, {"x": 0.06, "y": 0.17, "w": 0.88, "h": 0.52})
+        geom = _geometry_for(res["payload"], res["report"])
+        # what the page's geometryOut() hands back: the regions keep their feature tag
+        geom["client_rendered"] = []
+        for c in res["report"]["client_rendered"]:
+            entry = {"role": c["role"], "bbox": c["bbox"]}
+            if c.get("feature"):
+                entry["feature"] = c["feature"]
+            geom["client_rendered"].append(entry)
+        layout, _ = build_mod.build_layout(res["payload"], geom, tip)
+        self.assertEqual(layout["feature"]["area_bbox"], narrowed)
+        self.assertNotIn("progress_bar", layout["feature"]["parts"])
+
+    def test_build_layout_drops_a_hidden_bar(self):
+        record = _mission_record("dont_show_at_all")
+        tip = _mission_tip(parts=ALL_PARTS, area=M_AREA)
+        res = build_mod.remap_record(record, tip)
+        geom = _geometry_for(res["payload"], res["report"])
+        layout, lrep = build_mod.build_layout(res["payload"], geom, tip)
+        self.assertEqual(set(layout["feature"]["parts"]), {"tabs", "tab", "task_list", "row"})
+        self.assertTrue(any("parts.progress_bar" in w and "dont_show_at_all" in w for w in lrep["warnings"]))
+        # only the bar: the parts block goes away entirely
+        layout, _ = build_mod.build_layout(res["payload"], geom, _mission_tip(parts={"progress_bar": M_BAR}, area=M_AREA))
+        self.assertNotIn("parts", layout["feature"])
+
+    def test_build_layout_does_not_tag_mission_roles_elsewhere(self):
+        payload, report = build_mod.build_payload(copy.deepcopy(ONE_CTA))
+        geom = _geometry_for(payload, report)
+        geom["client_rendered"].append({"role": "mission_area", "bbox": M_AREA})
+        layout, _ = build_mod.build_layout(payload, geom, None)
+        self.assertEqual(layout["client_rendered"][-1], {"role": "mission_area", "bbox": M_AREA})
+        self.assertNotIn("area_bbox", layout["feature"])
+
+
 class TestLayoutCLI(unittest.TestCase):
     def run_cli(self, argv):
         import io

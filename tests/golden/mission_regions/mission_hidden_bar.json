@@ -1,0 +1,1622 @@
+{
+  "plan": {
+    "schema_version": "1.0",
+    "template": {
+      "id": "44444444-4444-4444-4444-444444444444",
+      "key": "daily_missions",
+      "name": "Daily Missions",
+      "feature_type": "mission",
+      "images": [
+        {
+          "key": "background_image",
+          "can_be_hidden": true
+        }
+      ],
+      "texts": [
+        {
+          "key": "header",
+          "can_be_hidden": true,
+          "custom_fields": [
+            "text_color"
+          ]
+        },
+        {
+          "key": "upper_text",
+          "can_be_hidden": true,
+          "custom_fields": [
+            "text_color"
+          ]
+        },
+        {
+          "key": "resource_badge",
+          "can_be_hidden": true,
+          "custom_fields": [
+            "text_color",
+            "badge_color"
+          ]
+        },
+        {
+          "key": "price_cut_badge",
+          "can_be_hidden": true,
+          "custom_fields": [
+            "text_color"
+          ]
+        },
+        {
+          "key": "fine_print",
+          "can_be_hidden": true,
+          "custom_fields": [
+            "text_color"
+          ]
+        }
+      ],
+      "buttons": [
+        {
+          "key": "close_button",
+          "can_be_hidden": true,
+          "click_actions": [
+            "close"
+          ],
+          "custom_cta_names": []
+        },
+        {
+          "key": "collect_all_button",
+          "can_be_hidden": true,
+          "click_actions": [
+            "collect_resource"
+          ],
+          "custom_cta_names": []
+        },
+        {
+          "key": "reach_all_button",
+          "can_be_hidden": true,
+          "click_actions": [
+            "deep_link"
+          ],
+          "custom_cta_names": []
+        },
+        {
+          "key": "collect_all_milestones_button",
+          "can_be_hidden": true,
+          "click_actions": [
+            "collect_resource"
+          ],
+          "custom_cta_names": []
+        }
+      ],
+      "customs": [
+        {
+          "key": "show_resource_area",
+          "kind": "boolean",
+          "default": false
+        }
+      ]
+    },
+    "ui": {
+      "text_system": "legacy",
+      "font_guid": "e7a63bee4e93df34ca0dd3548b336621",
+      "tmp_font_guid": null,
+      "frame_size": [
+        900.0,
+        1400.0
+      ],
+      "close_sprite_guid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "dimmer_alpha": 0.6,
+      "canvas": {
+        "render_mode": "overlay",
+        "override_sorting": true,
+        "sorting_order": 100,
+        "scale_mode": "scale_with_screen_size",
+        "reference_resolution": [
+          900.0,
+          1400.0
+        ],
+        "match": 0.5,
+        "source": "default"
+      }
+    },
+    "view": {
+      "class_name": "KinoaInAppDailyMissionsView",
+      "ns": "Kinoa.InApps",
+      "facade": null,
+      "facade_namespace": null
+    },
+    "paths": {
+      "out_dir": "Assets/Kinoa/InApps",
+      "prefab_path": "Assets/Kinoa/InApps/DailyMissions/KinoaInApp_DailyMissions.prefab",
+      "view_path": "Assets/Kinoa/InApps/DailyMissions/KinoaInAppDailyMissionsView.cs",
+      "plan_path": "Assets/Kinoa/InApps/DailyMissions/daily_missions.inapp-plan.json"
+    },
+    "nodes": [
+      {
+        "name": "Dimmer",
+        "parent": null,
+        "binding": "dimmer",
+        "components": [
+          "Image"
+        ],
+        "field": "dimmer",
+        "field_type": "Image",
+        "anchor_min": [
+          0.0,
+          0.0
+        ],
+        "anchor_max": [
+          1.0,
+          1.0
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "Frame",
+        "parent": null,
+        "binding": "frame",
+        "components": [],
+        "field": null,
+        "field_type": null,
+        "anchor_min": null,
+        "anchor_max": null,
+        "size": [
+          900.0,
+          1400.0
+        ],
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "Panel",
+        "parent": "Frame",
+        "binding": "panel",
+        "components": [],
+        "field": "panel",
+        "field_type": "RectTransform",
+        "anchor_min": [
+          0.04,
+          0.04
+        ],
+        "anchor_max": [
+          0.96,
+          0.96
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "BackgroundImage",
+        "parent": "Panel",
+        "binding": "image",
+        "components": [
+          "Image"
+        ],
+        "field": "backgroundImage",
+        "field_type": "Image",
+        "anchor_min": [
+          0.0,
+          0.0
+        ],
+        "anchor_max": [
+          1.0,
+          1.0
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": true,
+        "inactive": false,
+        "key": "background_image",
+        "bucket": "images",
+        "role": "background_image",
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "CloseButton",
+        "parent": "Panel",
+        "binding": "button",
+        "components": [
+          "Image",
+          "Button"
+        ],
+        "field": "closeButton",
+        "field_type": "Button",
+        "anchor_min": [
+          0.8913,
+          0.9402
+        ],
+        "anchor_max": [
+          0.9783,
+          0.9891
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": true,
+        "inactive": false,
+        "key": "close_button",
+        "bucket": "buttons",
+        "role": "close_button",
+        "click_actions": [
+          "close"
+        ],
+        "custom_cta_names": [],
+        "sprite_guid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "CloseButtonLabel",
+        "parent": "CloseButton",
+        "binding": "button_label",
+        "components": [
+          "Text"
+        ],
+        "field": "closeButtonLabel",
+        "field_type": "Text",
+        "anchor_min": [
+          0.0,
+          0.0
+        ],
+        "anchor_max": [
+          1.0,
+          1.0
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": "close_button",
+        "bucket": "buttons",
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "HeaderText",
+        "parent": "Panel",
+        "binding": "text",
+        "components": [
+          "Text"
+        ],
+        "field": "headerText",
+        "field_type": "Text",
+        "anchor_min": [
+          0.1739,
+          0.9239
+        ],
+        "anchor_max": [
+          0.8261,
+          0.9783
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": true,
+        "inactive": false,
+        "key": "header",
+        "bucket": "texts",
+        "role": "header",
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "UpperText",
+        "parent": "Panel",
+        "binding": "text",
+        "components": [
+          "Text"
+        ],
+        "field": "upperText",
+        "field_type": "Text",
+        "anchor_min": [
+          0.1196,
+          0.875
+        ],
+        "anchor_max": [
+          0.8804,
+          0.913
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": true,
+        "inactive": false,
+        "key": "upper_text",
+        "bucket": "texts",
+        "role": "upper_text",
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "ResourceBadgeText",
+        "parent": "Panel",
+        "binding": "text",
+        "components": [
+          "Text"
+        ],
+        "field": "resourceBadgeText",
+        "field_type": "Text",
+        "anchor_min": [
+          0.0217,
+          0.9348
+        ],
+        "anchor_max": [
+          0.1522,
+          0.9891
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": true,
+        "inactive": false,
+        "key": "resource_badge",
+        "bucket": "texts",
+        "role": "resource_badge",
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "PriceCutBadgeText",
+        "parent": "Panel",
+        "binding": "text",
+        "components": [
+          "Text"
+        ],
+        "field": "priceCutBadgeText",
+        "field_type": "Text",
+        "anchor_min": [
+          0.0109,
+          0.8804
+        ],
+        "anchor_max": [
+          0.0978,
+          0.913
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": true,
+        "inactive": false,
+        "key": "price_cut_badge",
+        "bucket": "texts",
+        "role": "price_cut_badge",
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "FinePrintText",
+        "parent": "Panel",
+        "binding": "text",
+        "components": [
+          "Text"
+        ],
+        "field": "finePrintText",
+        "field_type": "Text",
+        "anchor_min": [
+          0.0652,
+          0.0217
+        ],
+        "anchor_max": [
+          0.9348,
+          0.0543
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": true,
+        "inactive": false,
+        "key": "fine_print",
+        "bucket": "texts",
+        "role": "fine_print",
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "CollectAllButton",
+        "parent": "Panel",
+        "binding": "button",
+        "components": [
+          "Image",
+          "Button"
+        ],
+        "field": "collectAllButton",
+        "field_type": "Button",
+        "anchor_min": [
+          0.0435,
+          0.0761
+        ],
+        "anchor_max": [
+          0.3261,
+          0.1304
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": true,
+        "inactive": false,
+        "key": "collect_all_button",
+        "bucket": "buttons",
+        "role": "collect_all_button",
+        "click_actions": [
+          "collect_resource"
+        ],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": "collect_all",
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "CollectAllButtonLabel",
+        "parent": "CollectAllButton",
+        "binding": "button_label",
+        "components": [
+          "Text"
+        ],
+        "field": "collectAllButtonLabel",
+        "field_type": "Text",
+        "anchor_min": [
+          0.0,
+          0.0
+        ],
+        "anchor_max": [
+          1.0,
+          1.0
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": "collect_all_button",
+        "bucket": "buttons",
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "ReachAllButton",
+        "parent": "Panel",
+        "binding": "button",
+        "components": [
+          "Image",
+          "Button"
+        ],
+        "field": "reachAllButton",
+        "field_type": "Button",
+        "anchor_min": [
+          0.3587,
+          0.0761
+        ],
+        "anchor_max": [
+          0.6413,
+          0.1304
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": true,
+        "inactive": false,
+        "key": "reach_all_button",
+        "bucket": "buttons",
+        "role": "reach_all_button",
+        "click_actions": [
+          "deep_link"
+        ],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": "reach_all",
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "ReachAllButtonLabel",
+        "parent": "ReachAllButton",
+        "binding": "button_label",
+        "components": [
+          "Text"
+        ],
+        "field": "reachAllButtonLabel",
+        "field_type": "Text",
+        "anchor_min": [
+          0.0,
+          0.0
+        ],
+        "anchor_max": [
+          1.0,
+          1.0
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": "reach_all_button",
+        "bucket": "buttons",
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "CollectAllMilestonesButton",
+        "parent": "Panel",
+        "binding": "button",
+        "components": [
+          "Image",
+          "Button"
+        ],
+        "field": "collectAllMilestonesButton",
+        "field_type": "Button",
+        "anchor_min": [
+          0.6739,
+          0.0761
+        ],
+        "anchor_max": [
+          0.9565,
+          0.1304
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": true,
+        "inactive": false,
+        "key": "collect_all_milestones_button",
+        "bucket": "buttons",
+        "role": "collect_all_milestones_button",
+        "click_actions": [
+          "collect_resource"
+        ],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "CollectAllMilestonesButtonLabel",
+        "parent": "CollectAllMilestonesButton",
+        "binding": "button_label",
+        "components": [
+          "Text"
+        ],
+        "field": "collectAllMilestonesButtonLabel",
+        "field_type": "Text",
+        "anchor_min": [
+          0.0,
+          0.0
+        ],
+        "anchor_max": [
+          1.0,
+          1.0
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": "collect_all_milestones_button",
+        "bucket": "buttons",
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "TimerZone",
+        "parent": "Panel",
+        "binding": "zone",
+        "components": [],
+        "field": "timerRoot",
+        "field_type": "GameObject",
+        "anchor_min": [
+          0.3913,
+          0.138
+        ],
+        "anchor_max": [
+          0.6087,
+          0.1685
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": true,
+        "key": null,
+        "bucket": null,
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "TimerText",
+        "parent": "TimerZone",
+        "binding": "text",
+        "components": [
+          "Text"
+        ],
+        "field": "timerText",
+        "field_type": "Text",
+        "anchor_min": [
+          0.0,
+          0.0
+        ],
+        "anchor_max": [
+          1.0,
+          1.0
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "ResourceArea",
+        "parent": "Panel",
+        "binding": "zone",
+        "components": [
+          "HorizontalLayoutGroup"
+        ],
+        "field": "resourceAreaRoot",
+        "field_type": "GameObject",
+        "anchor_min": [
+          0.1,
+          0.215
+        ],
+        "anchor_max": [
+          0.9,
+          0.29
+        ],
+        "size": null,
+        "placed": false,
+        "can_be_hidden": false,
+        "inactive": true,
+        "key": null,
+        "bucket": null,
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "ResourceItem",
+        "parent": "ResourceArea",
+        "binding": "item_template",
+        "components": [],
+        "field": "resourceItemTemplate",
+        "field_type": "KinoaInAppItemView",
+        "anchor_min": null,
+        "anchor_max": null,
+        "size": [
+          160.0,
+          160.0
+        ],
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": true,
+        "key": null,
+        "bucket": null,
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "MissionTabs",
+        "parent": "Panel",
+        "binding": "zone",
+        "components": [
+          "HorizontalLayoutGroup"
+        ],
+        "field": "missionTabsRoot",
+        "field_type": "RectTransform",
+        "anchor_min": [
+          0.0217,
+          0.8043
+        ],
+        "anchor_max": [
+          0.9783,
+          0.8587
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "MissionTab",
+        "parent": "MissionTabs",
+        "binding": "tab_template",
+        "components": [
+          "Image",
+          "Button"
+        ],
+        "field": "missionTabTemplate",
+        "field_type": "KinoaInAppTabView",
+        "anchor_min": null,
+        "anchor_max": null,
+        "size": [
+          252.0,
+          70.0
+        ],
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": true,
+        "key": null,
+        "bucket": null,
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": "#00000000",
+        "scroll_axis": null
+      },
+      {
+        "name": "MissionTabLabel",
+        "parent": "MissionTab",
+        "binding": "tab_part",
+        "components": [
+          "Text"
+        ],
+        "field": null,
+        "field_type": "Text",
+        "anchor_min": [
+          0.0,
+          0.15
+        ],
+        "anchor_max": [
+          1.0,
+          1.0
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": "label",
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": "#DDE3F0",
+        "scroll_axis": null
+      },
+      {
+        "name": "MissionTabSelected",
+        "parent": "MissionTab",
+        "binding": "tab_part",
+        "components": [
+          "Image"
+        ],
+        "field": null,
+        "field_type": "GameObject",
+        "anchor_min": [
+          0.3,
+          0.0
+        ],
+        "anchor_max": [
+          0.7,
+          0.06
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": "selectedMarker",
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": "#F2C14E",
+        "scroll_axis": null
+      },
+      {
+        "name": "MissionList",
+        "parent": "Panel",
+        "binding": "scroll",
+        "components": [
+          "ScrollRect"
+        ],
+        "field": "missionScroll",
+        "field_type": "ScrollRect",
+        "anchor_min": [
+          0.0217,
+          0.2935
+        ],
+        "anchor_max": [
+          0.9783,
+          0.7935
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": "vertical"
+      },
+      {
+        "name": "MissionViewport",
+        "parent": "MissionList",
+        "binding": "viewport",
+        "components": [
+          "Image",
+          "RectMask2D"
+        ],
+        "field": null,
+        "field_type": null,
+        "anchor_min": [
+          0.0,
+          0.0
+        ],
+        "anchor_max": [
+          1.0,
+          1.0
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "MissionRows",
+        "parent": "MissionViewport",
+        "binding": "scroll_content",
+        "components": [
+          "VerticalLayoutGroup",
+          "ContentSizeFitter"
+        ],
+        "field": "missionRowsRoot",
+        "field_type": "RectTransform",
+        "anchor_min": [
+          0.0,
+          1.0
+        ],
+        "anchor_max": [
+          1.0,
+          1.0
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": "vertical"
+      },
+      {
+        "name": "MissionRow",
+        "parent": "MissionRows",
+        "binding": "mission_row_template",
+        "components": [
+          "Image"
+        ],
+        "field": "missionRowTemplate",
+        "field_type": "KinoaInAppMissionRowView",
+        "anchor_min": null,
+        "anchor_max": null,
+        "size": [
+          792.0,
+          140.0
+        ],
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": true,
+        "key": null,
+        "bucket": null,
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": "#2B3A5C",
+        "scroll_axis": null
+      },
+      {
+        "name": "MissionRowPlacement",
+        "parent": "MissionRow",
+        "binding": "row_part",
+        "components": [
+          "Image"
+        ],
+        "field": null,
+        "field_type": null,
+        "anchor_min": [
+          0.0227,
+          0.6
+        ],
+        "anchor_max": [
+          0.0795,
+          0.9
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": "#F2C14E",
+        "scroll_axis": null
+      },
+      {
+        "name": "MissionRowPlacementText",
+        "parent": "MissionRowPlacement",
+        "binding": "row_part",
+        "components": [
+          "Text"
+        ],
+        "field": null,
+        "field_type": "Text",
+        "anchor_min": [
+          0.0,
+          0.0
+        ],
+        "anchor_max": [
+          1.0,
+          1.0
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": "placementText",
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": "#FFFFFF",
+        "scroll_axis": null
+      },
+      {
+        "name": "MissionRowTitle",
+        "parent": "MissionRow",
+        "binding": "row_part",
+        "components": [
+          "Text"
+        ],
+        "field": null,
+        "field_type": "Text",
+        "anchor_min": [
+          0.1023,
+          0.7
+        ],
+        "anchor_max": [
+          0.6705,
+          0.95
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": "titleText",
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": "#FFFFFF",
+        "scroll_axis": null
+      },
+      {
+        "name": "MissionRowSubMission",
+        "parent": "MissionRow",
+        "binding": "row_part",
+        "components": [
+          "Text"
+        ],
+        "field": null,
+        "field_type": "Text",
+        "anchor_min": [
+          0.1023,
+          0.53
+        ],
+        "anchor_max": [
+          0.6705,
+          0.68
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": "subMissionText",
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": "#FFFFFF",
+        "scroll_axis": null
+      },
+      {
+        "name": "MissionRowStatus",
+        "parent": "MissionRow",
+        "binding": "row_part",
+        "components": [
+          "Text"
+        ],
+        "field": null,
+        "field_type": "Text",
+        "anchor_min": [
+          0.6932,
+          0.7
+        ],
+        "anchor_max": [
+          0.8409,
+          0.95
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": "statusText",
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": "#FFFFFF",
+        "scroll_axis": null
+      },
+      {
+        "name": "MissionRowDismiss",
+        "parent": "MissionRow",
+        "binding": "row_part",
+        "components": [
+          "Image",
+          "Button"
+        ],
+        "field": null,
+        "field_type": "Button",
+        "anchor_min": [
+          0.9205,
+          0.7
+        ],
+        "anchor_max": [
+          0.9773,
+          0.95
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": "dismissButton",
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": "#8892A6",
+        "scroll_axis": null
+      },
+      {
+        "name": "MissionRowDismissLabel",
+        "parent": "MissionRowDismiss",
+        "binding": "row_part",
+        "components": [
+          "Text"
+        ],
+        "field": null,
+        "field_type": "Text",
+        "anchor_min": [
+          0.0,
+          0.0
+        ],
+        "anchor_max": [
+          1.0,
+          1.0
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": "dismissLabel",
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": "#FFFFFF",
+        "scroll_axis": null
+      },
+      {
+        "name": "MissionRowProgress",
+        "parent": "MissionRow",
+        "binding": "row_part",
+        "components": [
+          "Image"
+        ],
+        "field": null,
+        "field_type": null,
+        "anchor_min": [
+          0.1023,
+          0.38
+        ],
+        "anchor_max": [
+          0.6705,
+          0.48
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": "#1A2238",
+        "scroll_axis": null
+      },
+      {
+        "name": "MissionRowProgressFill",
+        "parent": "MissionRowProgress",
+        "binding": "fill",
+        "components": [
+          "Image"
+        ],
+        "field": null,
+        "field_type": "Image",
+        "anchor_min": [
+          0.0,
+          0.0
+        ],
+        "anchor_max": [
+          1.0,
+          1.0
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": "progressFill",
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": "#4CD07D",
+        "scroll_axis": null
+      },
+      {
+        "name": "MissionRowProgressText",
+        "parent": "MissionRow",
+        "binding": "row_part",
+        "components": [
+          "Text"
+        ],
+        "field": null,
+        "field_type": "Text",
+        "anchor_min": [
+          0.6932,
+          0.34
+        ],
+        "anchor_max": [
+          0.8409,
+          0.52
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": "progressText",
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": "#FFFFFF",
+        "scroll_axis": null
+      },
+      {
+        "name": "MissionRowRewards",
+        "parent": "MissionRow",
+        "binding": "row_part",
+        "components": [
+          "HorizontalLayoutGroup"
+        ],
+        "field": null,
+        "field_type": "RectTransform",
+        "anchor_min": [
+          0.1023,
+          0.04
+        ],
+        "anchor_max": [
+          0.6136,
+          0.32
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": "rewardsRoot",
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "MissionRowReward",
+        "parent": "MissionRowRewards",
+        "binding": "item_template",
+        "components": [],
+        "field": null,
+        "field_type": "KinoaInAppItemView",
+        "anchor_min": null,
+        "anchor_max": null,
+        "size": [
+          140.0,
+          48.0
+        ],
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": true,
+        "key": null,
+        "bucket": null,
+        "role": "rewardTemplate",
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "MissionRowAction",
+        "parent": "MissionRow",
+        "binding": "row_part",
+        "components": [
+          "Image",
+          "Button"
+        ],
+        "field": null,
+        "field_type": "Button",
+        "anchor_min": [
+          0.75,
+          0.04
+        ],
+        "anchor_max": [
+          0.9773,
+          0.3
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": "actionButton",
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": "#F5A623",
+        "scroll_axis": null
+      },
+      {
+        "name": "MissionRowActionLabel",
+        "parent": "MissionRowAction",
+        "binding": "row_part",
+        "components": [
+          "Text"
+        ],
+        "field": null,
+        "field_type": "Text",
+        "anchor_min": [
+          0.0,
+          0.0
+        ],
+        "anchor_max": [
+          1.0,
+          1.0
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": "actionLabel",
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": "#FFFFFF",
+        "scroll_axis": null
+      }
+    ],
+    "customs": [
+      {
+        "key": "show_resource_area",
+        "kind": "boolean",
+        "default": false,
+        "target_node": "ResourceArea",
+        "target_field": "resourceAreaRoot"
+      }
+    ],
+    "report": {
+      "unplaced": [],
+      "estimated_positions": [
+        "ResourceArea"
+      ],
+      "warnings": [
+        "button 'collect_all_milestones_button' looks like collect_all_milestones but the template has no progress bar — it stays an ordinary button",
+        "ResourceArea was moved from its default position to free space (it overlapped MissionList)"
+      ],
+      "unmapped_layout": [],
+      "client_zones": [
+        "timer",
+        "resource_area"
+      ],
+      "needs_developer": [
+        "the prefab root gets a Canvas, CanvasScaler and GraphicRaycaster (defaults: overlay, sorting order 100, scale with screen size at 900x1400, match 0.5); check and align them with your UI setup, or remove them when the prefab is parented under an existing pop-up canvas",
+        "existing popup base class(es) OfferPopup detected — the generated view derives from MonoBehaviour and exposes a Closed event; adapt/wrap it in your popup manager rather than editing the generated class"
+      ],
+      "layout_source": {
+        "kind": "layout_artifact",
+        "template_key": "daily_missions",
+        "sha256": null,
+        "hand_placed": 0,
+        "adjusted": 0
+      },
+      "panel_bbox": {
+        "x": 0.04,
+        "y": 0.04,
+        "w": 0.92,
+        "h": 0.92
+      },
+      "mission_actions": {
+        "reach_all": "reach_all_button",
+        "collect_all": "collect_all_button",
+        "collect_all_milestones": null
+      },
+      "mission_geometry": {
+        "source": "layout_artifact",
+        "parts": [
+          "tabs",
+          "tab",
+          "task_list",
+          "row",
+          "progress_bar"
+        ],
+        "row_parts": [
+          "placement_badge",
+          "title",
+          "sub_mission",
+          "status",
+          "progress_track",
+          "progress_text",
+          "rewards",
+          "action_button",
+          "dismiss_button"
+        ],
+        "style": [
+          "card",
+          "card_text",
+          "accent",
+          "progress_track",
+          "progress_fill",
+          "action",
+          "dismiss",
+          "tab_text",
+          "tab_selected",
+          "bar_track",
+          "bar_fill"
+        ],
+        "defaulted": []
+      },
+      "layout_adjustments": [
+        {
+          "node": "ResourceArea",
+          "reason": "moved_to_free_space",
+          "with": "MissionList",
+          "from": [
+            [
+              0.1,
+              0.35
+            ],
+            [
+              0.9,
+              0.5
+            ]
+          ],
+          "to": [
+            [
+              0.1,
+              0.215
+            ],
+            [
+              0.9,
+              0.29
+            ]
+          ]
+        }
+      ],
+      "overlays": []
+    }
+  },
+  "files_sha256": {
+    "Assets/Kinoa/InApps/DailyMissions/KinoaInAppDailyMissionsView.cs": "d3c52b19cc35ac2e779209b7e44f8219d39f61b1b9c8339ebc8cd3e948616622",
+    "Assets/Kinoa/InApps/DailyMissions/daily_missions.inapp-plan.json": "bf35b679fae548c3ebd28049ae0d3076e0df51708f10c657708276631cde8251",
+    "Assets/Kinoa/InApps/Editor/KinoaInAppPrefabBuilder.cs": "98b9cdef5ee0d11933b8039a2899ff55e83cba01642c127eefc6b17619fe7568",
+    "Assets/Kinoa/InApps/Editor/Templates/KinoaInAppDailyMissionsBuildMenu.cs": "8355e5d00e6b90f467cf29a293a731b47d6412d8ab0a08b5f75a88fbc5f4d127",
+    "Assets/Kinoa/InApps/Shared/KinoaInAppFeatureHooks.cs": "699d1221f20cbf6eee47b30e414659f757d32a1f9831f9ccb1aa59e49bb0a8af",
+    "Assets/Kinoa/InApps/Shared/KinoaInAppHooks.cs": "b927d49a5bbd6a4328791570d3a4f740395530d50f905c7d76ede07341881847",
+    "Assets/Kinoa/InApps/Shared/KinoaInAppItemView.cs": "3b804084c1a27e935425e2c586130eb81d1413218e4d1f042edc2b3c978dc527",
+    "Assets/Kinoa/InApps/Shared/KinoaInAppMilestoneStepView.cs": "804ef50f215f66c44e547f76ef1f49b14b0422a719502166ff5c0d8128e6e7bc",
+    "Assets/Kinoa/InApps/Shared/KinoaInAppMissionRowView.cs": "894e91f6d283823c1257108a726abef4a523c1e0acc0305d807076f49a8e09a4",
+    "Assets/Kinoa/InApps/Shared/KinoaInAppTabView.cs": "fc3a4734654c0cb15a8c4ca4f083cd0290e0c3df30d0f78265d267e453e796c8"
+  }
+}

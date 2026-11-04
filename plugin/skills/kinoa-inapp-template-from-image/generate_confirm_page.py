@@ -50,7 +50,9 @@ Usage:
                  "client_rendered":[{"role","reason","bbox","feature"?}],
                  "needs_confirmation":[{"key","bucket","role","question"}],
                  "unsupported":[{"what","why","bbox"}],
-                 "mismatch"?: {"unmatched_slots":[],"unslotted_elements":[]},
+                 "mismatch"?: {"unmatched_slots":[],"unslotted_elements":[],
+                               "progress_bar_missing"?,"progress_bar_unexpected"?},
+                 "mission_feature"?: {"area_bbox","area_source","progress_bar","absorbed"},
                  "elements":[{"index","bucket","key","role","bbox","observed_text",
                               "confidence"}],
                  "source_image":{"path","width","height"}},
@@ -1045,8 +1047,14 @@ function renderBuildNotes() {
   var mmItems = (mm.unmatched_slots || []).map(function (k) {
     return { slot: k };
   }).concat((mm.unslotted_elements || []).map(function (e) { return { extra: e }; }));
+  // Mission path B: the template and the tip image disagree about the combined progress bar.
+  ['progress_bar_missing', 'progress_bar_unexpected'].forEach(function (k) {
+    if (mm[k]) mmItems.push({ bar: mm[k] });
+  });
   var mp = listPanel("Tip image mismatch", mmItems, "warn", function (li, it) {
-    if (it.slot) {
+    if (it.bar) {
+      li.innerHTML = '<b>Progress bar</b> &mdash; ' + esc(it.bar) + '.';
+    } else if (it.slot) {
       li.innerHTML = "<code>" + esc(it.slot) + "</code> &mdash; configured on the template, "
         + "not found on the image: place it on the mockup (the row's \u201cnot placed\u201d "
         + "badge) or it ships without coordinates.";
@@ -1111,13 +1119,20 @@ function renderBuildNotes() {
   if (wp) host.appendChild(wp);
 }
 
+// Client-rendered regions a feature owns (path B): tagged in the list and on
+// the overlay with the feature's name; anything else is a plain client zone.
+function crFeature(cr) {
+  return (cr.feature === 'milestone' || cr.feature === 'mission') ? cr.feature : '';
+}
+
 function renderClientRendered() {
   var host = document.getElementById("cr-list");
   var items = REPORT.client_rendered || [];
   if (!items.length) { host.innerHTML = ""; return; }
   var html = "<b>Client-rendered regions (" + items.length + ")</b><ul>";
   items.forEach(function (cr) {
-    var ft = cr.feature === "milestone" ? ' <span class="cr-feature">milestone feature</span>' : "";
+    var f = crFeature(cr);
+    var ft = f ? ' <span class="cr-feature">' + f + ' feature</span>' : "";
     html += "<li><code>" + esc(cr.role) + "</code>" + ft + " &mdash; " + esc(cr.reason) + "</li>";
   });
   host.innerHTML = html + "</ul>";
@@ -1153,7 +1168,8 @@ function renderOverlay(idx) {
   ov.classList.toggle("placing", !!PLACING);
   (REPORT.client_rendered || []).forEach(function (cr) {
     if (!cr.bbox) return;
-    ov.appendChild(boxEl(cr.bbox, "client", (cr.feature === "milestone" ? "milestone: " : "client: ") + cr.role));
+    var f = crFeature(cr);
+    ov.appendChild(boxEl(cr.bbox, "client", (f ? f + ': ' : 'client: ') + cr.role));
   });
   state.elements.forEach(function (e) {
     if (!e.bbox) return;

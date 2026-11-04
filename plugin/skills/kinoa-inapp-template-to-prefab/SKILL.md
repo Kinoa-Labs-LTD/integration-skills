@@ -244,7 +244,11 @@ holds it to that:
   the one card template and the progress-bar ladder (`parts.progress_bar`
   places its scroll; `style.bar_track` tints the ladder's backdrop and
   `style.bar_fill` each step's progress fill); a part the artifact has no box
-  for takes a neutral default.
+  for takes a neutral default. On a mission template the from-image path B
+  regions `mission_area` / `mission_progress_bar` (`client_rendered`, tagged
+  `feature: "mission"`) are known zones, never `unmapped_layout`: they stand in
+  for a missing `feature.area_bbox` / `feature.parts.progress_bar` (the bar only
+  when the template shows it).
 
 Option C without an envelope — from `build_result.json`:
 

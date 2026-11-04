@@ -356,7 +356,9 @@ bar to be shown.
 **The mission cards look generic.** The layout file has no missions geometry,
 so tabs, cards and bar use neutral defaults. Re-derive the layout from the
 template's tip image (the mockup module's path for templates that already exist
-on the Dashboard) and run this module again.
+on the Dashboard) and run this module again. Even when the tip image only shows
+where the missions area and the progress bar are, the prefab places the mission
+list and the bar there instead of on the defaults.
 
 **The mission progress bar's steps are squeezed.** The layout's box for the bar
 covered only the bar line. The plan report warns about it; re-derive the layout

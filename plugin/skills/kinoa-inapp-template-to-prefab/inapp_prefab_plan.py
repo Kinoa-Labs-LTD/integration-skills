@@ -554,7 +554,9 @@ def plan_prefab(template, layout=None, style=None, options=None):
             if (bucket, lkey) not in template_keys and lkey not in {k for _, k in template_keys}:
                 report["unmapped_layout"].append({"bucket": bucket, "key": lkey})
     is_milestone = (template.get("featureType") or "standard") == "milestone"
-    known_zones = CLIENT_ZONES + (MILESTONE_REGION_ROLES if is_milestone else ())
+    is_mission = (template.get("featureType") or "standard") == "mission"
+    known_zones = (CLIENT_ZONES + (MILESTONE_REGION_ROLES if is_milestone else ())
+                   + (MISSION_REGION_ROLES if is_mission else ()))
     for zname in (layout or {}).get("client_zones") or []:
         zname = zname.get("zone")
         if zname not in known_zones:
@@ -584,6 +586,12 @@ def plan_prefab(template, layout=None, style=None, options=None):
         feature_geo = {"parts": dict((layout or {}).get("feature_parts") or {}),
                        "row_parts": dict((layout or {}).get("feature_row_parts") or {}),
                        "style": dict((layout or {}).get("feature_style") or {})}
+        # Mission-feature regions (from-image path B) stand in for the geometry the artifact lacks.
+        if not feature_area and "mission_area" in zone_boxes:
+            feature_area = zone_boxes["mission_area"]
+        if ("progress_bar" not in feature_geo["parts"] and "mission_progress_bar" in zone_boxes
+                and _mission_bar_shown(template)):
+            feature_geo["parts"]["progress_bar"] = zone_boxes["mission_progress_bar"]
     if feature_area:
         used_boxes.append(feature_area)
     # The screen-level mission parts the Panel positions (tab strip, task list, bar) are inside the panel too.
@@ -772,6 +780,9 @@ CLIENT_ZONES = ("timer", "price_before_sale", "resource_area", "grand_prize_area
 # Milestone-feature regions (layout artifact client_rendered entries tagged feature "milestone", milestone templates
 # only): tip-image milestone art with no template slot. They place the ladder, the bar track and the score area.
 MILESTONE_REGION_ROLES = ("score_icon_image", "bar_image", "prize_image")
+# Mission-feature regions (client_rendered entries tagged feature "mission", mission templates only): the missions
+# area and the combined progress bar on the tip image. They stand in for feature.area_bbox / parts.progress_bar.
+MISSION_REGION_ROLES = ("mission_area", "mission_progress_bar")
 _LADDER_CLIP_GAP = 0.005    # image units left between the ladder and a clipped-out score icon / grand prize
 _LADDER_MIN_SHARE = 0.25    # a clip that would leave less of the base width than this is skipped
 _ZONE_DEFAULT_ANCHORS = {

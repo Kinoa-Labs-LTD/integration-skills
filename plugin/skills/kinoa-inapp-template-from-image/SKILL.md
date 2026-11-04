@@ -441,7 +441,9 @@ configuration**:
 
    `remap` matches every detected element onto the record's declared slots. It
    fails closed (`ok: false`) only on a feature-type mismatch — surface the
-   reason and stop. Element-level disagreements in either direction land in
+   reason and stop. Element-level disagreements in either direction (and, on
+   a mission record, a progress-bar disagreement with the template:
+   `progress_bar_missing` / `progress_bar_unexpected`) land in
    `report.mismatch` and the page renders them as a warning banner: the
    developer updates the tip image on the dashboard, places the missing
    elements by hand, or lets them ship without coordinates (`bbox: null` +
@@ -460,6 +462,19 @@ On a **milestone** record, tip-image visuals the template has no slot for
 reports them, with `grand_prize_area`, as client-rendered regions tagged
 `feature: "milestone"`, and they travel into the layout artifact for the prefab
 skill to place the milestone UI from. They are never template elements.
+
+On a **mission** record, `remap` bounds the missions area (`area_bbox`, else
+the union of the detected `parts`) and reports it as a client-rendered
+`mission_area` region tagged `feature: "mission"`, plus `mission_progress_bar`
+when the **template** shows the combined bar (`progressBar.display` is not
+`dont_show_at_all` — the image never decides). Elements inside the area — a
+card's Claim button, task text, reward art — are absorbed (enclosing chrome such
+as a full-image background is not)
+(`report.mission_feature.absorbed`), never matched onto slots or reported as
+unslotted; a template slot that does sit inside the area shows as unmatched for
+the developer to place. A bar the template shows but the image lacks is
+`mismatch.progress_bar_missing`; a bar on the image the template hides is
+`mismatch.progress_bar_unexpected` (likely a stale tip image) — relay both.
 
 No create, no update — path B is read-only against the dashboard.
 
