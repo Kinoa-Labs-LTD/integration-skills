@@ -94,7 +94,7 @@ own caching, threading and store integration.
 **6. Code is generated and the prefab is built.** Unity recompiles, the build
 runs through the template's own menu item, **Tools → Kinoa → In-Apps → Build
 Prefab → <template name> (<key>)**. Each template gets its own item. **Tools →
-Kinoa → In-Apps → Build All Prefabs From Plans** rebuilds every template. The module the module reads the build report back. A compile error or a
+Kinoa → In-Apps → Build All Prefabs From Plans** rebuilds every template. The module reads the build report back. A compile error or a
 missing field is reported as such. Nothing is claimed as built without the
 report.
 
@@ -300,9 +300,11 @@ it, your installed plugin copy predates the fix. A plan file whose report has
 no `panel_bbox` comes from the old planner. Reinstall the plugin, re-run the
 module for the template and rebuild the prefab.
 
-**Generation stopped with `milestone_plan_outdated`.** A milestone template's plan file
-was written before the milestone scroll ladder existed. Run the module again for that
-template so it plans afresh; nothing was written by the refused run.
+**Generation stopped with `milestone_plan_outdated` or `mission_plan_outdated`.**
+The template's plan file was written before the milestone scroll ladder (or, for a
+mission template, before the tabs, cards and progress-bar ladder) existed. Run the
+module again for that template so it plans afresh; nothing was written by the
+refused run.
 
 **The module stopped right away saying there is no Unity MCP.** Install one
 of the three supported servers, open the project in Unity and start its

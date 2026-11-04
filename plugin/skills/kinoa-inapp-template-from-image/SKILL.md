@@ -451,7 +451,10 @@ configuration**:
 5. On success the output is build-result-shaped — run Phase 4 on it unchanged
    (`generate_confirm_page.py --build build_for_page.json --image <tip image>`).
    The keys on the page are the record's own; tell the developer not to rename
-   them — the layout must join the dashboard record 1:1.
+   them — the layout must join the dashboard record 1:1. The page labels
+   the overlay boxes of feature-tagged client-rendered regions `milestone: <role>`
+   / `mission: <role>`, and its mismatch banner also lists the progress-bar
+   mismatches.
 6. From the confirmed envelope, produce the artifact exactly as in Phase 4
    (`layout --envelope … --analysis tip_analysis.json --out <template_key>.layout.json`),
    then cross-check against the record:

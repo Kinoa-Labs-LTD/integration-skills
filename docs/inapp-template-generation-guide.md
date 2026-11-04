@@ -93,6 +93,22 @@ layout file, so the prefab module can build its mission tabs, cards and
 progress-bar ladder to look like the mockup. These are never
 template elements.
 
+**Templates that already exist on the Dashboard.** If a template was created
+earlier and nobody kept its layout file, ask the module for the layout of that
+template. It reads the template's tip image and checks that the image matches
+the template: an image of a different kind of in-app (standard, milestone or
+mission) is refused, and any element that does not line up is listed for you to settle on the same review page, where you also confirm
+the boxes. Nothing on the Dashboard is changed, and the template's own element
+keys are kept. For a milestone template, the bar, score icon and prize art that
+have no slot on the template are recorded as client-rendered milestone regions,
+so the prefab module can place the step ladder, the progress track, the score
+area and the grand prize. For a mission template, the missions area (and the
+combined progress bar, when the template shows it) is recorded the same way;
+anything inside that area, such as a task card's Claim button, counts as part
+of the missions list rather than a slot. If the template hides the progress bar
+but the image shows one, or the other way round, the review page warns that the
+tip image looks out of date.
+
 Two deliberate boundaries:
 
 - **Templates stay in `draft`.** Activation belongs to the operator, in the
