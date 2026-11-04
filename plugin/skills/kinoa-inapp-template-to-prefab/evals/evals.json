@@ -51,7 +51,7 @@
       "id": 7,
       "name": "live-compile-gate-and-build-report",
       "prompt": "Unity is open with mcp-unity running. Build the prefab for template one_cta_offer using the fixture build_result and our OfferPopup.prefab as the style reference.",
-      "expected_output": "Phase 6 refreshes/recompiles through the MCP, reads the console for `error CS`, runs the menu item 'Tools/Kinoa/In-Apps/Build Prefabs From Plans', then READS the <key>.build-report.json from disk and reports ok/fields_missing/errors truthfully. A failed compile is reported as such — the skill never claims the prefab exists without the report and a Glob hit on the prefab path.",
+      "expected_output": "Phase 6 refreshes/recompiles through the MCP, reads the console for `error CS`, runs the template's own menu item from generate's `menu_item` ('Tools/Kinoa/In-Apps/Build Prefab/<name> (<key>)'; 'Tools/Kinoa/In-Apps/Build All Prefabs From Plans' rebuilds every plan), then READS the <key>.build-report.json from disk and reports ok/fields_missing/errors truthfully. A failed compile is reported as such — the skill never claims the prefab exists without the report and a Glob hit on the prefab path.",
       "files": []
     },
     {

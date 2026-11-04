@@ -125,7 +125,11 @@ class TestSharedFiles(unittest.TestCase):
 
     def test_builder_contract(self):
         builder = self.files["Assets/Kinoa/InApps/Editor/KinoaInAppPrefabBuilder.cs"]
-        self.assertIn('public const string MenuPath = "Tools/Kinoa/In-Apps/Build Prefabs From Plans";', builder)
+        self.assertIn('public const string MenuPath = "Tools/Kinoa/In-Apps/Build All Prefabs From Plans";', builder)
+        self.assertIn('public const string TemplateMenuRoot = "Tools/Kinoa/In-Apps/Build Prefab/";', builder)
+        self.assertIn("public static BuildReport BuildPlanMenu(string planPath)", builder)
+        self.assertIn("var report = BuildFromPlan(planPath);", builder)
+        self.assertIn("[KinoaInAppPrefabBuilder] {planPath}: built", builder)
         self.assertIn("[MenuItem(MenuPath)]", builder)
         self.assertIn("public static string BuildAll()", builder)
         self.assertIn("public static BuildReport BuildFromPlan(string planPath)", builder)
@@ -1345,6 +1349,8 @@ class TestUnifiedScroll(unittest.TestCase):
         for node in old["nodes"]:
             for key in ("feature_action", "color", "scroll_axis"):
                 del node[key]
+        # report.milestone_geometry came with the milestone-feature regions; this layout has none, so it adds no node
+        self.assertEqual(old["report"].pop("milestone_geometry"), {"regions": [], "ladder_source": "default", "clipped": []})
         self.assertEqual(_read_exact(os.path.join(GOLDEN_VIEWS, "milestone_per_step_plan.json")),
                          json.dumps(old, indent=2, ensure_ascii=False) + "\n")
 
@@ -1639,3 +1645,153 @@ class TestBuilderScroll(unittest.TestCase):
     def test_old_plan_cases_still_supported(self):
         for case in RELEASE_1_1_0_BUILDER_CASES:
             self.assertIn('case "%s":' % case, self.B)
+
+
+def _region_plan(regions=True, bar_slot=False, style=STYLE):
+    """A per-step milestone plan from an artifact carrying (or not) the milestone-feature regions."""
+    t = copy.deepcopy(TEMPLATE)
+    t["key"] = "chase"
+    t["featureType"] = "milestone"
+    t["features"] = {"milestone": {"key": "main_progressbar", "limit": 3, "mainActionTypes": ["close"]}}
+    if bar_slot:
+        t["images"].append({"key": "bar_image", "name": "Bar", "index": 10, "canBeHidden": False, "customFields": []})
+    with open(os.path.join(FIX, "one_cta_offer.layout.json"), encoding="utf-8") as fh:
+        art = json.load(fh)
+    art["template_key"] = "chase"
+    art["feature"] = {"type": "milestone", "area_bbox": {"x": 0.119, "y": 0.37, "w": 0.783, "h": 0.205}}
+    art["client_rendered"].append({"role": "grand_prize_area", "bbox": {"x": 0.787, "y": 0.393, "w": 0.114, "h": 0.183}})
+    if regions:
+        for role, bbox in (("score_icon_image", {"x": 0.119, "y": 0.406, "w": 0.095, "h": 0.125}),
+                           ("prize_image", {"x": 0.22, "y": 0.431, "w": 0.055, "h": 0.066}),
+                           ("bar_image", {"x": 0.207, "y": 0.45, "w": 0.587, "h": 0.027})):
+            art["client_rendered"].append({"role": role, "bbox": bbox, "feature": "milestone"})
+    result = mod.plan_prefab(t, mod.layout_from_artifact(art), style, {})
+    assert result["ok"], result
+    return result["plan"]
+
+
+_REGION_VIEW_LINES = (
+    "var total = steps.Count > 0 && steps[steps.Count - 1] != null ? steps[steps.Count - 1].Score : 0L;",
+    "if (milestoneTrack != null) milestoneTrack.gameObject.SetActive(true);",
+    "if (milestoneTrackFill != null) milestoneTrackFill.fillAmount = total > 0 ? Mathf.Clamp01((float)(feature.Progress / total)) : 0f;",
+    "if (milestoneScoreRoot != null) milestoneScoreRoot.SetActive(true);",
+    'if (milestoneProgressText != null) milestoneProgressText.text = $"{feature.Progress:0}/{total}";',
+)
+
+
+class TestMilestoneRegionView(unittest.TestCase):
+    def test_lines_present_when_the_nodes_exist(self):
+        view = _view(_region_plan())
+        bind = _method(view, "private void BindFeature()")
+        for line in _REGION_VIEW_LINES:
+            self.assertEqual(bind.count(line), 1, line)
+        self.assertEqual(bind.count("var total"), 1)
+        self.assertIn("        [SerializeField] private Image milestoneTrack;", view)
+        self.assertIn("        [SerializeField] private Image milestoneTrackFill;", view)
+        self.assertIn("        [SerializeField] private GameObject milestoneScoreRoot;", view)
+        self.assertIn("        [SerializeField] private Image milestoneScoreIcon;", view)
+        self.assertIn("        [SerializeField] private KinoaText milestoneProgressText;", view)
+        # the counter and the fill come after the steps are known, before any of them is used
+        self.assertLess(bind.index("var steps = "), bind.index("var total = "))
+
+    def test_feature_null_hides_track_and_score_root(self):
+        bind = _method(_view(_region_plan()), "private void BindFeature()")
+        self.assertIn("            if (milestoneScroll != null) milestoneScroll.gameObject.SetActive(feature != null);\n"
+                      "            if (feature == null)\n"
+                      "            {\n"
+                      "                if (milestoneTrack != null) milestoneTrack.gameObject.SetActive(false);\n"
+                      "                if (milestoneScoreRoot != null) milestoneScoreRoot.SetActive(false);\n"
+                      "                return;\n"
+                      "            }\n", bind)
+
+    def test_bar_slot_keeps_the_score_lines_only(self):
+        bind = _method(_view(_region_plan(bar_slot=True)), "private void BindFeature()")
+        self.assertNotIn("milestoneTrack", bind)
+        self.assertIn(_REGION_VIEW_LINES[0], bind)
+        self.assertIn(_REGION_VIEW_LINES[3], bind)
+        self.assertIn(_REGION_VIEW_LINES[4], bind)
+        self.assertIn("if (milestoneScoreRoot != null) milestoneScoreRoot.SetActive(false);", bind)
+
+    def test_no_regions_no_lines(self):
+        plan = _region_plan(regions=False)
+        view = _view(plan)
+        for token in ("milestoneTrack", "milestoneScoreRoot", "milestoneProgressText", "var total"):
+            self.assertNotIn(token, view)
+        self.assertIn("            if (feature == null) return;\n", view)
+
+    def test_ladder_anchors_never_reach_the_view(self):
+        # the grand-prize clip only moves MilestoneScroll's anchors (plan JSON); the C# does not change
+        with_area = _view(_region_plan(regions=False))
+        plan = _region_plan(regions=False)
+        scroll = next(n for n in plan["nodes"] if n["name"] == "MilestoneScroll")
+        scroll["anchor_max"] = [0.99, scroll["anchor_max"][1]]
+        self.assertEqual(_view(plan), with_area)
+
+    def test_tmp_text_and_no_forbidden_strings(self):
+        tmp = dict(STYLE, text_system="tmp")
+        for view in (_view(_region_plan()), _view(_region_plan(style=tmp)), _view(_region_plan(), {"facade": "present"})):
+            for bad in FORBIDDEN:
+                self.assertNotIn(bad, view)
+
+
+class TestPerTemplateBuildMenu(unittest.TestCase):
+    MENU = "Assets/Kinoa/InApps/Editor/Templates/KinoaInAppOneCtaOfferBuildMenu.cs"
+
+    def test_menu_label(self):
+        self.assertEqual(mod._menu_label("One CTA Template", "one_cta_offer"), "One CTA Template (one_cta_offer)")
+        self.assertEqual(mod._menu_label(None, "one_cta_offer"), "one_cta_offer")
+        self.assertEqual(mod._menu_label("", "k"), "k")
+        self.assertEqual(mod._menu_label("one_cta_offer", "one_cta_offer"), "one_cta_offer")
+        self.assertEqual(mod._menu_label('A/B \ "Sale" & 50% #1 _x', "k"), "A-B - Sale 50 1 x (k)")
+        self.assertEqual(mod._menu_label("  Two   words ", "k"), "Two words (k)")
+
+    def test_file_content(self):
+        files = mod.generate_code(_plan(), {})["files"]
+        self.assertIn(self.MENU, files)
+        c = files[self.MENU]
+        self.assertTrue(c.startswith("// <auto-generated>"))
+        for s in ("namespace Kinoa.InApps.Editor", "using UnityEditor;", "public static class KinoaInAppOneCtaOfferBuildMenu",
+                  'public const string MenuPath = KinoaInAppPrefabBuilder.TemplateMenuRoot + "One CTA Offer (one_cta_offer)";',
+                  'public const string PlanPath = "Assets/Kinoa/InApps/OneCtaOffer/one_cta_offer.inapp-plan.json";',
+                  "[MenuItem(MenuPath)]", "public static void Build() => KinoaInAppPrefabBuilder.BuildPlanMenu(PlanPath);",
+                  "[MenuItem(MenuPath, true)]", "private static bool CanBuild() => System.IO.File.Exists(PlanPath);"):
+            self.assertIn(s, c)
+        for bad in FORBIDDEN:
+            self.assertNotIn(bad, c)
+
+    def test_label_escaped_as_cs_literal_and_nameless(self):
+        plan = _plan()
+        plan["template"]["name"] = 'A/B "x" & 50%\ _n'
+        c = mod.generate_code(plan, {})["files"][self.MENU]
+        self.assertIn('TemplateMenuRoot + "A-B x 50- n (one_cta_offer)";', c)
+        plan["template"]["name"] = None
+        c = mod.generate_code(plan, {})["files"][self.MENU]
+        self.assertIn('TemplateMenuRoot + "one_cta_offer";', c)
+
+    def test_cs_literal_escapes_backslash_quote(self):
+        bs = chr(92)
+        self.assertEqual(mod._cs_string('a' + bs + 'b"c'), '"a' + bs + bs + 'b' + bs + '"c"')
+
+    def test_cli_rewrites_menu_and_reports_items(self):
+        import subprocess
+        import sys
+        import tempfile
+        root = tempfile.mkdtemp()
+        plan_path = os.path.join(root, "p.json")
+        with open(plan_path, "w", encoding="utf-8") as fh:
+            json.dump(_plan(), fh)
+        cmd = [sys.executable, HELPER, "generate", "--plan", plan_path, "--project-root", root]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        data = json.loads(res.stdout)
+        self.assertIn(self.MENU, data["written"])
+        self.assertEqual(data["menu_item"], "Tools/Kinoa/In-Apps/Build Prefab/One CTA Offer (one_cta_offer)")
+        self.assertEqual(data["menu_item_all"], "Tools/Kinoa/In-Apps/Build All Prefabs From Plans")
+        path = os.path.join(root, *self.MENU.split("/"))
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("stale")
+        res = subprocess.run(cmd + ["--overwrite"], capture_output=True, text=True)
+        data = json.loads(res.stdout)
+        self.assertIn(self.MENU, data["written"])
+        self.assertNotIn(self.MENU, data["skipped"])
+        with open(path, encoding="utf-8") as fh:
+            self.assertNotIn("stale", fh.read())

@@ -92,8 +92,9 @@ downloader or a price lookup of its own; those belong to your game, with its
 own caching, threading and store integration.
 
 **6. Code is generated and the prefab is built.** Unity recompiles, the build
-runs through the menu item **Tools → Kinoa → In-Apps → Build Prefabs From
-Plans**, and the module reads the build report back. A compile error or a
+runs through the template's own menu item, **Tools → Kinoa → In-Apps → Build
+Prefab → <template name> (<key>)**. Each template gets its own item. **Tools →
+Kinoa → In-Apps → Build All Prefabs From Plans** rebuilds every template. The module the module reads the build report back. A compile error or a
 missing field is reported as such. Nothing is claimed as built without the
 report.
 
@@ -109,6 +110,7 @@ plainly what was verified in Unity and what was not.
 | `Assets/Kinoa/InApps/<Name>/KinoaInApp<Name>View.cs` | Generated | Fills the prefab from an in-app message and routes its buttons |
 | `Assets/Kinoa/InApps/<Name>/<key>.inapp-plan.json` | Generated | The plan the prefab is built from |
 | `Assets/Kinoa/InApps/Editor/KinoaInAppPrefabBuilder.cs` | Tool-owned | Builds any plan into a prefab; refreshed on every run |
+| `Assets/Kinoa/InApps/Editor/Templates/KinoaInApp<Name>BuildMenu.cs` | Tool-owned | Adds this template's own "Build Prefab" menu item; refreshed on every run |
 | `Assets/Kinoa/InApps/Shared/KinoaInAppHooks.cs` | **Yours** | Where you assign your image loader, price lookup and icon lookup |
 | `Assets/Kinoa/InApps/Shared/KinoaInAppItemView.cs` | **Yours** | The row used for reward items (the resource area and the rewards on a mission card) |
 | `Assets/Kinoa/InApps/Shared/KinoaInAppFeatureHooks.cs` | **Yours** | Where you assign the method that runs a milestone (or mission-bar) button's purchase, ad or link action |
@@ -154,6 +156,12 @@ calls the SDK's collect method. While a request is running, the milestone
 buttons ignore taps, so a double tap never claims or buys twice.
 Granting the rewards to the player's economy is a marked to-do, placed exactly
 where the server has confirmed the claim.
+
+When the tip image shows milestone art the template has no slot for (the score
+icon, the bar, the prizes), the module uses those boxes to place the steps
+between the score icon and the grand prize. It also adds a bar that fills with
+the player's progress and a score area with a `progress/total` counter; you
+assign the score icon's sprite.
 
 Milestone designs differ in where the claim button sits, and the module
 supports both:

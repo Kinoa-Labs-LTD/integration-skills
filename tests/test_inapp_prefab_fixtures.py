@@ -52,7 +52,7 @@ class TestSkillDoc(unittest.TestCase):
                     "--layout-artifact", "layout-artifact.md", "kinoa_init.py\" show",
                     "kinoa_dashboard_inapp_template.py\" get"):
             self.assertIn(cmd, doc)
-        self.assertIn("Tools/Kinoa/In-Apps/Build Prefabs From Plans", doc)
+        self.assertIn("Tools/Kinoa/In-Apps/Build All Prefabs From Plans", doc)
         self.assertIn("references/unity-mcp-capabilities.md", doc)
         self.assertIn("TODO(kinoa-prefab)", doc)
         # the hand-off must tell the developer to set up the canvas; the builder adds none

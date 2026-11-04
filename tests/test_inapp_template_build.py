@@ -1301,6 +1301,134 @@ class TestRemapRecord(unittest.TestCase):
         self.assertIn("summary record", res["reason"])
 
 
+class TestMilestoneFeatureRegions(unittest.TestCase):
+    """Path B: milestone visuals with no template slot become client-rendered
+    milestone-feature regions instead of 'unslotted' warnings."""
+
+    BOX = {"x": 0.1, "y": 0.1, "w": 0.1, "h": 0.1}
+
+    def _els(self, extra):
+        base = [
+            {"role": "background_image", "bbox": {"x": 0, "y": 0, "w": 1, "h": 1}},
+            {"role": "close_button", "bbox": {"x": 0.8, "y": 0.02, "w": 0.1, "h": 0.05}},
+        ]
+        return base + extra
+
+    def _visuals(self):
+        return [
+            {"role": "bar_image", "bbox": {"x": 0.1, "y": 0.5, "w": 0.8, "h": 0.1}},
+            {"role": "score_icon_image", "bbox": {"x": 0.05, "y": 0.5, "w": 0.1, "h": 0.1}},
+            {"role": "prize_image", "bbox": {"x": 0.3, "y": 0.5, "w": 0.1, "h": 0.1}},
+            {"role": "prize_image", "bbox": {"x": 0.6, "y": 0.5, "w": 0.1, "h": 0.1}},
+            {"role": "grand_prize_area", "bbox": {"x": 0.4, "y": 0.2, "w": 0.2, "h": 0.2}},
+        ]
+
+    def _record(self, extra_slot_roles=()):
+        ana = analysis(self._els([{"role": r, "bbox": self.BOX} for r in extra_slot_roles]),
+                       feature={"type": "milestone"})
+        payload, _ = build_mod.build_payload(ana)
+        return dict(payload, id="tpl-m", status="active")
+
+    def _remap(self, record, feature_type="milestone", extra=None):
+        ana = analysis(self._els(extra if extra is not None else self._visuals()),
+                       feature={"type": feature_type})
+        ana["source_image"] = {"path": "tip.png", "width": 720, "height": 960}
+        return build_mod.remap_record(record, ana)
+
+    def _geom(self, entries):
+        return {"source_image": {"sha256": "f" * 64, "width": 720, "height": 960,
+                                 "filename": "m.png"},
+                "elements": [], "client_rendered": entries}
+
+    def test_constant_has_exactly_the_four_roles(self):
+        regions = build_mod.MILESTONE_FEATURE_REGIONS
+        self.assertEqual(set(regions),
+                         {"bar_image", "score_icon_image", "prize_image", "grand_prize_area"})
+        self.assertEqual(regions["grand_prize_area"], build_mod.CLIENT_RENDERED["grand_prize_area"])
+        self.assertEqual(
+            regions["bar_image"],
+            "Milestone feature: the progress-bar artwork. The client draws the milestone ladder here.")
+        self.assertEqual(
+            regions["score_icon_image"],
+            "Milestone feature: the score icon at the start of the bar. "
+            "The client shows the player's progress here.")
+        self.assertEqual(
+            regions["prize_image"],
+            "Milestone feature: a step's reward art on the bar. "
+            "The client draws each step's reward here.")
+
+    def test_unslotted_visuals_become_milestone_regions(self):
+        res = self._remap(self._record())
+        self.assertTrue(res["ok"], res)
+        rep = res["report"]
+        crs = rep["client_rendered"]
+        self.assertEqual([c["role"] for c in crs],
+                         ["grand_prize_area", "bar_image", "score_icon_image",
+                          "prize_image", "prize_image"])
+        for c in crs:
+            self.assertEqual(c["feature"], "milestone")
+            self.assertEqual(c["reason"], build_mod.MILESTONE_FEATURE_REGIONS[c["role"]])
+            self.assertTrue(c["bbox"])
+        self.assertNotIn("unslotted_elements", rep["mismatch"])
+        self.assertFalse([w for w in rep["warnings"] if "stale tip image" in w])
+
+    def test_a_real_slot_still_wins(self):
+        res = self._remap(self._record(extra_slot_roles=["bar_image"]))
+        rep = res["report"]
+        self.assertIn("bar_image", [t["role"] for t in rep["elements"]])
+        self.assertEqual([c["role"] for c in rep["client_rendered"]],
+                         ["grand_prize_area", "score_icon_image", "prize_image", "prize_image"])
+
+    def test_leftover_unslotted_still_warns(self):
+        extra = self._visuals() + [{"role": "header", "bbox": self.BOX, "observed_text": "H"}]
+        res = self._remap(self._record(), extra=extra)
+        rep = res["report"]
+        self.assertEqual([u["role"] for u in rep["mismatch"]["unslotted_elements"]], ["header"])
+        self.assertTrue([w for w in rep["warnings"] if "stale tip image" in w])
+
+    def test_standard_record_is_unchanged(self):
+        payload, _ = build_mod.build_payload(analysis(self._els([])))
+        record = dict(payload, id="tpl-s", status="active")
+        res = self._remap(record, feature_type="standard",
+                          extra=[{"role": "bar_image", "bbox": self.BOX}])
+        rep = res["report"]
+        self.assertEqual([u["role"] for u in rep["mismatch"]["unslotted_elements"]], ["bar_image"])
+        self.assertTrue([w for w in rep["warnings"] if "stale tip image" in w])
+        self.assertFalse(rep["client_rendered"])
+
+    def test_build_layout_tags_milestone_regions_from_an_older_page(self):
+        res = self._remap(self._record())
+        geom = _geometry_for(res["payload"], res["report"])
+        self.assertNotIn("feature", geom["client_rendered"][0])
+        layout, rep = build_mod.build_layout(res["payload"], geom, None)
+        self.assertEqual(rep["errors"], [])
+        self.assertEqual(len(layout["client_rendered"]), 5)
+        for c in layout["client_rendered"]:
+            self.assertEqual(c["feature"], "milestone")
+        self.assertEqual(layout["schema_version"], "1.1")
+        self.assertTrue(build_mod.validate_layout(layout, res["payload"])["ok"])
+
+    def test_build_layout_honours_the_geometry_tag(self):
+        res = self._remap(self._record())
+        geom = self._geom([{"role": "timer", "bbox": self.BOX, "feature": "milestone"}])
+        layout, _ = build_mod.build_layout(res["payload"], geom, None)
+        self.assertEqual(layout["client_rendered"],
+                         [{"role": "timer", "bbox": self.BOX, "feature": "milestone"}])
+
+    def test_build_layout_standard_shape_is_frozen(self):
+        ana = copy.deepcopy(ONE_CTA)
+        ana["source_image"] = {"path": "art/mockup.png", "width": 720, "height": 960}
+        payload, report = build_mod.build_payload(ana)
+        geom = _geometry_for(payload, report)
+        layout, _ = build_mod.build_layout(payload, geom, ana)
+        for c in layout["client_rendered"]:
+            self.assertEqual(set(c), {"role", "bbox"})
+        # a milestone-region role on a standard payload stays untagged
+        geom["client_rendered"].append({"role": "bar_image", "bbox": self.BOX})
+        layout, _ = build_mod.build_layout(payload, geom, ana)
+        self.assertEqual(set(layout["client_rendered"][-1]), {"role", "bbox"})
+
+
 class TestLayoutCLI(unittest.TestCase):
     def run_cli(self, argv):
         import io

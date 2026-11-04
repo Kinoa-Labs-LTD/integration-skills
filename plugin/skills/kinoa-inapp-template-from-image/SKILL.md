@@ -455,6 +455,12 @@ configuration**:
    then cross-check against the record:
    `validate --payload record.json --layout <template_key>.layout.json`.
 
+On a **milestone** record, tip-image visuals the template has no slot for
+(`bar_image`, `score_icon_image`, `prize_image`) are not mismatches: `remap`
+reports them, with `grand_prize_area`, as client-rendered regions tagged
+`feature: "milestone"`, and they travel into the layout artifact for the prefab
+skill to place the milestone UI from. They are never template elements.
+
 No create, no update — path B is read-only against the dashboard.
 
 **Next step for Unity games — visualise it.** Keep `<template_key>.layout.json`:

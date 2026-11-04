@@ -680,6 +680,27 @@ class ConfirmPageInteractionTests(_PageCase):
         self.assertTrue(got["off"]["joined"])   # bbox<->row join survives
         self.assertEqual(got["after"], 0)
 
+    def test_milestone_feature_regions_are_tagged(self):
+        self._with_image()
+        build = _build_result()
+        build["report"]["client_rendered"] = [
+            {"role": "timer", "reason": "r", "bbox": {"x": 0.1, "y": 0.1, "w": 0.1, "h": 0.1}},
+            {"role": "bar_image", "reason": "Milestone feature: bar", "feature": "milestone",
+             "bbox": {"x": 0.2, "y": 0.2, "w": 0.1, "h": 0.1}},
+        ]
+        got = self.drive("""
+            const env = H.envelope();
+            return { list: d.getElementById("cr-list").innerHTML,
+                     labels: [...d.querySelectorAll("#overlay .box.client .tag")].map(t => t.textContent),
+                     cr: env.geometry.client_rendered };
+        """, build=build)
+        self.assertEqual(got["list"].count("milestone feature"), 1)
+        self.assertIn("milestone: bar_image", got["labels"])
+        self.assertIn("client: timer", got["labels"])
+        self.assertEqual(got["cr"][0],
+                         {"role": "timer", "bbox": {"x": 0.1, "y": 0.1, "w": 0.1, "h": 0.1}})
+        self.assertEqual(got["cr"][1]["feature"], "milestone")
+
     def test_proposed_rows_have_no_destructive_remove(self):
         got = self.drive("""
             const before = { removes: H.count('[data-fid^="rm-"]'),

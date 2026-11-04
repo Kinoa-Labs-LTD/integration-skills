@@ -252,6 +252,11 @@ MISSION_RESERVED_NODE_NAMES = {"MissionTabs", "MissionTab", "MissionTabLabel", "
                                "MissionBarScroll", "MissionBarViewport", "MissionBarContent", "MissionBarStep"}
 MISSION_RESERVED_FIELDS = {"missionTabsRoot", "missionTabTemplate", "missionScroll", "missionRowsRoot",
                            "missionBarScroll", "missionBarContent", "missionBarStepTemplate"}
+# Reserved on milestone templates only, the same way: the bar track and score area the milestone-feature regions add.
+MILESTONE_RESERVED_NODE_NAMES = {"MilestoneTrack", "MilestoneTrackFill", "MilestoneScoreArea", "MilestoneScoreIcon",
+                                 "MilestoneProgressText"}
+MILESTONE_RESERVED_FIELDS = {"milestoneTrack", "milestoneTrackFill", "milestoneScoreRoot", "milestoneScoreIcon",
+                             "milestoneProgressText"}
 
 
 def pascal(key):
@@ -436,7 +441,11 @@ def _index_layout(layout):
         by_key.setdefault(e.get("key"), e)
     for z in (layout or {}).get("client_zones") or []:
         if z.get("bbox"):
-            zones[z.get("zone")] = z["bbox"]
+            name = z.get("zone")
+            if name in MILESTONE_REGION_ROLES and name in zones:
+                zones[name] = _union([zones[name], z["bbox"]])   # one prize_image per step: the ladder spans them all
+            else:
+                zones[name] = z["bbox"]
     return by_pair, by_key, zones
 
 
@@ -544,9 +553,11 @@ def plan_prefab(template, layout=None, style=None, options=None):
         for (bucket, lkey), e in by_pair.items():
             if (bucket, lkey) not in template_keys and lkey not in {k for _, k in template_keys}:
                 report["unmapped_layout"].append({"bucket": bucket, "key": lkey})
+    is_milestone = (template.get("featureType") or "standard") == "milestone"
+    known_zones = CLIENT_ZONES + (MILESTONE_REGION_ROLES if is_milestone else ())
     for zname in (layout or {}).get("client_zones") or []:
         zname = zname.get("zone")
-        if zname not in CLIENT_ZONES:
+        if zname not in known_zones:
             report["unmapped_layout"].append({"zone": zname})
 
     # Panel = the union of every box the plan positions: the background art, every slot, every
@@ -563,6 +574,8 @@ def plan_prefab(template, layout=None, style=None, options=None):
                 used_boxes.append(found["bbox"])
     wanted_zones = _wanted_zones(template)
     used_boxes.extend(box for zone, box in zone_boxes.items() if zone in wanted_zones)
+    if is_milestone:
+        used_boxes.extend(zone_boxes[role] for role in MILESTONE_REGION_ROLES if role in zone_boxes)
     feature_area = (layout or {}).get("feature_area")
     feature_geo = {"parts": {}, "row_parts": {}, "style": {}}
     if (layout or {}).get("feature_type") not in (None, template.get("featureType") or "standard"):
@@ -614,6 +627,9 @@ def plan_prefab(template, layout=None, style=None, options=None):
     if (template.get("featureType") or "standard") == "mission":
         taken_names |= MISSION_RESERVED_NODE_NAMES
         taken_fields |= MISSION_RESERVED_FIELDS
+    elif is_milestone:
+        taken_names |= MILESTONE_RESERVED_NODE_NAMES
+        taken_fields |= MILESTONE_RESERVED_FIELDS
 
     # Art behind, controls and copy in front (the layout contract's z-order): the Editor builder
     # renders siblings in node order, so every image comes first, then buttons/texts by index.
@@ -736,7 +752,7 @@ def plan_prefab(template, layout=None, style=None, options=None):
         placed_keys = {n["key"] for n in nodes if n.get("binding") == "button" and n.get("placed") and n.get("key")}
         plan["milestone"] = _milestone_cta(template, nodes, layout_has_elements, placed_keys,
                                            options.get("milestone_cta"), report)
-    _add_feature(plan, template, by_key, panel_bbox, feature_area, feature_geo)
+    _add_feature(plan, template, by_key, panel_bbox, feature_area, feature_geo, zone_boxes)
     # Set placed=False on every node whose name is in estimated_positions
     estimated_node_names = set(report["estimated_positions"])
     for node in plan["nodes"]:
@@ -753,6 +769,11 @@ def plan_prefab(template, layout=None, style=None, options=None):
 
 ITEM_BEARING_ACTIONS = ("collect_resource", "billing", "soft_billing", "show_ad", "promise_rewards")
 CLIENT_ZONES = ("timer", "price_before_sale", "resource_area", "grand_prize_area")
+# Milestone-feature regions (layout artifact client_rendered entries tagged feature "milestone", milestone templates
+# only): tip-image milestone art with no template slot. They place the ladder, the bar track and the score area.
+MILESTONE_REGION_ROLES = ("score_icon_image", "bar_image", "prize_image")
+_LADDER_CLIP_GAP = 0.005    # image units left between the ladder and a clipped-out score icon / grand prize
+_LADDER_MIN_SHARE = 0.25    # a clip that would leave less of the base width than this is skipped
 _ZONE_DEFAULT_ANCHORS = {
     "timer": ([0.3, 0.02], [0.7, 0.07]),
     "price_before_sale": ([0.3, 0.26], [0.7, 0.31]),
@@ -991,11 +1012,81 @@ def _add_milestone_main_button(plan, template, panel_bbox):
                        field="milestoneMainButtonLabel", field_type="Text", anchor_min=[0.0, 0.0], anchor_max=[1.0, 1.0]))
 
 
-def _add_feature(plan, template, by_key, panel_bbox, feature_area=None, feature_geo=None):
+def _milestone_ladder_box(feature_area, bar_slot_box, zone_boxes, warnings):
+    """(image bbox or None, ladder_source, clipped roles) for MilestoneScroll.
+
+    Base box: feature.area_bbox, else the union of the milestone-feature regions present (with the grand prize box),
+    else the bar_image slot, else none (default anchors). A score icon left of the base centre and a grand prize right
+    of it are then clipped out horizontally, unless that would leave under 25% of the base width (a warning says so).
+    The vertical extent is always the base box's.
+    """
+    regions = [zone_boxes[role] for role in MILESTONE_REGION_ROLES if role in zone_boxes]
+    grand = zone_boxes.get("grand_prize_area")
+    if feature_area:
+        base, source = feature_area, "area_bbox"
+    elif regions:
+        base, source = _union(regions + ([grand] if grand else [])), "regions"
+    elif bar_slot_box:
+        base, source = bar_slot_box, "bar_slot"
+    else:
+        return None, "default", []
+    x0, x1 = float(base["x"]), float(base["x"]) + float(base["w"])
+    centre, floor = (x0 + x1) / 2.0, _LADDER_MIN_SHARE * float(base["w"])
+    clipped = []
+    score = zone_boxes.get("score_icon_image")
+    if score and score["x"] + score["w"] / 2.0 < centre:
+        new_x0 = max(x0, score["x"] + score["w"] + _LADDER_CLIP_GAP)
+        if x1 - new_x0 < floor:
+            warnings.append("milestone ladder: clipping out the score icon would leave the ladder under 25% of its "
+                            "base width; the clip was skipped — check the score_icon_image and area boxes")
+        elif new_x0 > x0:
+            x0 = new_x0
+            clipped.append("score_icon_image")
+    if grand and grand["x"] + grand["w"] / 2.0 > centre:
+        new_x1 = min(x1, grand["x"] - _LADDER_CLIP_GAP)
+        if new_x1 - x0 < floor:
+            warnings.append("milestone ladder: clipping out the grand prize would leave the ladder under 25% of its "
+                            "base width; the clip was skipped — check the grand_prize_area and area boxes")
+        elif new_x1 < x1:
+            x1 = new_x1
+            clipped.append("grand_prize_area")
+    if not clipped:
+        return base, source, clipped
+    return {"x": x0, "y": base["y"], "w": x1 - x0, "h": base["h"]}, source, sorted(clipped)
+
+
+def _add_milestone_regions(plan, template, zone_boxes, panel_bbox):
+    """The bar track (bar_image region, when no bar_image slot draws the art) and the score area (score_icon_image)."""
+    nodes = plan["nodes"]
+    track, score = zone_boxes.get("bar_image"), zone_boxes.get("score_icon_image")
+    if track and not any(s.get("key") == "bar_image" for s in template["images"]):
+        amin, amax = anchors_from_bbox(track, panel_bbox)
+        nodes.append(_node("MilestoneTrack", "Panel", "image", ["Image"], field="milestoneTrack", field_type="Image",
+                           anchor_min=amin, anchor_max=amax))
+        nodes.append(_node("MilestoneTrackFill", "MilestoneTrack", "fill", ["Image"], field="milestoneTrackFill",
+                           field_type="Image", anchor_min=[0.0, 0.0], anchor_max=[1.0, 1.0]))
+    if score:
+        amin, amax = anchors_from_bbox(score, panel_bbox)
+        return [_node("MilestoneScoreArea", "Panel", "zone", [], field="milestoneScoreRoot", field_type="GameObject",
+                      anchor_min=amin, anchor_max=amax, placed=True),
+                _node("MilestoneScoreIcon", "MilestoneScoreArea", "image", ["Image"], field="milestoneScoreIcon",
+                      field_type="Image", anchor_min=[0.0, 0.3], anchor_max=[1.0, 1.0]),
+                _node("MilestoneProgressText", "MilestoneScoreArea", "text", ["Text"], field="milestoneProgressText",
+                      field_type="Text", anchor_min=[0.0, 0.0], anchor_max=[1.0, 0.3])]
+    return []
+
+
+def _add_feature(plan, template, by_key, panel_bbox, feature_area=None, feature_geo=None, zone_boxes=None):
     ftype = template.get("featureType") or "standard"
     nodes = plan["nodes"]
     if ftype == "milestone":
-        scroll_box = feature_area or (by_key.get("bar_image") or {}).get("bbox")
+        zone_boxes = zone_boxes or {}
+        scroll_box, source, clipped = _milestone_ladder_box(feature_area, (by_key.get("bar_image") or {}).get("bbox"),
+                                                            zone_boxes, plan["report"]["warnings"])
+        plan["report"]["milestone_geometry"] = {
+            "regions": sorted(r for r in MILESTONE_REGION_ROLES + ("grand_prize_area",) if r in zone_boxes),
+            "ladder_source": source, "clipped": clipped}
+        score_nodes = _add_milestone_regions(plan, template, zone_boxes, panel_bbox)   # the track goes behind the ladder
         amin, amax = _zone_anchors(plan, "MilestoneScroll", {}, panel_bbox, "milestone_scroll", bbox=scroll_box)
         nodes.extend(_scroll_nodes(("MilestoneScroll", "MilestoneViewport", "MilestoneContent"),
                                    ("milestoneScroll", "milestoneContent"), amin, amax, placed=bool(scroll_box)))
@@ -1003,6 +1094,7 @@ def _add_feature(plan, template, by_key, panel_bbox, feature_area=None, feature_
         nodes.append(_node("MilestoneStep", "MilestoneContent", "milestone_step", [], field="milestoneStepTemplate",
                            field_type="KinoaInAppMilestoneStepView", size=_step_size(plan, panel_bbox, amin, amax),
                            inactive=True, step_button=ms.get("cta_mode") == "per_step"))
+        nodes.extend(score_nodes)
         if not ((ms.get("single_cta") or {}).get("key")):   # a template slot, when there is one, IS the single CTA
             _add_milestone_main_button(plan, template, panel_bbox)
     elif ftype == "mission":
@@ -1187,7 +1279,8 @@ _SCAN_STEP = 0.005
 _MIN_SLOT = 0.02         # a moved box is never shrunk below this height
 _UNPLACED_ROW_PX = 88.0  # builder: each Unplaced child is 80 px + 8 px spacing
 # Nodes that hold other UI (rows, steps, tabs, items): never trimmed against what sits on them.
-_CONTAINERS = ("MissionList", "MissionTabs", "MissionBarScroll", "MilestoneScroll", "ResourceArea", "GrandPrizeArea")
+_CONTAINERS = ("MissionList", "MissionTabs", "MissionBarScroll", "MilestoneScroll", "ResourceArea", "GrandPrizeArea",
+               "MilestoneScoreArea")
 
 
 def _is_flow(node):
@@ -2046,7 +2139,8 @@ namespace Kinoa.InApps.Editor
     /// </summary>
     public static class KinoaInAppPrefabBuilder
     {
-        public const string MenuPath = "Tools/Kinoa/In-Apps/Build Prefabs From Plans";
+        public const string MenuPath = "Tools/Kinoa/In-Apps/Build All Prefabs From Plans";
+        public const string TemplateMenuRoot = "Tools/Kinoa/In-Apps/Build Prefab/";
         private const string PlanSuffix = ".inapp-plan.json";
 
         [Serializable] public class Plan { public string schema_version; public PlanTemplate template; public PlanUi ui; public PlanView view; public PlanPaths paths; public PlanNode[] nodes; }
@@ -2088,6 +2182,18 @@ namespace Kinoa.InApps.Editor
             var summary = $"[KinoaInAppPrefabBuilder] {ok}/{plans.Count} plan(s) built";
             Debug.Log(summary);
             return summary;
+        }
+
+        /// <summary>Builds one plan; the per-template menu items call this.</summary>
+        public static BuildReport BuildPlanMenu(string planPath)
+        {
+            var report = BuildFromPlan(planPath);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            Debug.Log(report.ok
+                ? $"[KinoaInAppPrefabBuilder] {planPath}: built"
+                : $"[KinoaInAppPrefabBuilder] {planPath}: failed — {(report.errors.Count > 0 ? report.errors[0] : "unknown error")}");
+            return report;
         }
 
         public static BuildReport BuildFromPlan(string planPath)
@@ -2676,6 +2782,47 @@ class PlanOutdatedError(ValueError):
     progress-ladder tree: there is no view to generate for it."""
 
 
+MENU_ALL = "Tools/Kinoa/In-Apps/Build All Prefabs From Plans"
+MENU_TEMPLATE_ROOT = "Tools/Kinoa/In-Apps/Build Prefab/"
+
+
+def _menu_label(name, key):
+    """Unity menu label for one template: "<name> (<key>)", or the key alone when the name is empty / equals it."""
+    name = (name or "").strip()
+    label = "%s (%s)" % (name, key) if name and name != key else (key or "")
+    label = label.replace("/", "-").replace("\\", "-").replace('"', "")
+    # %, # and & are always shortcut markers; _ is one only at the start of the label or after whitespace.
+    label = re.sub(r"[%#&]", "", label)
+    label = re.sub(r"(^|(?<=\s))_", "", label)
+    return re.sub(r"\s+", " ", label).strip()
+
+
+def _cs_string(value):
+    return '"%s"' % value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def render_build_menu(plan):
+    key = plan["template"]["key"]
+    label = _menu_label(plan["template"].get("name"), key)
+    return (_AUTOGEN % "per-template Unity menu item (Editor only). Tool-owned: rewritten by every generate run.") + """using UnityEditor;
+
+namespace Kinoa.InApps.Editor
+{
+    public static class KinoaInApp%sBuildMenu
+    {
+        public const string MenuPath = KinoaInAppPrefabBuilder.TemplateMenuRoot + %s;
+        public const string PlanPath = %s;
+
+        [MenuItem(MenuPath)]
+        public static void Build() => KinoaInAppPrefabBuilder.BuildPlanMenu(PlanPath);
+
+        [MenuItem(MenuPath, true)]
+        private static bool CanBuild() => System.IO.File.Exists(PlanPath);   // greyed out when the plan was removed
+    }
+}
+""" % (pascal(key), _cs_string(label), _cs_string(plan["paths"]["plan_path"]))
+
+
 def generate_code(plan, options=None):
     options = options or {}
     out_dir = plan["paths"]["out_dir"].rstrip("/")
@@ -2688,6 +2835,7 @@ def generate_code(plan, options=None):
         "%s/Shared/KinoaInAppMissionRowView.cs" % out_dir: render_mission_row_view(text_system),
         "%s/Shared/KinoaInAppTabView.cs" % out_dir: render_tab_view(text_system),
         "%s/Editor/KinoaInAppPrefabBuilder.cs" % out_dir: BUILDER_CS,
+        "%s/Editor/Templates/KinoaInApp%sBuildMenu.cs" % (out_dir, pascal(plan["template"]["key"])): render_build_menu(plan),
     }
     files[plan["paths"]["view_path"]] = render_view(plan, options)
     files[plan["paths"]["plan_path"]] = json.dumps(plan, indent=2, ensure_ascii=False) + "\n"
@@ -3166,9 +3314,8 @@ _MILESTONE_HEAD_CS = """
         {
             var feature = Data.Feature as InAppMilestonesFeature;
             if (milestoneScroll != null) milestoneScroll.gameObject.SetActive(feature != null);
-            if (feature == null) return;
-            var steps = feature.Steps ?? new List<InAppMilestoneStep>();
-            var reached = new List<uint>();   // CollectMilestonesAsync takes 0-based step indexes
+%(feature_null)s            var steps = feature.Steps ?? new List<InAppMilestoneStep>();
+%(progress)s            var reached = new List<uint>();   // CollectMilestonesAsync takes 0-based step indexes
             for (var i = 0; i < steps.Count; i++)
                 if (steps[i] != null && steps[i].Status == InAppMilestoneStatus.Reached) reached.Add((uint)i);
             if (milestoneStepTemplate != null)
@@ -3412,6 +3559,35 @@ _MILESTONE_TAIL_CS = """
 """
 
 
+def _milestone_region_lines(plan):
+    """(feature == null branch, progress lines) of BindFeature for the bar track / score area nodes. A plan without
+    them keeps the plain early return and no progress lines, so its view is byte-identical to before the regions."""
+    names = {n["name"] for n in plan["nodes"]}
+    track, fill = "MilestoneTrack" in names, "MilestoneTrackFill" in names
+    score, text = "MilestoneScoreArea" in names, "MilestoneProgressText" in names
+    if not (track or score):
+        return "            if (feature == null) return;\n", ""
+    hide = ["            if (feature == null)", "            {"]
+    if track:
+        hide.append("                if (milestoneTrack != null) milestoneTrack.gameObject.SetActive(false);")
+    if score:
+        hide.append("                if (milestoneScoreRoot != null) milestoneScoreRoot.SetActive(false);")
+    hide += ["                return;", "            }"]
+    lines = []
+    if fill or text:
+        lines.append("            var total = steps.Count > 0 && steps[steps.Count - 1] != null ? steps[steps.Count - 1].Score : 0L;")
+    if track:
+        lines.append("            if (milestoneTrack != null) milestoneTrack.gameObject.SetActive(true);")
+    if fill:
+        lines.append("            if (milestoneTrackFill != null) milestoneTrackFill.fillAmount = total > 0 ? "
+                     "Mathf.Clamp01((float)(feature.Progress / total)) : 0f;")
+    if score:
+        lines.append("            if (milestoneScoreRoot != null) milestoneScoreRoot.SetActive(true);")
+    if text:
+        lines.append('            if (milestoneProgressText != null) milestoneProgressText.text = $"{feature.Progress:0}/{total}";')
+    return "\n".join(hide) + "\n", "".join(line + "\n" for line in lines)
+
+
 def render_milestone_methods(plan):
     """The milestone section of the view: a horizontal ladder of steps, one CTA mode, optional collect-all."""
     ms = plan.get("milestone")
@@ -3436,7 +3612,9 @@ def render_milestone_methods(plan):
     if ca:
         collect_all = _MILESTONE_COLLECT_ALL_CS % {"key": ca["key"], "button": ca["button_field"], "label": ca["label_field"],
                                                    "hidden": "true" if ca.get("can_be_hidden") else "false"}
-    head = _MILESTONE_HEAD_CS % {"step_collect": step_collect, "after_steps": after_steps, "collect_all": collect_all}
+    feature_null, progress = _milestone_region_lines(plan)
+    head = _MILESTONE_HEAD_CS % {"step_collect": step_collect, "after_steps": after_steps, "collect_all": collect_all,
+                                 "feature_null": feature_null, "progress": progress}
     return head + extra + _MILESTONE_TAIL_CS % {"todo": TODO}
 
 
@@ -4113,6 +4291,7 @@ def cmd_generate(args):
                   out_dir + "/Shared/KinoaInAppFeatureHooks.cs", out_dir + "/Shared/KinoaInAppMilestoneStepView.cs",
                   out_dir + "/Shared/KinoaInAppMissionRowView.cs", out_dir + "/Shared/KinoaInAppTabView.cs"}
     builder_path = out_dir + "/Editor/KinoaInAppPrefabBuilder.cs"
+    menu_path = "%s/Editor/Templates/KinoaInApp%sBuildMenu.cs" % (out_dir, pascal(plan["template"]["key"]))
 
     # Check text-system mismatch only for user-owned files
     expected_alias = "TMPro.TMP_Text" if plan["ui"]["text_system"] == "tmp" else "UnityEngine.UI.Text"
@@ -4139,7 +4318,7 @@ def cmd_generate(args):
         abs_path = os.path.join(root, path)
 
         # Fix 2: Always write the builder, never skip it
-        if path == builder_path:
+        if path in (builder_path, menu_path):
             os.makedirs(os.path.dirname(abs_path), exist_ok=True)
             with open(abs_path, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write(content)
@@ -4185,7 +4364,8 @@ def cmd_generate(args):
 
     _emit({"ok": True, "written": written, "skipped": skipped, "snippets": out["snippets"],
            "todos": _collect_todos(content_for_todos), "report": out["report"], "prefab_path": plan["paths"]["prefab_path"],
-           "plan_path": plan["paths"]["plan_path"], "menu_item": "Tools/Kinoa/In-Apps/Build Prefabs From Plans",
+           "plan_path": plan["paths"]["plan_path"], "menu_item": MENU_TEMPLATE_ROOT + _menu_label(plan["template"].get("name"), plan["template"]["key"]),
+           "menu_item_all": MENU_ALL,
            "warnings": warnings})
     return 0
 

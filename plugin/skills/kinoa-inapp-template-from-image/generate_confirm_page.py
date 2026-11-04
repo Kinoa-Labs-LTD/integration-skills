@@ -47,7 +47,7 @@ Usage:
   "payload":    {"name","key","description","gameId"?,"images","buttons","texts",
                  "customs","featureType","features","tagsIds"},
   "report":     {"counts","element_count","feature_type","warnings","unmapped",
-                 "client_rendered":[{"role","reason","bbox"}],
+                 "client_rendered":[{"role","reason","bbox","feature"?}],
                  "needs_confirmation":[{"key","bucket","role","question"}],
                  "unsupported":[{"what","why","bbox"}],
                  "mismatch"?: {"unmatched_slots":[],"unslotted_elements":[]},
@@ -404,6 +404,7 @@ footer .muted { color: #b1bac4; }
 .box.placed { border-style: dashed; }
 .box.client, .box.excluded { border-style: dashed; border-color: #8c959f; opacity: 0.6; }
 .box.client .tag, .box.excluded .tag { background: #8c959f; }
+.cr-feature { font-size: 11px; padding: 0 6px; border-radius: 8px; background: #ddf4ff; color: #0969da; }
 .box.hl { box-shadow: 0 0 0 3px #ffd33d; }
 .box.movable { cursor: move; }
 .box .handle { position: absolute; width: 8px; height: 8px; background: #fff;
@@ -865,7 +866,9 @@ function geometryOut() {
     source_image: DATA.image_fingerprint || null,
     elements: els,
     client_rendered: (REPORT.client_rendered || []).map(function (c) {
-      return { role: c.role || "", bbox: c.bbox ? clone(c.bbox) : null };
+      var o = { role: c.role || "", bbox: c.bbox ? clone(c.bbox) : null };
+      if (c.feature) o.feature = c.feature;
+      return o;
     })
   };
 }
@@ -1114,7 +1117,8 @@ function renderClientRendered() {
   if (!items.length) { host.innerHTML = ""; return; }
   var html = "<b>Client-rendered regions (" + items.length + ")</b><ul>";
   items.forEach(function (cr) {
-    html += "<li><code>" + esc(cr.role) + "</code> &mdash; " + esc(cr.reason) + "</li>";
+    var ft = cr.feature === "milestone" ? ' <span class="cr-feature">milestone feature</span>' : "";
+    html += "<li><code>" + esc(cr.role) + "</code>" + ft + " &mdash; " + esc(cr.reason) + "</li>";
   });
   host.innerHTML = html + "</ul>";
 }
@@ -1149,7 +1153,7 @@ function renderOverlay(idx) {
   ov.classList.toggle("placing", !!PLACING);
   (REPORT.client_rendered || []).forEach(function (cr) {
     if (!cr.bbox) return;
-    ov.appendChild(boxEl(cr.bbox, "client", "client: " + cr.role));
+    ov.appendChild(boxEl(cr.bbox, "client", (cr.feature === "milestone" ? "milestone: " : "client: ") + cr.role));
   });
   state.elements.forEach(function (e) {
     if (!e.bbox) return;

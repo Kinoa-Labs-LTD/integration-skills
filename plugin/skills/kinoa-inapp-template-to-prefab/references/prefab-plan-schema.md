@@ -16,7 +16,7 @@ Produced by `inapp_prefab_plan.py plan`, copied into the project as
 | `nodes` | array | flat GameObject list, parent-before-child order |
 | `customs` | array | `{key, kind, default, target_node, target_field}` — **every** template custom is listed. Only a boolean that matches a node (a zone root, or an image/text/button slot) gets `target_node` / `target_field`; non-booleans and unmatched booleans carry `null` targets (read them with `GetCustom<T>`), and an unmatched boolean is also added to `report.needs_developer` |
 | `milestone` | object, milestone templates only | the step-CTA decision: `cta_mode` (`per_step` / `single`), `cta_mode_source` (`override` / `template_cta_count` / `default`), `cta_slots` (template button keys counted as step CTAs), `single_cta` (`{key, button_field, label_field}`; `key` is `null` when the CTA goes onto the generated `MilestoneMainButton`; `null` in `per_step` mode) and `collect_all` (`{key, button_field, label_field, can_be_hidden}` or `null`). An additive block: `schema_version` stays `1.0`. Absent on every other template and on plans written before the scroll ladder |
-| `report` | object | `layout_source`, `panel_bbox`, `unplaced`, `estimated_positions`, `layout_adjustments`, `overlays`, `warnings`, `unmapped_layout`, `client_zones`, `needs_developer`, `milestone` (milestone templates: `{cta_mode, cta_mode_source, collect_all}`); mission templates add `mission_actions` and `mission_geometry` (below) |
+| `report` | object | `layout_source`, `panel_bbox`, `unplaced`, `estimated_positions`, `layout_adjustments`, `overlays`, `warnings`, `unmapped_layout`, `client_zones`, `needs_developer`, `milestone` (milestone templates: `{cta_mode, cta_mode_source, collect_all}`), `milestone_geometry` (milestone templates, below); mission templates add `mission_actions` and `mission_geometry` (below) |
 
 ## Layout sources
 
@@ -24,7 +24,7 @@ Produced by `inapp_prefab_plan.py plan`, copied into the project as
 
 | Flag | `kind` | Input |
 |---|---|---|
-| `--layout-artifact` (preferred) | `layout_artifact` | `<template_key>.layout.json` from kinoa-inapp-template-from-image (contract: `../../kinoa-inapp-template-from-image/references/layout-artifact.md`). Schema 1.x, normalized top-left coordinates; customs are skipped; `bbox: null` / `unplaced` elements go to `Unplaced`; `client_rendered[].role` positions the zones; `feature.area_bbox` positions `MissionList` (when `feature.parts.task_list` is absent), and `MilestoneScroll` (the `bar_image` box when no area was drawn), only when the artifact's feature type matches the template's. Artifact `1.1` adds the optional mission-only `feature.parts` (`tabs`, `tab`, `task_list`, `row`, `progress_bar` — the last places the progress-bar ladder's `MissionBarScroll`, so it should bound the bar with its markers and rewards), `feature.row_parts` (inner pieces of the one card in `parts.row`: `placement_badge`, `title`, `sub_mission`, `status`, `progress_track`, `progress_text`, `rewards`, `action_button`, `dismiss_button`) and `feature.style` (`#RRGGBB[AA]` colours: `card`, `card_text`, `accent`, `progress_track`, `progress_fill`, `action`, `dismiss`, `tab_text`, `tab_selected`, `bar_track`, `bar_fill`) — advisory geometry and colours for the missions UI, never template elements; an invalid box, colour or key is dropped with a warning, `row_parts` without a valid `parts.row` are dropped whole, and a `1.0` artifact stays valid (the neutral defaults apply). The join is 1:1 on `(bucket, key)` with no key-only fallback: a `template_key` different from the template's key is refused (`layout_template_mismatch`, exit 2); a missing `template_key`, element or `area_bbox` boxes outside `[0, 1]` or of zero size, and other coordinate conventions are refused as `unreadable_input`; an out-of-range `client_rendered` box is dropped with a warning; template slots with no entry, duplicate entries, and index or feature-type disagreements become `warnings`; entries the template lacks go to `unmapped_layout`. `layout_source` also carries `template_key`, `sha256`, and the `hand_placed` / `adjusted` counts. |
+| `--layout-artifact` (preferred) | `layout_artifact` | `<template_key>.layout.json` from kinoa-inapp-template-from-image (contract: `../../kinoa-inapp-template-from-image/references/layout-artifact.md`). Schema 1.x, normalized top-left coordinates; customs are skipped; `bbox: null` / `unplaced` elements go to `Unplaced`; `client_rendered[].role` positions the zones; `feature.area_bbox` positions `MissionList` (when `feature.parts.task_list` is absent), and `MilestoneScroll` (else the union of the milestone-feature regions, else the `bar_image` box (see *Ladder box*)), only when the artifact's feature type matches the template's. On a milestone template the milestone-feature regions (`client_rendered` roles `score_icon_image`, `bar_image`, `prize_image`, tagged `"feature": "milestone"`) are known zones: they never go to `unmapped_layout`, several boxes of one role merge into their union, and they join the panel and place the ladder, track and score area (see *Milestone ladder*); on standard and mission templates they go to `unmapped_layout`. Artifact `1.1` adds the optional mission-only `feature.parts` (`tabs`, `tab`, `task_list`, `row`, `progress_bar` — the last places the progress-bar ladder's `MissionBarScroll`, so it should bound the bar with its markers and rewards), `feature.row_parts` (inner pieces of the one card in `parts.row`: `placement_badge`, `title`, `sub_mission`, `status`, `progress_track`, `progress_text`, `rewards`, `action_button`, `dismiss_button`) and `feature.style` (`#RRGGBB[AA]` colours: `card`, `card_text`, `accent`, `progress_track`, `progress_fill`, `action`, `dismiss`, `tab_text`, `tab_selected`, `bar_track`, `bar_fill`) — advisory geometry and colours for the missions UI, never template elements; an invalid box, colour or key is dropped with a warning, `row_parts` without a valid `parts.row` are dropped whole, and a `1.0` artifact stays valid (the neutral defaults apply). The join is 1:1 on `(bucket, key)` with no key-only fallback: a `template_key` different from the template's key is refused (`layout_template_mismatch`, exit 2); a missing `template_key`, element or `area_bbox` boxes outside `[0, 1]` or of zero size, and other coordinate conventions are refused as `unreadable_input`; an out-of-range `client_rendered` box is dropped with a warning; template slots with no entry, duplicate entries, and index or feature-type disagreements become `warnings`; entries the template lacks go to `unmapped_layout`. `layout_source` also carries `template_key`, `sha256`, and the `hand_placed` / `adjusted` counts. |
 | `--build` | `build_result` | The from-image builder's raw `build_result.json` (`report.elements`, `report.client_rendered`, `report.source_image`), optionally corrected by `--confirmed`. |
 | `--layout` (legacy) | `layout_file` | A layout written against `layout-schema`. Kept for compatibility; the skill no longer produces it. |
 | none | `null` | Every slot goes to `Unplaced`. |
@@ -73,8 +73,10 @@ KinoaInApp_<Pascal>           (root, stretch; the view component lives here)
         ├── <slot nodes>      anchored from bbox, relative to Panel
         ├── <ButtonName>Label stretch child of its button
         ├── TimerZone / PriceBeforeSaleZone / ResourceArea / GrandPrizeArea   (inactive)
+        ├── MilestoneTrack  →  MilestoneTrackFill                                 (milestone, bar_image region and no bar_image slot; behind the ladder)
         ├── MilestoneScroll …                                                    (milestone feature)
         │   └── MilestoneViewport  →  MilestoneContent  →  MilestoneStep           (milestone: horizontal scroll; the step is an inactive template, cloned per step)
+        ├── MilestoneScoreArea  →  MilestoneScoreIcon · MilestoneProgressText     (milestone, score_icon_image region)
         ├── MilestoneMainButton                                                  (milestone, only when no template button is the single CTA)
         ├── MissionTabs · MissionList · MissionBarScroll …                       (mission feature, below)
         └── Unplaced          VerticalLayoutGroup — slots with no bbox; starts at the bottom 30 %, may move to free space
@@ -109,6 +111,40 @@ collect button). The builder wires the `ScrollRect` to its viewport and
 content. `MilestoneScroll` is a container for de-overlap (never trimmed).
 `MilestoneMainButton` (the feature's progress button) is added only when no
 template button is the single CTA.
+
+**Ladder box.** The base box is `feature.area_bbox`; else the union of the
+milestone regions present (score icon, bar, prizes, plus the grand prize box);
+else the `bar_image` slot's box; else the default anchors (no clipping). Then:
+
+- a `score_icon_image` region whose centre x is left of the base centre is
+  clipped out: `x0 = max(x0, score.x + score.w + 0.005)`;
+- a `grand_prize_area` box whose centre x is right of the base centre is
+  clipped out: `x1 = min(x1, grand.x - 0.005)`;
+- a clip that would leave less than 25 % of the base width is skipped, with a
+  `report.warnings` line;
+- the vertical extent stays the base box's.
+
+The box is then converted to `Panel` anchors as usual.
+
+**Milestone regions.** Built only from the regions, never from template slots:
+
+| Node | Parent | `binding` | `components` | `field` / `field_type` | Anchors | When |
+|---|---|---|---|---|---|---|
+| `MilestoneTrack` | `Panel` | `image` | `Image` | `milestoneTrack` / `Image` | the `bar_image` region | `bar_image` region and no `bar_image` slot (a slot's `BarImage` already draws the art); listed before `MilestoneScroll`, so it renders behind it |
+| `MilestoneTrackFill` | `MilestoneTrack` | `fill` | `Image` | `milestoneTrackFill` / `Image` | stretch | with the track |
+| `MilestoneScoreArea` | `Panel` | `zone` | — | `milestoneScoreRoot` / `GameObject` | the `score_icon_image` region (`placed`) | `score_icon_image` region |
+| `MilestoneScoreIcon` | `MilestoneScoreArea` | `image` | `Image` | `milestoneScoreIcon` / `Image` | `[0, 0.3]`–`[1, 1]` | with the score area; the developer assigns the sprite |
+| `MilestoneProgressText` | `MilestoneScoreArea` | `text` | `Text` | `milestoneProgressText` / `Text` | `[0, 0]`–`[1, 0.3]` | with the score area |
+
+`MilestoneScoreArea` is a de-overlap container. These names and fields are
+reserved on milestone templates only (`MILESTONE_RESERVED_NODE_NAMES` /
+`MILESTONE_RESERVED_FIELDS`), like the mission ones.
+
+**`report.milestone_geometry`** (milestone plans only) — `regions`: the sorted
+region roles the plan used (`grand_prize_area` when its box was used);
+`ladder_source`: `area_bbox` | `regions` | `bar_slot` | `default`; `clipped`:
+the sorted roles (`score_icon_image`, `grand_prize_area`) actually clipped out
+of the ladder.
 
 A milestone plan must be produced by this version. `generate` refuses one that
 has no `milestone` block or no `MilestoneScroll` node (written before the scroll
@@ -205,7 +241,8 @@ had no box for them. Tell the developer when this list is not empty.
 ## Panel extent and de-overlap
 
 The panel is the union of every box the plan positions: the background art,
-every slot, every client-rendered zone and `feature.area_bbox`. Mockups often
+every slot, every client-rendered zone, the milestone regions (milestone
+templates) and `feature.area_bbox`. Mockups often
 put the CTA, timer or fine print below the art; with the art alone as the
 panel those boxes would clamp onto its bottom edge and pile up.
 
@@ -219,7 +256,7 @@ anchor units, do not count as overlapping.
   - **Overlay (≥ 80 %):** kept as drawn and listed in `report.overlays`, for
     example a price inside the CTA.
   - **Containers** (`MissionList`, `MissionTabs`, `MissionBarScroll`,
-    `MilestoneScroll`, `ResourceArea`, `GrandPrizeArea`) are never trimmed. A box with at least 80 % of its area
+    `MilestoneScroll`, `ResourceArea`, `GrandPrizeArea`, `MilestoneScoreArea`) are never trimmed. A box with at least 80 % of its area
     inside a container is an overlay, for example the resource area on a
     mission task list. When both boxes are containers, the smaller one is
     measured. Any other overlap with a container, such as a resource area

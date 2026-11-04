@@ -140,6 +140,14 @@ mission state hides the tabs and the list.
   else the last; the focus is applied after the view becomes active, and the
   latest `Bind` wins over an older pending focus. The grand prize still echoes
   the last step's rewards.
+- **Track and score counter** (only when the plan has the nodes, built from
+  the milestone regions; without them the view is unchanged). The total is the
+  last step's `Score`. `MilestoneTrackFill.fillAmount` is
+  `feature.Progress / total`, clamped to 0..1 (0 when the total is 0), and
+  `MilestoneProgressText` shows `progress/total` (`{feature.Progress:0}/{total}`).
+  The track and the score root are shown while the message has a milestones
+  feature and hidden, with the ladder, when it has none. The score icon's
+  sprite is the developer's: the SDK carries no score-icon data.
 - **CTA mode** (from `plan.milestone`). `per_step`: every step carries its own
   collect button, shown unless the step is `Collected` and interactable only
   when it is `Reached`; the feature's progress button (`ActiveProgressButton`)
@@ -245,9 +253,23 @@ the label is null), `SetDismiss(bool visible, UnityAction)` (default label `×`)
 bool selected, UnityAction onClick)`, `SetSelected(bool)`,
 `SetInteractable(bool)`, `SetNumber`.
 
+## `KinoaInApp<Pascal>BuildMenu` (Editor, per template)
+
+`Assets/Kinoa/InApps/Editor/Templates/KinoaInApp<Pascal>BuildMenu.cs` —
+**tool-owned**, rewritten by every `generate` (like the builder; never skipped,
+`--force-shared` not needed). It adds one menu item,
+`Tools/Kinoa/In-Apps/Build Prefab/<template name> (<key>)` (just `<key>` when
+the record has no name or it equals the key), that calls
+`KinoaInAppPrefabBuilder.BuildPlanMenu` on that template's plan. The label drops
+`"`, `%`, `#`, `&` (and a leading `_`), and turns `/` and `\` into `-`. The item is greyed out
+when the plan file is gone. The plan JSON is unchanged; the label is computed
+from the record.
+
 ## `KinoaInAppPrefabBuilder` (Editor)
 
-Menu `Tools/Kinoa/In-Apps/Build Prefabs From Plans` → `BuildAll()`; per plan a
+Menu `Tools/Kinoa/In-Apps/Build All Prefabs From Plans` → `BuildAll()` (every
+plan); `BuildPlanMenu(planPath)` builds one plan and logs
+`<plan path>: built` / `: failed — <first error>`. Per plan a
 `<key>.build-report.json` (`ok`, `nodes_built`, `fields_assigned`,
 `fields_missing`, `errors`) beside the plan. Idempotent: rebuilding overwrites
 the prefab from the plan (hand edits to the prefab are lost).
@@ -292,7 +314,7 @@ existing file is kept, and says so in `warnings`.
 hook option not applied because the existing hooks file was kept), `snippets`
 (`constant`, `allowlist_arm`, `create_game_inapp`), `todos` (every
 `TODO(kinoa-prefab)` with `path:line`, built from what is **on disk** — including
-kept shared files), `prefab_path`, `plan_path`, `menu_item`.
+kept shared files), `prefab_path`, `plan_path`, `menu_item` (this template's own item), `menu_item_all` (build every plan).
 
 ## Markers and guarantees
 

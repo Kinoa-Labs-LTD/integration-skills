@@ -1789,3 +1789,210 @@ class TestMissionLadderNodes(unittest.TestCase):
         self.assertIn("MissionBarScroll", mod._CONTAINERS)
         plan = mod.plan_prefab(MISSIONS, ART, STYLE, {})["plan"]
         self.assertEqual([a for a in plan["report"]["layout_adjustments"] if a["node"].startswith("MissionBar")], [])
+
+
+# The real milestone_test tip image (kinoa-sdk .kinoa-inapp-prefab/milestone_test/tip_analysis.json), normalized.
+REAL_AREA = {"x": 0.119, "y": 0.37, "w": 0.783, "h": 0.205}
+REAL_REGIONS = {"score_icon_image": {"x": 0.119, "y": 0.406, "w": 0.095, "h": 0.125},
+                "prize_image": {"x": 0.22, "y": 0.431, "w": 0.055, "h": 0.066},
+                "bar_image": {"x": 0.207, "y": 0.45, "w": 0.587, "h": 0.027}}
+REAL_GRAND = {"x": 0.787, "y": 0.393, "w": 0.114, "h": 0.183}
+
+
+def _region_template(bar_slot=False):
+    t = _milestone_template()
+    if not bar_slot:
+        t["images"] = [s for s in t["images"] if s["key"] != "bar_image"]
+    return t
+
+
+def _region_artifact(area=REAL_AREA, regions=None, grand=REAL_GRAND, extra=()):
+    art = _ms_artifact()
+    art["feature"] = {"type": "milestone"}
+    if area:
+        art["feature"]["area_bbox"] = dict(area)
+    regions = REAL_REGIONS if regions is None else regions
+    for role, bbox in list(regions.items()) + list(extra):
+        art["client_rendered"].append({"role": role, "bbox": dict(bbox), "feature": "milestone"})
+    if grand:
+        art["client_rendered"].append({"role": "grand_prize_area", "bbox": dict(grand), "feature": "milestone"})
+    return art
+
+
+def _plan_regions(template=None, **art):
+    result = mod.plan_prefab(template or _region_template(), mod.layout_from_artifact(_region_artifact(**art)), STYLE, {})
+    assert result["ok"], result
+    return result["plan"]
+
+
+def _assert_anchors(test, node, bbox, panel):
+    amin, amax = mod.anchors_from_bbox(bbox, panel)
+    for got, want in zip(node["anchor_min"] + node["anchor_max"], amin + amax):
+        test.assertAlmostEqual(got, want, places=4, msg=node["name"])
+
+
+class TestMilestoneRegions(unittest.TestCase):
+    """The milestone-feature regions in client_rendered place the ladder, the bar track and the score area."""
+
+    def test_real_case_ladder_box_is_pinned(self):
+        plan = _plan_regions()
+        panel = plan["report"]["panel_bbox"]
+        # area_bbox x 0.119..0.902 less the score icon (left) and the grand prize (right): x 0.219 -> 0.782, y 0.37 -> 0.575
+        _assert_anchors(self, _node(plan, "MilestoneScroll"), {"x": 0.219, "y": 0.37, "w": 0.563, "h": 0.205}, panel)
+        self.assertTrue(_node(plan, "MilestoneScroll")["placed"])
+        _assert_anchors(self, _node(plan, "MilestoneTrack"), REAL_REGIONS["bar_image"], panel)
+        _assert_anchors(self, _node(plan, "MilestoneScoreArea"), REAL_REGIONS["score_icon_image"], panel)
+        _assert_anchors(self, _node(plan, "GrandPrizeArea"), REAL_GRAND, panel)
+        ladder = mod._box(_node(plan, "MilestoneScroll"))
+        for name in ("MilestoneScoreArea", "GrandPrizeArea"):
+            self.assertFalse(mod._collides(ladder, mod._box(_node(plan, name))), name)
+        self.assertEqual(plan["report"]["milestone_geometry"],
+                         {"regions": ["bar_image", "grand_prize_area", "prize_image", "score_icon_image"],
+                          "ladder_source": "area_bbox", "clipped": ["grand_prize_area", "score_icon_image"]})
+
+    def test_region_roles_are_known_on_milestone_only(self):
+        plan = _plan_regions()
+        self.assertEqual([u for u in plan["report"]["unmapped_layout"] if "zone" in u], [])
+        art = copy.deepcopy(ARTIFACT)
+        for role, bbox in REAL_REGIONS.items():
+            art["client_rendered"].append({"role": role, "bbox": dict(bbox), "feature": "milestone"})
+        standard = mod.plan_prefab(TEMPLATE, mod.layout_from_artifact(art), STYLE, {})["plan"]
+        for role in mod.MILESTONE_REGION_ROLES:
+            self.assertIn({"zone": role}, standard["report"]["unmapped_layout"])
+        self.assertNotIn("milestone_geometry", standard["report"])
+        for name in ("MilestoneTrack", "MilestoneScoreArea"):
+            self.assertNotIn(name, _ms_names(standard))
+
+    def test_prize_boxes_merge_by_union(self):
+        prizes = [("prize_image", {"x": 0.3, "y": 0.44, "w": 0.05, "h": 0.06}),
+                  ("prize_image", {"x": 0.6, "y": 0.42, "w": 0.05, "h": 0.07})]
+        layout = mod.layout_from_artifact(_region_artifact(area=None, regions={}, grand=None, extra=prizes))
+        box = mod._index_layout(layout)[2]["prize_image"]
+        self.assertAlmostEqual(box["x"], 0.3)
+        self.assertAlmostEqual(box["y"], 0.42)
+        self.assertAlmostEqual(box["x"] + box["w"], 0.65)
+        self.assertAlmostEqual(box["y"] + box["h"], 0.50)
+        plan = mod.plan_prefab(_region_template(), layout, STYLE, {})["plan"]
+        self.assertEqual(plan["report"]["milestone_geometry"]["ladder_source"], "regions")
+        _assert_anchors(self, _node(plan, "MilestoneScroll"), box, plan["report"]["panel_bbox"])
+
+    def test_region_boxes_join_the_panel(self):
+        far = {"x": 0.1, "y": 0.9, "w": 0.08, "h": 0.08}   # below every slot of the fixture artifact
+        plan = _plan_regions(regions={"score_icon_image": far})
+        panel = plan["report"]["panel_bbox"]
+        self.assertGreaterEqual(panel["y"] + panel["h"], 0.98 - 1e-4)
+
+    def test_regions_union_is_the_base_without_area_bbox(self):
+        plan = _plan_regions(area=None)
+        geo = plan["report"]["milestone_geometry"]
+        self.assertEqual(geo["ladder_source"], "regions")
+        # the union of score icon, prize, bar and grand prize (x 0.119 -> 0.901), clipped to 0.219 -> 0.782
+        union = mod._union(list(REAL_REGIONS.values()) + [REAL_GRAND])
+        ladder = {"x": 0.219, "y": union["y"], "w": 0.563, "h": union["h"]}
+        _assert_anchors(self, _node(plan, "MilestoneScroll"), ladder, plan["report"]["panel_bbox"])
+        self.assertEqual(geo["clipped"], ["grand_prize_area", "score_icon_image"])
+
+    def test_bar_slot_and_default_sources(self):
+        art = _region_artifact(area=None, regions={}, grand=None)
+        art["elements"].append({"key": "bar_image", "bucket": "images", "index": 10, "role": "bar_image",
+                                "bbox": {"x": 0.25, "y": 0.6, "w": 0.5, "h": 0.04}})
+        plan = mod.plan_prefab(_region_template(bar_slot=True), mod.layout_from_artifact(art), STYLE, {})["plan"]
+        self.assertEqual(plan["report"]["milestone_geometry"], {"regions": [], "ladder_source": "bar_slot", "clipped": []})
+        none = mod.plan_prefab(_region_template(), None, STYLE, {})["plan"]
+        self.assertEqual(none["report"]["milestone_geometry"], {"regions": [], "ladder_source": "default", "clipped": []})
+        self.assertIn("MilestoneScroll", none["report"]["estimated_positions"])
+
+    def test_each_clip_alone(self):
+        only_score = _plan_regions(grand=None)
+        self.assertEqual(only_score["report"]["milestone_geometry"]["clipped"], ["score_icon_image"])
+        _assert_anchors(self, _node(only_score, "MilestoneScroll"),
+                        {"x": 0.219, "y": 0.37, "w": 0.902 - 0.219, "h": 0.205}, only_score["report"]["panel_bbox"])
+        only_grand = _plan_regions(regions={"bar_image": REAL_REGIONS["bar_image"]})
+        self.assertEqual(only_grand["report"]["milestone_geometry"]["clipped"], ["grand_prize_area"])
+        _assert_anchors(self, _node(only_grand, "MilestoneScroll"),
+                        {"x": 0.119, "y": 0.37, "w": 0.782 - 0.119, "h": 0.205}, only_grand["report"]["panel_bbox"])
+
+    def test_no_score_icon_and_no_grand_prize_means_no_clip(self):
+        plan = _plan_regions(regions={"bar_image": REAL_REGIONS["bar_image"]}, grand=None)
+        self.assertEqual(plan["report"]["milestone_geometry"]["clipped"], [])
+        _assert_anchors(self, _node(plan, "MilestoneScroll"), REAL_AREA, plan["report"]["panel_bbox"])
+        self.assertNotIn("MilestoneScoreArea", _ms_names(plan))
+
+    def test_boxes_on_the_wrong_side_are_not_clipped(self):
+        right_score = {"x": 0.7, "y": 0.4, "w": 0.05, "h": 0.1}    # centre right of the base centre
+        left_grand = {"x": 0.15, "y": 0.4, "w": 0.05, "h": 0.1}    # centre left of the base centre
+        plan = _plan_regions(regions={"score_icon_image": right_score}, grand=left_grand)
+        self.assertEqual(plan["report"]["milestone_geometry"]["clipped"], [])
+        _assert_anchors(self, _node(plan, "MilestoneScroll"), REAL_AREA, plan["report"]["panel_bbox"])
+
+    def test_clip_below_a_quarter_of_the_base_is_skipped_with_a_warning(self):
+        area = {"x": 0.1, "y": 0.4, "w": 0.4, "h": 0.1}            # x 0.1 -> 0.5, centre 0.3, floor 0.1
+        wide_score = {"x": 0.1, "y": 0.4, "w": 0.19, "h": 0.1}     # leaves 0.5 - 0.295 = 0.205: kept
+        grand = {"x": 0.31, "y": 0.4, "w": 0.19, "h": 0.1}         # would leave 0.305 - 0.295 = 0.01: skipped
+        plan = _plan_regions(area=area, regions={"score_icon_image": wide_score}, grand=grand)
+        self.assertEqual(plan["report"]["milestone_geometry"]["clipped"], ["score_icon_image"])
+        _assert_anchors(self, _node(plan, "MilestoneScroll"), {"x": 0.295, "y": 0.4, "w": 0.205, "h": 0.1},
+                        plan["report"]["panel_bbox"])
+        self.assertTrue(any("grand prize" in w and "25%" in w for w in plan["report"]["warnings"]),
+                        plan["report"]["warnings"])
+
+    def test_track_and_score_area_nodes(self):
+        plan = _plan_regions()
+        names = _ms_names(plan)
+        self.assertLess(names.index("MilestoneTrack"), names.index("MilestoneScroll"))   # drawn behind the ladder
+        rows = {n["name"]: (n["parent"], n["binding"], n["components"], n["field"], n["field_type"])
+                for n in plan["nodes"] if n["name"].startswith(("MilestoneTrack", "MilestoneScore", "MilestoneProgress"))}
+        self.assertEqual(rows, {
+            "MilestoneTrack": ("Panel", "image", ["Image"], "milestoneTrack", "Image"),
+            "MilestoneTrackFill": ("MilestoneTrack", "fill", ["Image"], "milestoneTrackFill", "Image"),
+            "MilestoneScoreArea": ("Panel", "zone", [], "milestoneScoreRoot", "GameObject"),
+            "MilestoneScoreIcon": ("MilestoneScoreArea", "image", ["Image"], "milestoneScoreIcon", "Image"),
+            "MilestoneProgressText": ("MilestoneScoreArea", "text", ["Text"], "milestoneProgressText", "Text")})
+        anchors = lambda name: (_node(plan, name)["anchor_min"], _node(plan, name)["anchor_max"])
+        self.assertEqual(anchors("MilestoneTrackFill"), ([0.0, 0.0], [1.0, 1.0]))
+        self.assertEqual(anchors("MilestoneScoreIcon"), ([0.0, 0.3], [1.0, 1.0]))
+        self.assertEqual(anchors("MilestoneProgressText"), ([0.0, 0.0], [1.0, 0.3]))
+        self.assertTrue(_node(plan, "MilestoneScoreArea")["placed"])
+        self.assertTrue(_node(plan, "MilestoneTrack")["placed"])
+
+    def test_bar_slot_means_no_track(self):
+        plan = _plan_regions(template=_region_template(bar_slot=True))
+        self.assertNotIn("MilestoneTrack", _ms_names(plan))
+        self.assertNotIn("MilestoneTrackFill", _ms_names(plan))
+        self.assertIn("MilestoneScoreArea", _ms_names(plan))
+        self.assertIn("bar_image", plan["report"]["milestone_geometry"]["regions"])
+
+    def test_old_artifact_only_clips_the_grand_prize(self):
+        # area_bbox + grand_prize_area and none of the new regions (the milestone_test artifact before path B tagged them)
+        plan = _plan_regions(regions={})
+        self.assertEqual(plan["report"]["milestone_geometry"],
+                         {"regions": ["grand_prize_area"], "ladder_source": "area_bbox", "clipped": ["grand_prize_area"]})
+        for name in ("MilestoneTrack", "MilestoneTrackFill", "MilestoneScoreArea", "MilestoneScoreIcon", "MilestoneProgressText"):
+            self.assertNotIn(name, _ms_names(plan))
+        ladder = mod._box(_node(plan, "MilestoneScroll"))
+        self.assertFalse(mod._collides(ladder, mod._box(_node(plan, "GrandPrizeArea"))))
+
+    def test_score_area_is_a_container(self):
+        self.assertIn("MilestoneScoreArea", mod._CONTAINERS)
+
+    def test_new_names_are_reserved_on_milestone_templates_only(self):
+        self.assertEqual(mod.MILESTONE_RESERVED_NODE_NAMES,
+                         {"MilestoneTrack", "MilestoneTrackFill", "MilestoneScoreArea", "MilestoneScoreIcon",
+                          "MilestoneProgressText"})
+        self.assertEqual(mod.MILESTONE_RESERVED_FIELDS,
+                         {"milestoneTrack", "milestoneTrackFill", "milestoneScoreRoot", "milestoneScoreIcon",
+                          "milestoneProgressText"})
+        self.assertFalse(mod.MILESTONE_RESERVED_NODE_NAMES & mod.RESERVED_NODE_NAMES)
+        self.assertFalse(mod.MILESTONE_RESERVED_FIELDS & mod.RESERVED_FIELDS)
+
+        def with_slot(template):
+            t = copy.deepcopy(template)
+            t["texts"].append({"key": "milestone_progress", "name": "x", "index": 30, "canBeHidden": True, "customFields": []})
+            return t
+        name = lambda plan: next(n["name"] for n in plan["nodes"] if n.get("key") == "milestone_progress")
+        standard = mod.plan_prefab(with_slot(TEMPLATE), None, STYLE, {})["plan"]
+        mission = mod.plan_prefab(with_slot(MISSIONS), None, STYLE, {})["plan"]
+        milestone = mod.plan_prefab(with_slot(_milestone_template()), None, STYLE, {})["plan"]
+        self.assertEqual(name(standard), "MilestoneProgressText")
+        self.assertEqual(name(mission), "MilestoneProgressText")
+        self.assertEqual(name(milestone), "MilestoneProgressText2")

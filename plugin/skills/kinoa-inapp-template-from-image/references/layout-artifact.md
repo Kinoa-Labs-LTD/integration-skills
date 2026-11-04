@@ -80,6 +80,15 @@ own by the consumer's author.
   They are listed so the consumer reserves screen space for them; they are NOT
   template elements and must not become slots or UI stubs the operator is asked
   to fill.
+- **Milestone feature regions** — in a milestone layout, `client_rendered`
+  entries for the roles `bar_image`, `score_icon_image`, `prize_image` (one per
+  step; several is normal) and `grand_prize_area` carry `"feature": "milestone"`.
+  Path B (`remap`) moves milestone visuals the dashboard template has no slot
+  for into `client_rendered` this way (a role that does match a slot stays an
+  element). The consumer (the prefab skill) places the milestone ladder, the
+  score area and the grand prize from these boxes. They are never template
+  elements. The tag is additive: other entries keep the `{role, bbox}` shape and
+  `schema_version` stays `"1.1"`.
 - **`feature.area_bbox`** (optional; mission/milestone) marks the region the
   progression UI (task list / progress bar) occupies on the mockup. Absent when
   the vision pass could not bound it.

@@ -342,6 +342,18 @@ CLIENT_RENDERED = {
     "grand_prize_area": "Milestone only: the client shows the final milestone reward in its own area.",
 }
 
+# Milestone visuals that a template may have no slot for: the game client draws
+# the ladder, the score area and each step's reward itself. Path B (`remap`)
+# reports them as client-rendered regions tagged `feature: "milestone"` instead
+# of "unslotted" — the prefab skill places the milestone UI from them. Never
+# template elements.
+MILESTONE_FEATURE_REGIONS = {
+    "bar_image": "Milestone feature: the progress-bar artwork. The client draws the milestone ladder here.",
+    "score_icon_image": "Milestone feature: the score icon at the start of the bar. The client shows the player's progress here.",
+    "prize_image": "Milestone feature: a step's reward art on the bar. The client draws each step's reward here.",
+    "grand_prize_area": CLIENT_RENDERED["grand_prize_area"],
+}
+
 # Text elements carry a colour knob in every production template; Resource
 # Badge additionally carries its background colour.
 TEXT_DEFAULT_FIELDS = {
@@ -1238,7 +1250,13 @@ def build_layout(payload, geometry, analysis=None):
             # Advisory zones: a bad box degrades to null, never fails the build.
             warnings.extend(errs + warns)
             cbox = None if errs else _layout_bbox(c["bbox"])
-        client_rendered.append({"role": c.get("role") or "", "bbox": cbox})
+        entry = {"role": c.get("role") or "", "bbox": cbox}
+        if c.get("feature") == "milestone" or (
+            payload.get("featureType") == "milestone"
+            and entry["role"] in MILESTONE_FEATURE_REGIONS
+        ):
+            entry["feature"] = "milestone"
+        client_rendered.append(entry)
 
     feature = {"type": payload.get("featureType") or "standard"}
     area = ((analysis.get("feature") or {}).get("detected") or {}).get("area_bbox")
@@ -1375,10 +1393,19 @@ def remap_record(record, analysis):
         return {"ok": False, "reason": entry.get("reason") or f"verdict {entry['verdict']!r}", "match": entry}
 
     needs, _skipped = _analysis_needs(analysis)
+    is_milestone = payload["featureType"] == "milestone"
     unslotted = []
+    milestone_regions = []
     for m in entry.get("missing") or []:
         need = needs[m["need_index"]]
-        unslotted.append({"bucket": m["bucket"], "role": need.get("role") or "",
+        role = need.get("role") or ""
+        if is_milestone and role in MILESTONE_FEATURE_REGIONS and role != "grand_prize_area":
+            milestone_regions.append(
+                {"role": role, "reason": MILESTONE_FEATURE_REGIONS[role],
+                 "bbox": need.get("bbox"), "feature": "milestone"}
+            )
+            continue
+        unslotted.append({"bucket": m["bucket"], "role": role,
                           "observed_text": need.get("observed_text") or ""})
     slot_index = {}
     for bucket in BUCKETS:
@@ -1436,6 +1463,11 @@ def remap_record(record, analysis):
         for el in (analysis.get("elements") or [])
         if el.get("role") in CLIENT_RENDERED
     ]
+    if is_milestone:
+        for c in client_rendered:
+            if c["role"] in MILESTONE_FEATURE_REGIONS:
+                c["feature"] = "milestone"
+        client_rendered.extend(milestone_regions)
     unsupported = [
         {"what": item["what"], "why": item.get("why") or "", "bbox": item.get("bbox")}
         for item in (analysis.get("unsupported") or [])

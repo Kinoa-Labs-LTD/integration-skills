@@ -146,7 +146,10 @@ client-rendered zones, the source image size and, for mission/milestone
 templates, `feature.area_bbox`. For mission templates, an artifact of schema
 `1.1` also carries the missions UI geometry and colours — `feature.parts`,
 `feature.row_parts` and `feature.style` — that the prefab's tabs, cards and bar
-are built from. Ask which source to use (one question,
+are built from. For milestone templates, `client_rendered` entries tagged
+`"feature": "milestone"` (`score_icon_image`, `bar_image`, `prize_image`,
+`grand_prize_area`) are the milestone art the template has no slot for; the
+plan places the ladder, the bar track and the score area from them. Ask which source to use (one question,
 recommended first):
 
 - **A — An existing `<template_key>.layout.json` (recommended).** The developer
@@ -303,7 +306,14 @@ controls and copy and never takes clicks.
 
 A milestone template (`featureType: milestone`) renders its steps as a
 horizontal scroll (`MilestoneScroll`), one `KinoaInAppMilestoneStepView` per
-step. What differs between mockups is where the claim button lives. Look at
+step. The ladder takes `feature.area_bbox` (else the union of the milestone
+regions, else the `bar_image` slot), minus the score icon on its left and the
+grand prize on its right, so neither sits under the steps;
+`report.milestone_geometry` says which source and which clips were used. A
+`bar_image` region with no `bar_image` slot adds a `MilestoneTrack` behind the
+ladder, filled to the overall progress; a `score_icon_image` region adds
+`MilestoneScoreArea` with the icon (the developer assigns its sprite) and a
+`progress/total` counter. What differs between mockups is where the claim button lives. Look at
 the tip image (or the mockup the layout came from) and decide:
 
 - A claim button on **every step** ⇒ re-run `plan` with `--milestone-cta per_step`.
@@ -429,10 +439,12 @@ route through a popup manager.
    An error in a kept `Shared/*.cs` file is not fixed by `--overwrite`; after
    confirming with the developer (those files hold their edits), re-run with
    `--force-shared`.
-2. **Build the prefab**: run the menu item
-   `Tools/Kinoa/In-Apps/Build Prefabs From Plans` (or call
-   `Kinoa.InApps.Editor.KinoaInAppPrefabBuilder.BuildAll` through the server's
-   reflection/method tool).
+2. **Build the prefab**: run this template's own menu item, `menu_item` from
+   `generate`'s output (`Tools/Kinoa/In-Apps/Build Prefab/<name> (<key>)`), via
+   the MCP `execute_menu_item` (or call
+   `Kinoa.InApps.Editor.KinoaInAppPrefabBuilder.BuildPlanMenu` with `plan_path`
+   through the server's reflection/method tool). `menu_item_all`,
+   `Tools/Kinoa/In-Apps/Build All Prefabs From Plans`, rebuilds every plan.
 3. **Read the report** from disk: take `plan_path` from `generate`'s output
    and replace `.inapp-plan.json` with `.build-report.json` (by default
    `Assets/Kinoa/InApps/<Pascal>/<key>.build-report.json`, but it follows
