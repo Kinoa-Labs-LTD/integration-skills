@@ -680,6 +680,55 @@ class ConfirmPageInteractionTests(_PageCase):
         self.assertTrue(got["off"]["joined"])   # bbox<->row join survives
         self.assertEqual(got["after"], 0)
 
+    def test_milestone_feature_regions_are_tagged(self):
+        self._with_image()
+        build = _build_result()
+        build["report"]["client_rendered"] = [
+            {"role": "timer", "reason": "r", "bbox": {"x": 0.1, "y": 0.1, "w": 0.1, "h": 0.1}},
+            {"role": "bar_image", "reason": "Milestone feature: bar", "feature": "milestone",
+             "bbox": {"x": 0.2, "y": 0.2, "w": 0.1, "h": 0.1}},
+        ]
+        got = self.drive("""
+            const env = H.envelope();
+            return { list: d.getElementById("cr-list").innerHTML,
+                     labels: [...d.querySelectorAll("#overlay .box.client .tag")].map(t => t.textContent),
+                     cr: env.geometry.client_rendered };
+        """, build=build)
+        self.assertEqual(got["list"].count("milestone feature"), 1)
+        self.assertIn("milestone: bar_image", got["labels"])
+        self.assertIn("client: timer", got["labels"])
+        self.assertEqual(got["cr"][0],
+                         {"role": "timer", "bbox": {"x": 0.1, "y": 0.1, "w": 0.1, "h": 0.1}})
+        self.assertEqual(got["cr"][1]["feature"], "milestone")
+
+    def test_mission_feature_regions_are_tagged(self):
+        self._with_image()
+        build = _build_result()
+        build["report"]["client_rendered"] = [
+            {"role": "timer", "reason": "r", "bbox": {"x": 0.1, "y": 0.1, "w": 0.1, "h": 0.1}},
+            {"role": "bar_image", "reason": "Milestone feature: bar", "feature": "milestone",
+             "bbox": {"x": 0.2, "y": 0.2, "w": 0.1, "h": 0.1}},
+            {"role": "mission_area", "reason": "Mission feature: area", "feature": "mission",
+             "bbox": {"x": 0.3, "y": 0.3, "w": 0.4, "h": 0.4}},
+            {"role": "mission_progress_bar", "reason": "Mission feature: bar", "feature": "mission",
+             "bbox": {"x": 0.3, "y": 0.72, "w": 0.4, "h": 0.05}},
+            {"role": "resource_area", "reason": "r", "feature": "other",
+             "bbox": {"x": 0.5, "y": 0.1, "w": 0.1, "h": 0.1}},
+        ]
+        got = self.drive("""
+            const env = H.envelope();
+            return { list: d.getElementById("cr-list").innerHTML,
+                     labels: [...d.querySelectorAll("#overlay .box.client .tag")].map(t => t.textContent),
+                     cr: env.geometry.client_rendered };
+        """, build=build)
+        self.assertEqual(got["list"].count("mission feature"), 2)
+        self.assertEqual(got["list"].count("milestone feature"), 1)
+        self.assertNotIn("other feature", got["list"])
+        for label in ("client: timer", "milestone: bar_image", "mission: mission_area",
+                      "mission: mission_progress_bar", "client: resource_area"):
+            self.assertIn(label, got["labels"])
+        self.assertEqual([c.get("feature") for c in got["cr"]], [None, "milestone", "mission", "mission", "other"])
+
     def test_proposed_rows_have_no_destructive_remove(self):
         got = self.drive("""
             const before = { removes: H.count('[data-fid^="rm-"]'),
@@ -2573,6 +2622,38 @@ class ConfirmPageInteractionTests(_PageCase):
             return [...d.querySelectorAll("#build-notes .card h2")].map(h => h.textContent);
         """, build=self._milestone_build())
         self.assertFalse(any(p.startswith("Tip image") for p in clean))
+
+    def test_tip_image_mismatch_banner_lists_bar_mismatches(self):
+        build = self._milestone_build()
+        build["report"]["mismatch"] = {
+            "unmatched_slots": ["buttons.collect_all"],
+            "progress_bar_missing": "the template shows the combined progress bar "
+                                    "(progressBar.display show_for_all_sets_combined) but the tip image has none",
+            "progress_bar_unexpected": "the tip image shows a combined progress bar but the template hides it",
+        }
+        got = self.drive("""
+            var banner = [...d.querySelectorAll("#build-notes .card")]
+              .find(c => c.querySelector("h2").textContent.indexOf("Tip image") === 0);
+            return { title: banner.querySelector("h2").textContent,
+                     items: [...banner.querySelectorAll("li")].map(li => li.innerHTML) };
+        """, build=build)
+        self.assertIn("(3)", got["title"])
+        self.assertEqual(len(got["items"]), 3)
+        self.assertIn("collect_all", got["items"][0])
+        self.assertIn("<b>Progress bar</b>", got["items"][1])
+        self.assertIn("show_for_all_sets_combined) but the tip image has none", got["items"][1])
+        self.assertIn("<b>Progress bar</b>", got["items"][2])
+        self.assertIn("the template hides it", got["items"][2])
+
+        only_bar = self._milestone_build()
+        only_bar["report"]["mismatch"] = {"progress_bar_missing": "has none"}
+        items = self.drive("""
+            var banner = [...d.querySelectorAll("#build-notes .card")]
+              .find(c => c.querySelector("h2").textContent.indexOf("Tip image") === 0);
+            return banner ? [...banner.querySelectorAll("li")].map(li => li.textContent) : null;
+        """, build=only_bar)
+        self.assertEqual(len(items), 1)
+        self.assertIn("has none", items[0])
 
     def test_milestone_menus_offer_nine_actions_mission_keeps_ten(self):
         # dashboard change (2026-10-05): `custom` is gone from milestone menus;

@@ -10,6 +10,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILL = os.path.join(REPO, "plugin", "skills", "kinoa-inapp-template-to-prefab")
 HELPER = os.path.join(SKILL, "inapp_prefab_plan.py")
 FIX = os.path.join(SKILL, "evals", "fixtures", "one-cta")
+FIX_MISSIONS = os.path.join(SKILL, "evals", "fixtures", "missions")
+GOLDEN_VIEWS = os.path.join(REPO, "tests", "golden")   # view goldens rendered from the milestone base (6d5deb8)
 
 _spec = importlib.util.spec_from_file_location("inapp_prefab_plan", HELPER)
 mod = importlib.util.module_from_spec(_spec)
@@ -19,6 +21,13 @@ with open(os.path.join(FIX, "template_one_cta.json"), encoding="utf-8") as _fh:
     TEMPLATE = json.load(_fh)
 with open(os.path.join(FIX, "build_result_one_cta.json"), encoding="utf-8") as _fh:
     BUILD = json.load(_fh)
+with open(os.path.join(FIX_MISSIONS, "template_missions.json"), encoding="utf-8") as _fh:
+    MISSIONS = json.load(_fh)
+with open(os.path.join(FIX_MISSIONS, "daily_missions.layout.json"), encoding="utf-8") as _fh:
+    ART_RAW = json.load(_fh)
+_ACTION_BUTTON_KEYS = ("collect_all_button", "reach_all_button", "collect_all_milestones_button")
+# The layout fixture without the three feature-action buttons, so the 1:1 join with a close-only template holds.
+ART_RAW_WITHOUT_ACTION_BUTTONS = dict(ART_RAW, elements=[e for e in ART_RAW["elements"] if e["key"] not in _ACTION_BUTTON_KEYS])
 STYLE = {"text_system": "legacy", "font_guid": "e7a63bee4e93df34ca0dd3548b336621", "tmp_font_guid": None,
          "root_size": [900.0, 1400.0], "close_sprite_guid": None, "base_classes": [], "prefabs": [], "warnings": []}
 FORBIDDEN = ("dashboard.kinoa.io", "Bearer", "UnityWebRequest", "Addressables.Load")
@@ -37,8 +46,48 @@ class TestSharedFiles(unittest.TestCase):
     def test_file_set(self):
         for path in ("Assets/Kinoa/InApps/Shared/KinoaInAppHooks.cs",
                      "Assets/Kinoa/InApps/Shared/KinoaInAppItemView.cs",
+                     "Assets/Kinoa/InApps/Shared/KinoaInAppFeatureHooks.cs",
+                     "Assets/Kinoa/InApps/Shared/KinoaInAppMilestoneStepView.cs",
+                     "Assets/Kinoa/InApps/Shared/KinoaInAppMissionRowView.cs",
+                     "Assets/Kinoa/InApps/Shared/KinoaInAppTabView.cs",
                      "Assets/Kinoa/InApps/Editor/KinoaInAppPrefabBuilder.cs"):
             self.assertIn(path, self.files)
+
+    def test_mission_shared_views_api(self):
+        row = self.files["Assets/Kinoa/InApps/Shared/KinoaInAppMissionRowView.cs"]
+        for sig in ("public void SetSubMission(int? number)", "public void SetProgress(decimal current, decimal goal)",
+                    "public KinoaInAppItemView AddReward(Sprite icon, string amount)",
+                    "public void SetAction(string label, UnityAction onClick)",
+                    "public void SetDismiss(bool visible, UnityAction onClick)",
+                    "[SerializeField] private Button dismissButton;", "[SerializeField] private KinoaInAppItemView rewardTemplate;"):
+            self.assertIn(sig, row)
+        tab = self.files["Assets/Kinoa/InApps/Shared/KinoaInAppTabView.cs"]
+        self.assertIn("public void Setup(int setNumber, string text, bool selected, UnityAction onClick)", tab)
+        self.assertIn("[SerializeField] private GameObject selectedMarker;", tab)
+        for content in (row, tab):
+            self.assertIn("using KinoaText = UnityEngine.UI.Text;", content)
+
+    def test_mission_shared_views_serialized_fields_match_plan_roles(self):
+        row = self.files["Assets/Kinoa/InApps/Shared/KinoaInAppMissionRowView.cs"]
+        for name in ("placementText", "titleText", "subMissionText", "statusText", "progressText", "actionLabel",
+                     "dismissLabel", "progressFill", "rewardsRoot", "rewardTemplate", "actionButton", "dismissButton"):
+            self.assertRegex(row, r"\[SerializeField\] private \w+ %s;" % name)
+        tab = self.files["Assets/Kinoa/InApps/Shared/KinoaInAppTabView.cs"]
+        for name in ("label", "selectedMarker", "button"):
+            self.assertRegex(tab, r"\[SerializeField\] private \w+ %s;" % name)
+
+    def test_mission_shared_views_formats_and_tmp_alias(self):
+        row = self.files["Assets/Kinoa/InApps/Shared/KinoaInAppMissionRowView.cs"]
+        for fmt in ('"P" + placementNumber', '"Sub-mission " + number', '"\\u00d7"'):
+            self.assertIn(fmt, row)
+        # whole numbers print bare, decimals without a culture's separator or a fixed scale ("5/10", "2.5/10")
+        self.assertIn("using System.Globalization;", row)
+        self.assertIn('progressText.text = current.ToString("0.##", CultureInfo.InvariantCulture) + "/" + goal.ToString("0.##", CultureInfo.InvariantCulture);', row)
+        self.assertNotIn("current + \"/\" + goal", row)
+        style = dict(STYLE, text_system="tmp", tmp_font_guid="cccccccccccccccccccccccccccccccc")
+        files = mod.generate_code(_plan(style=style), {})["files"]
+        for name in ("KinoaInAppMissionRowView", "KinoaInAppTabView"):
+            self.assertIn("using KinoaText = TMPro.TMP_Text;", files["Assets/Kinoa/InApps/Shared/%s.cs" % name])
 
     def test_no_forbidden_strings_anywhere(self):
         for path, content in self.files.items():
@@ -76,7 +125,11 @@ class TestSharedFiles(unittest.TestCase):
 
     def test_builder_contract(self):
         builder = self.files["Assets/Kinoa/InApps/Editor/KinoaInAppPrefabBuilder.cs"]
-        self.assertIn('public const string MenuPath = "Tools/Kinoa/In-Apps/Build Prefabs From Plans";', builder)
+        self.assertIn('public const string MenuPath = "Tools/Kinoa/In-Apps/Build All Prefabs From Plans";', builder)
+        self.assertIn('public const string TemplateMenuRoot = "Tools/Kinoa/In-Apps/Build Prefab/";', builder)
+        self.assertIn("public static BuildReport BuildPlanMenu(string planPath)", builder)
+        self.assertIn("var report = BuildFromPlan(planPath);", builder)
+        self.assertIn("[KinoaInAppPrefabBuilder] {planPath}: built", builder)
         self.assertIn("[MenuItem(MenuPath)]", builder)
         self.assertIn("public static string BuildAll()", builder)
         self.assertIn("public static BuildReport BuildFromPlan(string planPath)", builder)
@@ -104,6 +157,25 @@ class TestSharedFiles(unittest.TestCase):
         self.assertIn('Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf")', builder, "builder should try LegacyRuntime.ttf")
         self.assertIn('Resources.GetBuiltinResource<Font>("Arial.ttf")', builder, "builder should fallback to Arial.ttf")
         self.assertNotIn("catch (Exception) { return Resources.GetBuiltinResource", builder, "builder should not use try-catch for BuiltinFont")
+
+    def test_builder_knows_mission_bindings(self):
+        b = mod.BUILDER_CS
+        for s in ('case "scroll":', 'case "tab_template":', 'case "mission_row_template":',
+                  'case "row_part":', 'case "tab_part":', "public string color;", "public string role;",
+                  "public string scroll_axis;", "ColorUtility.TryParseHtmlString(node.color", "AddComponent<RectMask2D>()",
+                  "ContentSizeFitter.FitMode.PreferredSize", 'case "ScrollRect":',
+                  'case "KinoaInAppTabView":', 'case "KinoaInAppMissionRowView":', "not assigned"):
+            self.assertIn(s, b)
+        self.assertNotIn("MissionDialog", b)
+        self.assertNotIn('case "list_content":', b)   # the mission list is the shared scroll chain now
+
+    def test_builder_orphan_role_check_is_limited_to_part_bindings(self):
+        # slot nodes carry layout roles ("header", "bar_image", ...) that are not view-field names;
+        # only tab_part / row_part roles are wiring contracts, so only they may fail the build as orphans
+        b = mod.BUILDER_CS
+        orphan = b.split("foreach (var orphan in", 1)[1].split(";", 1)[0]
+        self.assertIn('IsPartBinding(n.binding)', orphan)
+        self.assertIn('private static bool IsPartBinding(string binding) => binding == "tab_part" || binding == "row_part";', b)
 
 
 class TestGenerateCli(unittest.TestCase):
@@ -175,6 +247,52 @@ class TestGenerateCli(unittest.TestCase):
                               "--project-root", root, "--overwrite"], capture_output=True, text=True)
         self.assertEqual(res.returncode, 2)
         self.assertEqual(json.loads(res.stdout)["error"], "shared_text_system_mismatch")
+
+    def test_generate_writes_new_shared_files_next_to_kept_ones(self):
+        """Project already has the old shared files: the two new ones are written, the old ones kept."""
+        import subprocess
+        import sys
+        import tempfile
+        root = tempfile.mkdtemp()
+        plan_path = os.path.join(root, "p.json")
+        with open(plan_path, "w", encoding="utf-8") as fh:
+            json.dump(_plan(), fh)
+        shared = os.path.join(root, "Assets", "Kinoa", "InApps", "Shared")
+        os.makedirs(shared)
+        for name in ("KinoaInAppItemView.cs", "KinoaInAppHooks.cs"):
+            with open(os.path.join(shared, name), "w", encoding="utf-8") as fh:
+                fh.write("// old %s\nusing KinoaText = UnityEngine.UI.Text;\n" % name)
+        res = subprocess.run([sys.executable, HELPER, "generate", "--plan", plan_path, "--project-root", root],
+                             capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        data = json.loads(res.stdout)
+        base = "Assets/Kinoa/InApps/Shared/"
+        for name in ("KinoaInAppMissionRowView.cs", "KinoaInAppTabView.cs"):
+            self.assertIn(base + name, data["written"])
+            self.assertTrue(os.path.isfile(os.path.join(shared, name)))
+        for name in ("KinoaInAppItemView.cs", "KinoaInAppHooks.cs"):
+            self.assertIn(base + name, data["skipped"])
+            with open(os.path.join(shared, name), encoding="utf-8") as fh:
+                self.assertTrue(fh.read().startswith("// old"))
+
+    def test_mismatch_guard_covers_mission_shared_files(self):
+        import subprocess
+        import sys
+        import tempfile
+        root = tempfile.mkdtemp()
+        plan_path = os.path.join(root, "p.json")
+        with open(plan_path, "w", encoding="utf-8") as fh:
+            json.dump(_plan(), fh)  # legacy plan
+        shared = os.path.join(root, "Assets", "Kinoa", "InApps", "Shared")
+        os.makedirs(shared)
+        with open(os.path.join(shared, "KinoaInAppTabView.cs"), "w", encoding="utf-8") as fh:
+            fh.write("using KinoaText = TMPro.TMP_Text;\n")
+        res = subprocess.run([sys.executable, HELPER, "generate", "--plan", plan_path, "--project-root", root],
+                             capture_output=True, text=True)
+        self.assertEqual(res.returncode, 2)
+        data = json.loads(res.stdout)
+        self.assertEqual(data["error"], "shared_text_system_mismatch")
+        self.assertEqual(data["path"], "Assets/Kinoa/InApps/Shared/KinoaInAppTabView.cs")
 
     def test_facade_flag_reaches_the_view(self):
         root, res = self._run("--facade", "present", "--facade-namespace", "Game.Kinoa")
@@ -382,20 +500,67 @@ class TestViewStandard(unittest.TestCase):
                       "ApplySlotToggle should only hide when custom is false")
 
 
-def _milestone_plan():
+def _milestone_plan(mode="single_slot", collect_all=False, style=STYLE):
+    """mode: per_step (no CTA slot) | single_slot (the template's one CTA slot) | single_main (--milestone-cta single, no slot)."""
     t = copy.deepcopy(TEMPLATE)
     t["key"] = "chase"
     t["featureType"] = "milestone"
     t["features"] = {"milestone": {"key": "main_progressbar", "limit": 3, "mainActionTypes": ["close"]}}
-    return _plan(template=t)
+    opts = {}
+    if mode in ("per_step", "single_main"):
+        t["buttons"] = [b for b in t["buttons"] if b["key"] == "close_button"]
+    if mode == "single_main":
+        opts["milestone_cta"] = "single"
+    if collect_all:
+        t["buttons"].append({"key": "collect_all_button", "name": "Collect All", "index": 20, "canBeHidden": True,
+                             "clickActionType": ["collect_resource"], "customFields": []})
+    result = mod.plan_prefab(t, mod.layout_from_build(BUILD), style, opts)
+    assert result["ok"], result
+    return result["plan"]
 
 
 def _mission_plan():
-    t = copy.deepcopy(TEMPLATE)
-    t["key"] = "board"
-    t["featureType"] = "mission"
-    t["features"] = {"mission": {"progressBar": {"display": "show_for_all_sets_combined"}, "completionCta": ["collect_resource"]}}
-    return _plan(template=t)
+    return _plan(template=MISSIONS, layout=mod.layout_from_artifact(ART_RAW))
+
+
+def _selection(bind_feature):
+    """Evaluates the generated D4 selection expression (a ?? chain of `(cond && cond ? set : null)` terms)
+       for given sets: prev / active are (setNumber, hasRows) or None. Returns "prev", "active" or None."""
+    expr = re.search(r"var target = (.*?);\n", bind_feature, re.S).group(1)
+    terms = [t.strip() for t in re.split(r"\s*\?\?\s*", expr)]
+    names = {"state.PreviousSetProgress": "prev", "state.ActiveSetProgress": "active"}
+
+    def pick(selected, prev, active):
+        sets = {"prev": prev, "active": active}
+        for term in terms:
+            m = re.fullmatch(r"\((.*) \? (state\.\w+) : null\)", term)
+            if not m:
+                if sets[names[term]] is not None:
+                    return names[term]
+                continue
+            ok = True
+            for cond in m.group(1).split(" && "):
+                c = re.fullmatch(r"_selectedSetNumber == (state\.\w+)\?\.SetNumber", cond)
+                h = re.fullmatch(r"HasRows\((state\.\w+)\)", cond)
+                if c:
+                    target = sets[names[c.group(1)]]
+                    ok = ok and selected == (target[0] if target else None)
+                elif h:
+                    target = sets[names[h.group(1)]]
+                    ok = ok and bool(target and target[1])
+                else:
+                    raise AssertionError("unknown condition: " + cond)
+            if ok and sets[names[m.group(2)]] is not None:
+                return names[m.group(2)]
+        return None
+    return pick
+
+
+def _method_body(view, declaration):
+    """The generated method from its declaration line to the next member at method indentation."""
+    start = view.index(declaration)
+    end = view.find("\n        private ", start + len(declaration))
+    return view[start:] if end < 0 else view[start:end]
 
 
 class TestViewZonesAndFeatures(unittest.TestCase):
@@ -425,45 +590,769 @@ class TestViewZonesAndFeatures(unittest.TestCase):
         self.assertNotIn("BindResourceArea", view)
         self.assertIn("BindTimer();", view)
 
-    def test_milestone_feature(self):
-        plan = _milestone_plan()
-        view = mod.generate_code(plan, {})["files"][plan["paths"]["view_path"]]
-        self.assertIn("using Kinoa.Data.Messaging.InApp.Features;", view)
-        self.assertIn("using Kinoa.Data.Messaging.InApp.Features.Milestones;", view)
-        self.assertIn("var feature = Data.Feature as InAppMilestonesFeature;", view)
-        self.assertIn("milestoneFill.fillAmount", view)
-        self.assertIn("step.Status == InAppMilestoneStatus.Reached", view)
-        self.assertIn("Kinoa.Messaging.CollectMilestonesAsync(Message, new List<uint> { index })", view)
-        self.assertIn("marker.SetButton(false, null);", view)
-        self.assertIn("response.Data.Collected.Contains(index)", view)
-        self.assertIn("response?.Error?.Message", view)
-        self.assertIn("Message.SetMilestonesStatusAsCollected(response.Data.Collected);", view)
-        self.assertIn("if (response.Data.InApp != null)", view)
-        self.assertIn('ApplyButtonSlot(milestoneMainButton, milestoneMainButtonLabel, "milestone_main", feature.ActiveProgressButton, canBeHidden: true);', view)
-        self.assertIn("private void BindGrandPrize(", view)
-        self.assertIn("%s apply the collected step's Button.Resources" % mod.TODO, view)
 
-    def test_mission_feature(self):
+
+
+def _view(plan, options=None):
+    return mod.generate_code(plan, options or {})["files"][plan["paths"]["view_path"]]
+
+
+def _method(view, signature):
+    """The text of one generated method: from its signature to the next member declaration."""
+    return re.split(r"\n        (?:private|public|internal) ", view.split(signature, 1)[1], 1)[0]
+
+
+class TestMilestoneView(unittest.TestCase):
+    def setUp(self):
+        self.per_step = _view(_milestone_plan("per_step"))
+        self.single_slot_plan = _milestone_plan("single_slot")
+        self.single_slot = _view(self.single_slot_plan)
+        self.single_main = _view(_milestone_plan("single_main"))
+        self.collect_all_plan = _milestone_plan("single_slot", collect_all=True)
+        self.collect_all = _view(self.collect_all_plan)
+
+    def test_modes_are_what_the_helper_says(self):
+        self.assertEqual(_milestone_plan("per_step")["milestone"]["cta_mode"], "per_step")
+        self.assertEqual(self.single_slot_plan["milestone"]["single_cta"]["key"], "cta_button")
+        self.assertIsNone(_milestone_plan("single_main")["milestone"]["single_cta"]["key"])
+        self.assertEqual(self.collect_all_plan["milestone"]["collect_all"]["key"], "collect_all_button")
+
+    def test_shared_milestone_members(self):
+        for view in (self.per_step, self.single_slot, self.single_main, self.collect_all):
+            self.assertIn("using Kinoa.Data.Messaging.InApp.Features;", view)
+            self.assertIn("using Kinoa.Data.Messaging.InApp.Features.Milestones;", view)
+            self.assertIn("private bool _collecting;", view)
+            self.assertIn("private void BindFeature()", view)
+            self.assertIn("var feature = Data.Feature as InAppMilestonesFeature;", view)
+            self.assertIn("private KinoaInAppMilestoneStepView SpawnStep(KinoaInAppMilestoneStepView template)", view)
+            self.assertIn("_spawned.Add(item.gameObject);", _method(view, "private KinoaInAppMilestoneStepView SpawnStep("))
+            self.assertIn("private static float StepProgress(decimal progress, long previous, long score)", view)
+            self.assertIn("private string StepLabel(InAppCustomButton button)", view)
+            self.assertIn('"Collect"', _method(view, "private string StepLabel("))
+            self.assertIn("private void FocusStep(int index, int count)", view)
+            self.assertIn("Canvas.ForceUpdateCanvases();", view)
+            self.assertIn("private void ApplyFeatureButton(Button button, KinoaText label, InAppCustomButton slot, string clickKey, List<uint> indexes, bool canBeHidden)", view)
+            self.assertIn("private void OnFeatureButtonClicked(string clickKey, InAppCustomButton slot, List<uint> indexes)", view)
+            self.assertIn("private async Task RunActionThenCollectAsync(InAppCustomButton slot, List<uint> indexes)", view)
+            self.assertIn("private async Task CollectStepsAsync(List<uint> indexes)", view)
+            self.assertIn("BindGrandPrize(steps);", view)
+            self.assertIn("private void BindGrandPrize(List<InAppMilestoneStep> steps)", view)
+            self.assertLess(view.index("BindButtons();"), view.index("BindFeature();"))
+
+    def test_per_step_binds_each_step_with_its_own_button(self):
+        bind = _method(self.per_step, "private void BindFeature()")
+        self.assertIn("SpawnStep(milestoneStepTemplate)", bind)
+        self.assertIn("item.SetScore(step.Score.ToString());", bind)
+        self.assertIn("item.SetStatus(step.Status);", bind)
+        self.assertIn("item.SetProgress(StepProgress(feature.Progress, previous, step.Score));", bind)
+        self.assertIn("item.SetReward(", bind)
+        self.assertIn('"milestone_step_"', bind)
+        self.assertIn("new List<uint> { index }", bind)
+        self.assertIn("step.Status != InAppMilestoneStatus.Collected, step.Status == InAppMilestoneStatus.Reached, StepLabel(step.Button)", bind)
+        self.assertIn('ApplyFeatureButton(milestoneMainButton, milestoneMainButtonLabel, feature.ActiveProgressButton, "milestone_main",\n'
+                      '                FeatureIndexes(feature.ActiveProgressButton, steps, reached), canBeHidden: true);', bind)
+        self.assertNotIn("BindSingleCta", self.per_step)
+        self.assertNotIn("item.SetCollect(false, false, null, null);", self.per_step)
+
+    def test_single_slot_reassigns_the_ready_step_cta(self):
+        self.assertIn("item.SetCollect(false, false, null, null);", self.single_slot)
+        self.assertIn("BindSingleCta(feature, steps, reached);", self.single_slot)
+        cta = _method(self.single_slot, "private void BindSingleCta(")
+        self.assertIn('ApplyFeatureButton(ctaButton, ctaButtonLabel, steps[(int)reached[0]].Button, "milestone_step_" + reached[0], new List<uint> { reached[0] }, canBeHidden: false);', cta)
+        self.assertIn('ApplyFeatureButton(ctaButton, ctaButtonLabel, feature.ActiveProgressButton, "milestone_main", new List<uint>(), canBeHidden: false);', cta)
+        self.assertNotIn("SetActive(false)", cta)            # an idle template slot keeps its BindButtons binding
+        self.assertNotIn("ApplyFeatureButton(milestoneMainButton", self.single_slot)
+        self.assertNotIn("milestoneMainButton", self.single_slot)   # the node does not exist on this view
+        self.assertIn('ApplyButton(ctaButton, ctaButtonLabel, "cta_button", canBeHidden: false);', self.single_slot)
+
+    def test_single_main_hides_main_button_when_idle(self):
+        cta = _method(self.single_main, "private void BindSingleCta(")
+        self.assertIn("steps[(int)reached[0]].Button", cta)
+        self.assertIn("ApplyFeatureButton(milestoneMainButton, milestoneMainButtonLabel, feature.ActiveProgressButton", cta)
+        self.assertIn("milestoneMainButton.gameObject.SetActive(false)", cta)
+        self.assertIn("item.SetCollect(false, false, null, null);", self.single_main)
+        self.assertNotIn("ctaButton", self.single_main)
+
+    def test_collect_all_present_only_when_detected(self):
+        ca = self.collect_all_plan["milestone"]["collect_all"]
+        bind = _method(self.collect_all, "private void BindFeature()")
+        self.assertIn('Data.Buttons?.TryGetValue("collect_all_button", out collectAllSlot);', bind)
+        self.assertIn("var collectAllIndexes = FeatureIndexes(collectAllSlot, steps, reached);", bind)
+        self.assertIn('ApplyFeatureButton(%s, %s, collectAllSlot, "collect_all_button", collectAllIndexes, canBeHidden: true);'
+                      % (ca["button_field"], ca["label_field"]), bind)
+        self.assertIn("%s.interactable = collectAllSlot != null && collectAllIndexes.Count > 0;" % ca["button_field"], bind)
+        self.assertLess(bind.index("FeatureIndexes(collectAllSlot"), bind.index('"collect_all_button", collectAllIndexes'))
+        self.assertLess(bind.index('"collect_all_button", collectAllIndexes'), bind.index("FocusStep("))
+        for view in (self.per_step, self.single_slot, self.single_main):
+            self.assertNotIn("collectAllIndexes", view)
+            self.assertNotIn("collectAllSlot", view)
+
+    def test_click_resolution(self):
+        click = _method(self.per_step, "private void OnFeatureButtonClicked(")
+        order = ["if (_collecting) return;",
+                 "Kinoa.GameEvents.SendInAppClickEvent(new InAppClickEventData(Message));",
+                 "ButtonClicked?.Invoke(this, clickKey, slot?.ClickConfig);",
+                 "is InAppCloseClickConfiguration", "Close();",
+                 "if (IsFreeClick(config))",
+                 "if (indexes.Count > 0) _ = CollectStepsAsync(indexes);",
+                 "_ = RunActionThenCollectAsync(slot, indexes);"]
+        positions = [click.index(s) for s in order]
+        self.assertEqual(positions, sorted(positions))
+        apply = _method(self.per_step, "private void ApplyFeatureButton(")
+        self.assertIn("ApplyButtonSlot(button, label, clickKey, slot, canBeHidden);", apply)
+        self.assertIn("if (button == null) return;", apply)
+        self.assertIn("button.onClick.RemoveAllListeners();", apply)
+        self.assertIn("button.onClick.AddListener(() => OnFeatureButtonClicked(clickKey, slot, indexes));", apply)
+
+    def test_free_click_predicate_is_defined_once(self):
+        cond = "config == null || config is InAppCollectResourceClickConfiguration || config is InAppPromiseRewardsClickConfiguration"
+        for view in (self.per_step, self.single_slot, self.single_main, self.collect_all):
+            self.assertEqual(view.count(cond), 1)
+            self.assertIn("private static bool IsFreeClick(InAppClickConfiguration config) =>\n            " + cond + ";", view)
+
+    def test_feature_indexes_follow_the_buttons_own_config(self):
+        for view in (self.per_step, self.single_slot, self.single_main, self.collect_all):
+            body = _method(view, "private static List<uint> FeatureIndexes(")
+            self.assertIn("(InAppCustomButton slot, List<InAppMilestoneStep> steps, List<uint> reached)", view)
+            # a paid / ad / link button: its own action gates every reached step
+            self.assertIn("if (!IsFreeClick(slot?.ClickConfig)) return reached;", body)
+            # a free button: only reached steps whose own CTA is free too
+            self.assertIn("foreach (var index in reached)", body)
+            self.assertIn("if (IsFreeClick(steps[(int)index]?.Button?.ClickConfig)) free.Add(index);", body)
+            self.assertIn("return free;", body)
+            self.assertLess(body.index("return reached;"), body.index("return free;"))
+
+    def test_single_cta_keeps_the_ready_steps_own_button(self):
+        for view in (self.single_slot, self.single_main):
+            cta = _method(view, "private void BindSingleCta(")
+            self.assertIn("new List<uint> { reached[0] }", cta)
+            self.assertNotIn("FeatureIndexes", cta)
+
+    def test_kept_visible_button_without_slot_is_inert(self):
+        apply = _method(self.per_step, "private void ApplyFeatureButton(")
+        branch = apply.split("if (slot == null)")[1].split("return;")[0]
+        self.assertIn("if (!canBeHidden)", branch)
+        self.assertIn("button.onClick.RemoveAllListeners();", branch)
+        self.assertIn("button.interactable = false;", branch)
+        rest = apply.split("if (slot == null)")[1].split("return;", 1)[1]
+        self.assertLess(rest.index("button.interactable = true;"), rest.index("AddListener"))
+        self.assertLess(apply.index("ApplyButtonSlot("), apply.index("if (slot == null)"))
+
+    def test_paid_step_never_collects_without_hook(self):
+        view = self.per_step
+        body = view.split("private async Task RunActionThenCollectAsync")[1].split("private ")[0]
+        guard = body.split("KinoaInAppFeatureHooks.RunButtonAction == null")[1].split("return;")[0]
+        self.assertNotIn("CollectStepsAsync", guard)
+        self.assertIn("KinoaInAppFeatureHooks.WarnMissing(nameof(KinoaInAppFeatureHooks.RunButtonAction));", guard)
+        self.assertIn("await KinoaInAppFeatureHooks.RunButtonAction(Message, slot)", body)
+        catch = body.split("catch (Exception e)")[1].split("finally")[0]
+        self.assertIn("return;", catch)
+        self.assertNotIn("CollectStepsAsync", catch)
+        self.assertIn("if (this == null) return;", body)
+        self.assertIn("if (done && indexes.Count > 0) await CollectStepsAsync(indexes);", body)
+
+    def test_collect_failure_is_caught_and_rebinds(self):
+        body = _method(self.per_step, "private async Task CollectStepsAsync(")
+        catch = body.split("catch (Exception e)")[1].split("finally")[0]
+        self.assertIn('Debug.LogWarning($"[{GetType().Name}] milestone collect failed for steps {string.Join(",", indexes)}: {e.Message}");', catch)
+        self.assertIn("if (this != null) Bind(Message);", catch)
+        self.assertLess(body.index("catch (Exception e)"), body.index("finally"))
+        self.assertIn("_collecting = false;", body.split("finally")[1])
+
+    def test_collect_is_guarded_against_double_tap(self):
+        body = _method(self.per_step, "private async Task CollectStepsAsync(")
+        self.assertIn("if (_collecting) return;", _method(self.per_step, "private void OnFeatureButtonClicked("))
+        self.assertLess(body.index("_collecting = true;"), body.index("try"))
+        self.assertIn("finally", body)
+        self.assertIn("_collecting = false;", body.split("finally")[1])
+
+    def test_rewards_read_before_rebind(self):
+        view = self.per_step
+        body = view.split("private async Task CollectStepsAsync")[1]
+        self.assertLess(body.index("var steps = "), body.index("Kinoa.Messaging.CollectMilestonesAsync(Message, indexes)"))
+        self.assertLess(body.index("Button.Resources"), body.index("Bind(response.Data.InApp);"))
+        self.assertIn("var steps = (Data.Feature as InAppMilestonesFeature)?.Steps;", body)
+        self.assertIn("foreach (var index in response.Data.Collected)", body)
+        self.assertIn("%s apply steps[(int)index].Button.Resources to the player's economy here (same place as KinoaUiService.GrantRewards)." % mod.TODO, body)
+        self.assertIn("response?.Error?.Message", body)
+        self.assertLess(body.index("Bind(response.Data.InApp);"), body.index("Message.SetMilestonesStatusAsCollected(response.Data.Collected);"))
+        fail = body.split("response?.Error?.Message")[1].split("return;")[0]
+        self.assertIn("Bind(Message);", fail)
+
+    def test_empty_and_finished_ladders_are_safe(self):
+        view = self.per_step
+        self.assertIn("count > 1 ? (float)index / (count - 1) : 0f", view)
+        self.assertIn("feature.Steps ?? new List<InAppMilestoneStep>()", view)
+        self.assertIn("progress >= score ? 1f : 0f", view)
+        self.assertIn("Mathf.Clamp01((float)((progress - previous) / (score - previous)))", view)
+        focus = _method(view, "private void FocusStep(")
+        self.assertIn("count == 0", focus)
+        bind = _method(view, "private void BindFeature()")
+        self.assertIn("milestoneScroll.gameObject.SetActive(feature != null);", bind)
+        self.assertLess(bind.index("InAppMilestoneStatus.Reached"), bind.index("InAppMilestoneStatus.Closed"))
+        self.assertIn("focus = steps.Count - 1;", bind)
+
+    def test_rebind_hides_old_steps_before_layout(self):
+        # ClearSpawned's Destroy is deferred to end of frame: the old steps must not stay in the layout FocusStep measures.
+        for view in (self.per_step, self.single_slot, self.single_main, self.collect_all):
+            bind = _method(view, "private void BindFeature()")
+            self.assertIn("foreach (Transform child in milestoneStepTemplate.transform.parent)", bind)
+            self.assertIn("if (child != milestoneStepTemplate.transform) child.gameObject.SetActive(false);", bind)
+            self.assertLess(bind.index("child.gameObject.SetActive(false);"), bind.index("SpawnStep(milestoneStepTemplate)"))
+            self.assertLess(bind.index("SpawnStep(milestoneStepTemplate)"), bind.index("FocusStep(focus, steps.Count);"))
+            focus = _method(view, "private void FocusStep(")
+            self.assertLess(focus.index("LayoutRebuilder.ForceRebuildLayoutImmediate(milestoneContent);"),
+                            focus.index("milestoneScroll.horizontalNormalizedPosition ="))
+
+    def test_focus_waits_until_the_view_is_active(self):
+        for view in (self.per_step, self.single_slot, self.single_main, self.collect_all):
+            self.assertIn("private int _pendingFocusIndex = -1;", view)
+            self.assertIn("private int _pendingFocusCount;", view)
+            focus = _method(view, "private void FocusStep(")
+            inactive = focus.split("if (!isActiveAndEnabled)")[1].split("}")[0]
+            self.assertIn("_pendingFocusIndex = index;", inactive)
+            self.assertIn("_pendingFocusCount = count;", inactive)
+            self.assertIn("return;", inactive)
+            self.assertLess(focus.index("if (!isActiveAndEnabled)"), focus.index("Canvas.ForceUpdateCanvases();"))
+            self.assertLess(focus.index("_pendingFocusIndex = -1;"), focus.index("Canvas.ForceUpdateCanvases();"))
+            enable = _method(view, "private void OnEnable()")
+            self.assertIn("if (_pendingFocusIndex < 0) return;", enable)
+            self.assertIn("StartCoroutine(ApplyPendingFocusNextFrame());", enable)
+            later = _method(view, "private System.Collections.IEnumerator ApplyPendingFocusNextFrame()")
+            self.assertLess(later.index("yield return null;"), later.index("FocusStep(_pendingFocusIndex, _pendingFocusCount);"))
+            self.assertEqual(view.count("private void OnEnable()"), 1)
+
+    def test_milestone_view_needs_no_change_to_old_shared_files(self):
+        hooks = _read_exact(os.path.join(GOLDEN, "hooks.cs"))
+        hook_members = set(re.findall(r"(?:public|internal) static [^=(]*?(\w+)\s*(?:=|\()", hooks))
+        item_members = set(re.findall(r"public \w+ (\w+)\(", _read_exact(os.path.join(GOLDEN, "item_view_legacy.cs"))))
+        step_members = set(re.findall(r"public \w+ (\w+)\(", mod.render_milestone_step_view("legacy")))
+        for view in (self.per_step, self.single_slot, self.single_main, self.collect_all):
+            used = set(re.findall(r"KinoaInAppHooks\.(\w+)", view))
+            self.assertTrue(used <= hook_members, used - hook_members)
+            for method in re.split(r"\n        (?=private |public |internal )", view):
+                for var in re.findall(r"var (\w+) = Spawn\(", method):
+                    calls = set(re.findall(r"\b%s\.(\w+)\(" % var, method))
+                    self.assertTrue(calls <= item_members, calls - item_members)
+                for var in re.findall(r"var (\w+) = SpawnStep\(", method):
+                    calls = set(re.findall(r"\b%s\.(\w+)\(" % var, method))
+                    self.assertTrue(calls <= step_members, calls - step_members)
+            milestone_part = view.split("// ------------------------------------------------------------------ milestones feature")[1]
+            self.assertNotIn("KinoaInAppItemView", milestone_part)
+
+    def test_standard_and_mission_views_have_no_milestone_code(self):
+        # the milestone FEATURE's code: never on a standard view, never on a mission view
+        feature_only = ("InAppMilestonesFeature", "InAppMilestoneStep>", "milestoneScroll", "_collecting",
+                        "CollectMilestonesAsync", "OnFeatureButtonClicked", "SpawnStep(", "FeatureIndexes(",
+                        "_pendingFocus", "ApplyPendingFocusNextFrame", "BindGrandPrize")
+        for plan in (_plan(), _mission_plan()):
+            for options in ({}, {"facade": "present"}):
+                view = _view(plan, options)
+                for bad in feature_only:
+                    self.assertNotIn(bad, view)
+        # a standard view has no ladder at all; a mission view's ladder is the missions bar (TestMissionLadder)
+        for options in ({}, {"facade": "present"}):
+            view = _view(_plan(), options)
+            for bad in ("InAppMilestone", "MilestoneStepView", "KinoaInAppFeatureHooks", "OnEnable"):
+                self.assertNotIn(bad, view)
+
+    def test_plan_without_the_scroll_ladder_is_refused(self):
+        for drop in ("block", "scroll"):
+            plan = copy.deepcopy(self.single_slot_plan)
+            if drop == "block":
+                plan.pop("milestone")                    # a plan written before the milestone scroll ladder
+            else:
+                plan["nodes"] = [n for n in plan["nodes"] if n["name"] != "MilestoneScroll"]
+            with self.assertRaises(mod.PlanOutdatedError):
+                mod.generate_code(plan, {})
+
+    def test_tmp_variant(self):
+        tmp_style = dict(STYLE, text_system="tmp", tmp_font_guid="0123456789abcdef0123456789abcdef")
+        view = _view(_milestone_plan("single_slot", collect_all=True, style=tmp_style))
+        self.assertIn("using KinoaText = TMPro.TMP_Text;", view)
+        self.assertIn("private void ApplyFeatureButton(Button button, KinoaText label,", view)
+
+    def test_no_forbidden_strings(self):
+        for view in (self.per_step, self.single_slot, self.single_main, self.collect_all,
+                     _view(self.collect_all_plan, {"facade": "present"})):
+            for bad in FORBIDDEN:
+                self.assertNotIn(bad, view)
+
+
+class TestGoldenViews(unittest.TestCase):
+    def test_standard_and_milestone_views_unchanged(self):
+        # Goldens rendered from the module at the milestone base (6d5deb8 "Milestone template to prefab") with
+        # these exact inputs: the missions work must leave standard and milestone views byte-identical.
+        for name, plan in (("one_cta_view.cs.txt", _plan()),
+                           ("milestone_view.cs.txt", _milestone_plan("single_slot")),
+                           ("milestone_per_step_view.cs.txt", _milestone_plan("per_step")),
+                           ("milestone_single_main_collect_all_view.cs.txt", _milestone_plan("single_main", collect_all=True))):
+            self.assertEqual(_view(plan), _read_exact(os.path.join(GOLDEN_VIEWS, name)), "%s drifted from the golden" % name)
+
+
+class TestViewMissions(unittest.TestCase):
+    def setUp(self):
+        self.view = _view(_mission_plan())
+
+    def test_mission_view_declarations(self):
+        v = self.view
+        for s in ("using System.Linq;", "using UnityEngine.Events;", "using Kinoa.Data.Messaging.InApp.Features.Missions;",
+                  "public event Action<KinoaInAppDailyMissionsView, int, InAppMission, InAppClickConfiguration> MissionCtaClicked;",
+                  "private int? _selectedSetNumber;", "private string _boundMessageId;",
+                  "private readonly List<GameObject> _missionRows = new List<GameObject>();",
+                  "private readonly HashSet<(int setNumber, int rowNumber)> _dismissedRows",
+                  "private readonly HashSet<int> _collectedBarRows", "private bool _missionBusy;",
+                  "private void BindFeature()", "private void ShowMissionSet(InAppMissionSetProgress set)",
+                  "private async Task CollectMissionAsync(KinoaInAppMissionRowView row, int setNumber, InAppMission mission)",
+                  "private async Task DismissMissionAsync(int setNumber, InAppMission mission)",
+                  "private void BindMissionBar(InAppMissionsProgress state)",
+                  "private async Task CollectMissionBarStepAsync(int setNumber, List<InAppMissionsMilestoneStep> steps)",
+                  "private void SetMissionBusy(bool busy)",
+                  "private void ApplyMissionActionButton(Button button, KinoaText label, string key, bool canBeHidden, bool show, bool interactable, Func<Task> action)",
+                  "private T SpawnMission<T>(T template, List<GameObject> into) where T : Component",
+                  '[Header("Missions")]', "[SerializeField] private KinoaInAppTabView missionTabTemplate;",
+                  "[SerializeField] private KinoaInAppMissionRowView missionRowTemplate;",
+                  "[SerializeField] private ScrollRect missionScroll;"):
+            self.assertIn(s, v)
+        for bad in FORBIDDEN:
+            self.assertNotIn(bad, v)
+
+    def test_bind_resets_per_message_state_before_replacing_message(self):
+        bind = _method_body(self.view, "public bool Bind(InAppMessage message)")
+        self.assertLess(bind.index("if (message.MessageId != _boundMessageId)"), bind.index("_dismissedRows.Clear();"))
+        self.assertLess(bind.index("_collectedBarRows.Clear();"), bind.index("Message = message;"))
+
+    def test_mission_view_tabs_and_selection(self):
+        v = self.view
+        for s in ("state.PreviousSetProgress", '$"Set {set.SetNumber} (prev)"', '$"Set {set.SetNumber}"',
+                  "_selectedSetNumber", "?? state.ActiveSetProgress", "HasRows("):
+            self.assertIn(s, v)
+        # the selected set survives a rebind only while it still has rows; else the active set (D4)
+        self.assertIn("_selectedSetNumber == state.PreviousSetProgress?.SetNumber && HasRows(state.PreviousSetProgress)", v)
+        self.assertIn("_dismissedRows.Contains((set.SetNumber, m.RowNumber))", v)   # dismissed rows never count
+
+    def test_mission_view_selection_skips_an_emptied_set(self):
+        """D4 + final review #2: a selected or active set left without visible rows (all dismissed) never wins
+           over a set that still has rows; the bare active set is only the last resort."""
+        body = _method_body(self.view, "private void BindFeature()")
+        self.assertIn(
+            "            var target = (_selectedSetNumber == state.PreviousSetProgress?.SetNumber && HasRows(state.PreviousSetProgress) ? state.PreviousSetProgress : null)\n"
+            "                         ?? (_selectedSetNumber == state.ActiveSetProgress?.SetNumber && HasRows(state.ActiveSetProgress) ? state.ActiveSetProgress : null)\n"
+            "                         ?? (HasRows(state.ActiveSetProgress) ? state.ActiveSetProgress : null)\n"
+            "                         ?? (HasRows(state.PreviousSetProgress) ? state.PreviousSetProgress : null)\n"
+            "                         ?? state.ActiveSetProgress;\n", body)
+        pick = _selection(body)
+        # active set all dismissed, previous set has rows: the previous set, whichever was selected
+        for selected in (None, 1, 2):
+            self.assertEqual(pick(selected, prev=(1, True), active=(2, False)), "prev", selected)
+        self.assertEqual(pick(2, prev=(1, True), active=(2, True)), "active")      # selection kept while it has rows
+        self.assertEqual(pick(1, prev=(1, True), active=(2, True)), "prev")
+        self.assertEqual(pick(1, prev=(1, False), active=(2, True)), "active")     # emptied previous set: back to active
+        self.assertEqual(pick(None, prev=None, active=(2, False)), "active")       # nothing has rows: the empty active set
+        self.assertEqual(pick(None, prev=(1, False), active=None), None)
+
+    def test_mission_view_cards(self):
+        v = self.view
+        for s in ("row.SetPlacement(mission.PlacementNumber);", "row.SetTitle(mission.MissionText);",
+                  "row.SetSubMission(mission.SubMissionNumber);", "row.SetStatus(mission.Status.ToString());",
+                  "row.SetProgress(mission.CurrentScore, mission.GoalScore);",
+                  "row.AddReward(ResolveIcon(resource.ResourceKey), resource.Amount.ToString());",
+                  "InAppMissionStatus.Reached => 0", "ThenBy(m => m.PlacementNumber)",
+                  "Kinoa.Messaging.CollectMissionsProgressAsync(Message, setNumber, new List<int> { mission.RowNumber })",
+                  "MissionCtaClicked?.Invoke(this, setNumber, mission, mission.ProgressionCta);",
+                  'row.SetAction("Go", () => OnMissionProgressionClicked(setNumber, captured));',
+                  "private void OnMissionProgressionClicked(int setNumber, InAppMission mission)",
+                  "%s route mission.ProgressionCta" % mod.TODO, "mission.CompletionCta", "mission.ProcessedResources",
+                  'row.SetAction("Collect",', 'row.SetAction("Go",', "row.SetAction(null, null);"):
+            self.assertIn(s, v)
+        self.assertIn("the int is the mission's setNumber", v)   # the event's XML doc names the extra argument
+        go = [l.strip() for l in v.splitlines() if l.strip().startswith("// %s route mission.ProgressionCta" % mod.TODO)]
+        self.assertEqual(len(go), 1)   # one TODO line covering every Go action (final review #3)
+        for s in ("deep_link / web_link", "show_ad",
+                  "Kinoa.Messaging.ReachMissionsProgress(Message, setNumber, new List<int> { mission.RowNumber })",
+                  "Bind(response.Data)", "close", "Close()"):
+            self.assertIn(s, go[0])
+        # collect TODOs grant only what the server confirms (final review #5), like the SDK sample's GetCollectedRows
+        for decl in ("private async Task CollectMissionAsync(", "private async Task CollectAllMissionsAsync()"):
+            todo = [l for l in _method_body(v, decl).splitlines() if mod.TODO in l]
+            self.assertEqual(len(todo), 1, decl)
+            self.assertIn("response.Data", todo[0], decl)
+            self.assertIn("no longer Reached (Collected or removed)", todo[0], decl)
+        body = _method_body(v, "private void ShowMissionSet(InAppMissionSetProgress set)")   # ruling R5
+        self.assertIn("row.SetStatus(", body)
+        self.assertNotIn(".color =", body)   # D6: no status recolouring
+
+    def test_resolve_icon_emitted_exactly_once(self):
+        self.assertEqual(self.view.count("private static Sprite ResolveIcon(string resourceKey)"), 1)
+        t = copy.deepcopy(MISSIONS); t["features"]["mission"]["progressBar"] = {"display": "dont_show_at_all"}
+        plan = _plan(template=t, layout=None)
+        self.assertIn("ResourceArea", {n["name"] for n in plan["nodes"]})   # resource area AND missions both need it
+        self.assertEqual(_view(plan).count("private static Sprite ResolveIcon(string resourceKey)"), 1)
+
+    def test_mission_view_dismiss(self):
+        v = self.view
+        for s in ("Kinoa.Messaging.DeleteMissionsProgress(Message, setNumber, new List<int> { mission.RowNumber })",
+                  "_dismissedRows.Add((setNumber, mission.RowNumber));",
+                  "mission.Status == InAppMissionStatus.Reached || mission.Status == InAppMissionStatus.Collected",
+                  "row.SetDismiss("):
+            self.assertIn(s, v)
+
+    def test_mission_view_bar_like_milestones(self):
+        v = self.view
+        for s in ("state.ProgressBarState", "OrderBy(s => s.MilestoneNumber)",
+                  "Kinoa.Messaging.CollectMissionsMilestonesProgress(Message, setNumber,", "_collectedBarRows.Add(",
+                  "InAppMilestoneStatus.Reached", "%s apply step.Button.Resources" % mod.TODO):
+            self.assertIn(s, v)
+        bar_todo = [l for l in _method_body(v, "private async Task CollectMissionBarStepAsync(").splitlines() if mod.TODO in l]
+        self.assertEqual(len(bar_todo), 1)
+        # the milestone view's grant TODO: the click config was already resolved (ClaimMissionBarStepsAsync), so it
+        # names only the resources, as the milestone view's CollectStepsAsync does
+        self.assertEqual(bar_todo[0].strip(), "// %s apply step.Button.Resources to the player's economy here "
+                                              "(same place as KinoaUiService.GrantRewards)." % mod.TODO)
+        for gone in ("missionBarFill", "missionBarRoot", "missionBarMarkerTemplate", "_missionBarMarkers", "KinoaInAppItemView>(out var marker"):
+            self.assertNotIn(gone, v)
+
+    def test_mission_view_action_buttons_only_when_in_template(self):
+        v = self.view
+        for s in ("Kinoa.Messaging.ReachMissionsProgress(Message,", "private async Task CollectAllMissionsAsync()",
+                  "private async Task CollectAllMissionBarStepsAsync()",
+                  'ApplyMissionActionButton(collectAllButton, collectAllButtonLabel, "collect_all_button"',
+                  'ApplyMissionActionButton(collectAllMilestonesButton, collectAllMilestonesButtonLabel, "collect_all_milestones_button"'):
+            self.assertIn(s, v)
+        self.assertNotIn("ApplyButton(collectAllButton,", v)      # D2
+        self.assertIn('ApplyButton(closeButton, closeButtonLabel, "close_button", canBeHidden: true);', v)
+        t = copy.deepcopy(MISSIONS); t["buttons"] = [b for b in t["buttons"] if b["key"] == "close_button"]
+        v2 = _view(_plan(template=t, layout=mod.layout_from_artifact(ART_RAW_WITHOUT_ACTION_BUTTONS)))
+        # (the Go TODO names ReachMissionsProgress for show_ad CTAs; the reach-all call itself is gone)
+        for s in ("ReachMissionsProgress(Message, set.SetNumber", "ReachAllMissionsAsync", "CollectAllMissionsAsync",
+                  "CollectAllMissionBarStepsAsync", "collectAllButton"):
+            self.assertNotIn(s, v2)
+        self.assertIn("DeleteMissionsProgress", v2)               # dismiss is always there
+
+    def test_feature_action_click_bypasses_facade(self):
         plan = _mission_plan()
-        view = mod.generate_code(plan, {})["files"][plan["paths"]["view_path"]]
-        self.assertIn("using Kinoa.Data.Messaging.InApp.Features.Missions;", view)
-        self.assertIn("var feature = Data.Feature as InAppMissionsFeature;", view)
-        self.assertIn("row.SetValue($\"{mission.CurrentScore}/{mission.GoalScore}\");", view)
-        self.assertIn("mission.Status == InAppMissionStatus.Reached", view)
-        self.assertIn("Kinoa.Messaging.CollectMissionsProgressAsync(Message, setNumber, new List<int> { mission.RowNumber })", view)
-        self.assertIn("row.SetButton(false, null);", view)
-        self.assertIn("mission.ProcessedResources", view)
-        self.assertIn("response?.Error?.Message", view)
-        self.assertIn("missionBarFill.fillAmount", view)
-        self.assertIn("Bind(response.Data);", view)
-        t = copy.deepcopy(TEMPLATE)
-        t["key"] = "board"
-        t["featureType"] = "mission"
-        t["features"] = {"mission": {"progressBar": {"display": "dont_show_at_all"}, "completionCta": ["collect_resource"]}}
-        plan_no_bar = _plan(template=t)
-        view_no_bar = mod.generate_code(plan_no_bar, {})["files"][plan_no_bar["paths"]["view_path"]]
-        self.assertNotIn("missionBarFill", view_no_bar)   # the bar fields do not exist on that view — referencing them would not compile
+        v = mod.generate_code(plan, {"facade": "present"})["files"][plan["paths"]["view_path"]]
+        apply = _method_body(v, "private void ApplyMissionActionButton(")
+        for s in ("Kinoa.GameEvents.SendInAppClickEvent(new InAppClickEventData(Message));",
+                  "ButtonClicked?.Invoke(this, key, slot?.ClickConfig);", "_ = action();", "ResolveButtonLabel(slot)"):
+            self.assertIn(s, apply)
+        self.assertNotIn("KinoaUiService", apply)
+        self.assertLess(apply.index("SendInAppClickEvent"), apply.index("_ = action();"))
 
+    def test_boolean_custom_on_feature_action_button_survives_rerenders(self):
+        """Final review #4: re-renders re-show feature-action buttons, so a boolean custom mapped onto one
+           must be part of its visibility, not only the one-shot ApplySlotToggle in Bind."""
+        t = copy.deepcopy(MISSIONS)
+        for key in ("show_collect_all_button", "show_collect_all_milestones_button"):
+            t["customs"].append({"key": key, "kind": "boolean", "name": key, "index": len(t["customs"]) + 20,
+                                 "nullable": True, "description": "", "canBeHidden": True, "customFields": [],
+                                 "defaultValue": True})
+        plan = _plan(template=t, layout=mod.layout_from_artifact(ART_RAW))
+        targets = {c["key"]: c["target_node"] for c in plan["customs"]}
+        fields = {n["name"]: n["field"] for n in plan["nodes"]}
+        self.assertEqual(fields[targets["show_collect_all_button"]], "collectAllButton")
+        self.assertEqual(fields[targets["show_collect_all_milestones_button"]], "collectAllMilestonesButton")
+        v = _view(plan)
+        self.assertIn('show: missions.Any(m => m.Status == InAppMissionStatus.Reached) && '
+                      '!(TryGetCustom<bool>("show_collect_all_button", out var collectAllButtonOn) && !collectAllButtonOn),', v)
+        self.assertIn('show: hasBar && !(TryGetCustom<bool>("show_collect_all_milestones_button", out var collectAllMilestonesButtonOn)'
+                      ' && !collectAllMilestonesButtonOn),', v)
+        self.assertIn('show: missions.Any(m => m.Status == InAppMissionStatus.Active), interactable:', v)   # unmapped: unchanged
+        # nothing maps onto a feature-action button in the fixture: no extra visibility term anywhere
+        self.assertNotIn("ButtonOn", self.view)
+        self.assertNotIn("TryGetCustom<bool>(\"show_", self.view)
+
+    def test_mission_view_busy_state(self):
+        v = self.view
+        for decl in ("private async Task CollectMissionAsync(", "private async Task DismissMissionAsync(",
+                     "private async Task CollectAllMissionsAsync()", "private async Task ReachAllMissionsAsync()",
+                     "private async Task CollectMissionBarStepAsync("):
+            body = _method_body(v, decl)
+            self.assertIn("SetMissionBusy(true);", body, decl)
+            self.assertIn("SetMissionBusy(false);", body, decl)   # failure path re-enables
+            self.assertIn("response?.Error?.Message", body, decl)
+        self.assertIn("if (_missionBusy) return;", v)
+
+    def test_mission_view_null_guards(self):
+        v = self.view
+        for s in ("var state = feature?.MissionState;", "if (state == null)", "set?.ActiveMissions",
+                  "bar?.Milestones == null || bar.Milestones.Count == 0", "if (this == null) return;"):
+            self.assertIn(s, v)
+        # every mission await is followed by the destroyed-view guard
+        lines = v.splitlines()
+        for i, line in enumerate(lines):
+            if re.match(r"\s*(var \w+ = )?await Kinoa\.Messaging\.|\s*await (Collect|Claim|RunBar)", line):
+                # the guard follows every await, unless the await is the method's last statement
+                self.assertIn(lines[i + 1].strip(), ("if (this == null) return;", "}"), line.strip())
+            if "await KinoaInAppFeatureHooks.RunButtonAction" in line:
+                self.assertIn("if (this == null) return;", "\n".join(lines[i:i + 8]))
+
+    def test_mission_view_without_bar_has_no_bar_code(self):
+        t = copy.deepcopy(MISSIONS); t["features"]["mission"]["progressBar"] = {"display": "dont_show_at_all"}
+        v = _view(_plan(template=t, layout=None))
+        for s in ("missionBarScroll", "missionBarStepTemplate", "CollectMissionsMilestonesProgress", "KinoaInAppMilestoneStepView",
+                  "KinoaInAppFeatureHooks", "_missionBarSteps", "OnEnable", "IsFreeClick"):
+            self.assertNotIn(s, v)
+        # without a bar, the milestones button is an ordinary template button routed like any other
+        self.assertIn('ApplyButton(collectAllMilestonesButton, collectAllMilestonesButtonLabel, "collect_all_milestones_button"', v)
+
+    def test_mission_view_tmp_alias(self):
+        style = dict(STYLE, text_system="tmp", tmp_font_guid="cccccccccccccccccccccccccccccccc")
+        v = _view(_plan(template=MISSIONS, style=style, layout=mod.layout_from_artifact(ART_RAW)))
+        self.assertIn("using KinoaText = TMPro.TMP_Text;", v)
+
+
+
+class TestMissionLadder(unittest.TestCase):
+    """Rule 2: ProgressBarState is the milestone ladder - KinoaInAppMilestoneStepView steps claimed through the
+       milestone click resolver (close / free collect / RunButtonAction then collect)."""
+
+    def setUp(self):
+        self.plan = _mission_plan()
+        self.view = _view(self.plan)
+        self.bind = _method_body(self.view, "private void BindMissionBar(InAppMissionsProgress state)")
+
+    def test_fields_are_the_ladder(self):
+        for decl in ("[SerializeField] private ScrollRect missionBarScroll;",
+                     "[SerializeField] private RectTransform missionBarContent;",
+                     "[SerializeField] private KinoaInAppMilestoneStepView missionBarStepTemplate;",
+                     "private readonly List<GameObject> _missionBarSteps = new List<GameObject>();"):
+            self.assertIn(decl, self.view)
+
+    def test_one_step_view_per_step_ordered_by_milestone_number(self):
+        b = self.bind
+        self.assertIn("bar.Milestones.Where(s => s != null).OrderBy(s => s.MilestoneNumber).ToList()", b)
+        self.assertIn("var item = SpawnMission(missionBarStepTemplate, _missionBarSteps);", b)
+        self.assertLess(b.index("OrderBy(s => s.MilestoneNumber)"), b.index("SpawnMission(missionBarStepTemplate"))
+        self.assertIn("missionBarScroll.gameObject.SetActive(hasBar);", b)
+        self.assertIn("ClearMission(_missionBarSteps);", b)
+
+    def test_step_is_bound_like_a_milestone_step(self):
+        b = self.bind
+        self.assertIn('item.SetScore(step.Score.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture));', b)
+        # reward: the first Button.Resources entry's icon through ResolveIcon, amount as on the milestone view
+        self.assertIn("var resources = step.Button?.Resources;", b)
+        self.assertIn("ResolveIcon(resources[0].ResourceKey)", b)
+        self.assertIn('resources.Count == 1 ? resources[0].Amount.ToString() : $"x{resources.Count}"', b)
+        # progress: the share of the band between the previous step's score and this one's, as StepProgress
+        self.assertIn("item.SetProgress(MissionStepProgress(bar.TotalScore, previous, step.Score));", b)
+        progress = _method_body(self.view, "private static float MissionStepProgress(")
+        self.assertIn("if (score > previous) return Mathf.Clamp01((float)((total - previous) / (score - previous)));", progress)
+        self.assertIn("return total >= score ? 1f : 0f;", progress)
+        self.assertIn("previous = step.Score;", b)
+        # status: a row collected here (results only, no refreshed in-app) shows as Collected
+        self.assertIn("var status = _collectedBarRows.Contains(step.RowNumber) ? InAppMilestoneStatus.Collected : step.Status;", b)
+        self.assertIn("item.SetStatus(status);", b)
+        # collect button: the milestone per-step rules - visible until collected, interactable when Reached
+        self.assertIn("item.SetCollect(status != InAppMilestoneStatus.Collected,", b)
+        self.assertIn("status == InAppMilestoneStatus.Reached && setNumber.HasValue && !_missionBusy, StepLabel(step.Button),", b)
+        self.assertIn("() => OnMissionBarStepClicked(claimSet, captured));", b)
+        self.assertIn('"Collect"', _method_body(self.view, "private string StepLabel("))
+
+    def test_step_view_api_is_the_shared_one(self):
+        step_members = set(re.findall(r"public \w+ (\w+)\(", mod.render_milestone_step_view("legacy")))
+        calls = set(re.findall(r"\bitem\.(\w+)\(", self.bind))
+        self.assertTrue(calls <= step_members, calls - step_members)
+        self.assertEqual(calls, {"SetScore", "SetReward", "SetProgress", "SetStatus", "SetCollect"})
+
+    def test_click_resolution_is_the_milestone_resolver(self):
+        click = _method_body(self.view, "private void OnMissionBarStepClicked(")
+        order = ["if (_missionBusy) return;", "Kinoa.GameEvents.SendInAppClickEvent(new InAppClickEventData(Message));",
+                 'ButtonClicked?.Invoke(this, "mission_bar_step_" + step.MilestoneNumber, step.Button?.ClickConfig);',
+                 "_ = ClaimMissionBarStepsAsync(step.Button, setNumber, new List<InAppMissionsMilestoneStep> { step });"]
+        positions = [click.index(x) for x in order]
+        self.assertEqual(positions, sorted(positions))
+        claim = _method_body(self.view, "private async Task ClaimMissionBarStepsAsync(")
+        order = ["config is InAppCloseClickConfiguration", "Close();", "if (IsFreeClick(config))",
+                 "if (steps.Count > 0) await CollectMissionBarStepAsync(setNumber, steps);",
+                 "await RunBarActionThenCollectAsync(slot, setNumber, steps);"]
+        positions = [claim.index(x) for x in order]
+        self.assertEqual(positions, sorted(positions))
+        cond = "config == null || config is InAppCollectResourceClickConfiguration || config is InAppPromiseRewardsClickConfiguration"
+        self.assertEqual(self.view.count(cond), 1)
+
+    def test_paid_step_never_collects_without_the_hook(self):
+        body = _method_body(self.view, "private async Task RunBarActionThenCollectAsync(")
+        guard = body.split("KinoaInAppFeatureHooks.RunButtonAction == null")[1].split("return;")[0]
+        self.assertIn("KinoaInAppFeatureHooks.WarnMissing(nameof(KinoaInAppFeatureHooks.RunButtonAction));", guard)
+        self.assertNotIn("Collect", guard)
+        self.assertIn("try { done = await KinoaInAppFeatureHooks.RunButtonAction(Message, slot); }", body)
+        catch = body.split("catch (Exception e)")[1].split("if (this == null) return;")[0]
+        self.assertIn("done = false;", catch)
+        self.assertNotIn("Collect", catch)
+        failed = body.split("if (!done || steps.Count == 0)")[1].split("}")[0]
+        self.assertIn("SetMissionBusy(false);", failed)
+        self.assertIn("return;", failed)
+        self.assertNotIn("Collect", failed)
+        # the collect is reached only after the hook returned true
+        self.assertLess(body.index("if (!done || steps.Count == 0)"), body.index("await CollectMissionBarStepAsync(setNumber, steps);"))
+        self.assertLess(body.index("await KinoaInAppFeatureHooks.RunButtonAction"), body.index("await CollectMissionBarStepAsync"))
+
+    def test_double_tap_is_guarded(self):
+        body = _method_body(self.view, "private async Task RunBarActionThenCollectAsync(")
+        self.assertIn("if (_missionBusy) return;", body)
+        # busy is taken BEFORE the game's action is awaited: a second tap cannot start a second purchase
+        self.assertLess(body.index("SetMissionBusy(true);"), body.index("await KinoaInAppFeatureHooks.RunButtonAction"))
+        collect = _method_body(self.view, "private async Task CollectMissionBarStepAsync(")
+        self.assertIn("if (_missionBusy || steps == null || steps.Count == 0) return;", collect)
+        self.assertLess(collect.index("SetMissionBusy(true);"), collect.index("await Kinoa.Messaging.CollectMissionsMilestonesProgress"))
+        self.assertIn("if (_missionBusy) return;", _method_body(self.view, "private void OnMissionBarStepClicked("))
+        # while busy, every step button is disabled (the step view has no interactable setter of its own)
+        busy = _method_body(self.view, "private void SetMissionBusy(bool busy)")
+        self.assertIn("foreach (var stepButton in go.GetComponentsInChildren<Button>()) stepButton.interactable = false;", busy)
+
+    def test_collect_reads_rewards_from_the_captured_steps_then_rebinds(self):
+        collect = _method_body(self.view, "private async Task CollectMissionBarStepAsync(")
+        self.assertIn("var rows = steps.Select(s => s.RowNumber).ToList();", collect)
+        self.assertIn("Kinoa.Messaging.CollectMissionsMilestonesProgress(Message, setNumber, rows)", collect)
+        self.assertIn("_collectedBarRows.Add(result.RowNumber);", collect)
+        self.assertLess(collect.index("Button.Resources"), collect.index("Bind(Message);"))
+
+    def test_throwing_collect_releases_the_busy_state(self):
+        # as the milestone CollectStepsAsync: a failed or throwing request logs a warning and re-renders, never
+        # leaving every mission control disabled
+        collect = _method_body(self.view, "private async Task CollectMissionBarStepAsync(")
+        self.assertLess(collect.index("SetMissionBusy(true);"), collect.index("try"))
+        self.assertLess(collect.index("try"), collect.index("await Kinoa.Messaging.CollectMissionsMilestonesProgress"))
+        catch = collect.split("catch (Exception e)")[1]
+        self.assertIn('Debug.LogWarning($"[{GetType().Name}] mission bar rows {string.Join(", ", rows)} collect failed: {e.Message}");', catch)
+        self.assertIn("if (this != null) SetMissionBusy(false);", catch)
+        self.assertLess(collect.index("Bind(Message);"), collect.index("catch (Exception e)"))   # success path inside the try
+
+    def test_collect_all_milestones_goes_through_the_resolver(self):
+        v = self.view
+        ca = _method_body(v, "private async Task CollectAllMissionBarStepsAsync()")
+        self.assertIn('var slot = MissionSlot("collect_all_milestones_button");', ca)
+        self.assertIn("var steps = CollectAllBarSteps(state, slot);", ca)
+        self.assertIn("await ClaimMissionBarStepsAsync(slot, state.ActiveSetProgress.SetNumber, steps);", ca)
+        self.assertNotIn("CollectMissionBarStepAsync", ca)   # never straight to the collect call
+        # the milestone collect-all semantics: a free button takes only free steps; a paid one gates them all
+        steps = _method_body(v, "private List<InAppMissionsMilestoneStep> CollectAllBarSteps(")
+        self.assertIn("IsFreeClick(slot?.ClickConfig) ? claimable.Where(s => IsFreeClick(s.Button?.ClickConfig)).ToList() : claimable", steps)
+        claimable = _method_body(v, "private List<InAppMissionsMilestoneStep> ClaimableBarSteps(")
+        self.assertIn("s.Status == InAppMilestoneStatus.Reached && !_collectedBarRows.Contains(s.RowNumber)", claimable)
+        self.assertIn('interactable: !_missionBusy && setNumber.HasValue && CollectAllBarSteps(state, MissionSlot("collect_all_milestones_button")).Count > 0', v)
+
+    def test_focus_is_safe_on_empty_ladders_and_waits_for_the_view(self):
+        focus = _method_body(self.view, "private void FocusMissionBarStep(")
+        self.assertIn("if (missionBarScroll == null || count == 0) return;", focus)
+        self.assertIn("count > 1 ? (float)index / (count - 1) : 0f", focus)
+        self.assertIn("if (!isActiveAndEnabled)", focus)
+        self.assertLess(focus.index("LayoutRebuilder.ForceRebuildLayoutImmediate(missionBarContent);"),
+                        focus.index("missionBarScroll.horizontalNormalizedPosition ="))
+        self.assertEqual(self.view.count("private void OnEnable()"), 1)
+
+    def test_no_forbidden_strings(self):
+        for options in ({}, {"facade": "present"}):
+            for bad in FORBIDDEN:
+                self.assertNotIn(bad, _view(self.plan, options))
+
+    def test_outdated_mission_plans_are_refused(self):
+        legacy = copy.deepcopy(self.plan)   # the release's flat list: MissionList is a plain zone
+        for n in legacy["nodes"]:
+            if n["name"] == "MissionList":
+                n["binding"] = "zone"
+        bar_and_markers = copy.deepcopy(self.plan)   # the bar-and-markers shape the ladder replaced
+        bar_and_markers["nodes"].append(mod._node("MissionBar", "Panel", "zone", ["Image"], field="missionBarRoot",
+                                                  field_type="GameObject", anchor_min=[0, 0], anchor_max=[1, 1]))
+        for plan in (legacy, bar_and_markers):
+            with self.assertRaises(mod.PlanOutdatedError):
+                mod.generate_code(plan, {})
+
+    def test_outdated_mission_plan_cli_error(self):
+        import contextlib
+        import io
+        import tempfile
+        root = tempfile.mkdtemp()
+        plan = copy.deepcopy(self.plan)
+        plan["nodes"] = [n for n in plan["nodes"] if n["name"] != "MissionTabs"]
+        plan_path = os.path.join(root, "p.json")
+        with open(plan_path, "w", encoding="utf-8") as fh:
+            json.dump(plan, fh)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = mod.main(["generate", "--plan", plan_path, "--project-root", root])
+        data = json.loads(buf.getvalue())
+        self.assertEqual(code, 2)
+        self.assertEqual(data["error"], "mission_plan_outdated")
+        self.assertIn("re-run `plan`", data["detail"])
+        self.assertEqual(os.listdir(root), ["p.json"])
+
+
+class TestUnifiedScroll(unittest.TestCase):
+    """Rule 3: one ScrollRect / viewport / content binding set in the builder; the mission list is its vertical use;
+       a milestone plan (no scroll_axis) builds exactly as before."""
+    B = mod.BUILDER_CS
+
+    def test_one_case_per_scroll_binding(self):
+        for case in ('case "scroll":', 'case "viewport":', 'case "scroll_content":', 'case "ScrollRect":',
+                     'case "RectMask2D":', 'case "ContentSizeFitter":'):
+            body = self.B
+            self.assertEqual(body.count(case), 2 if case == 'case "ScrollRect":' else 1, case)   # ScrollRect: AddComponent + Resolve
+        self.assertEqual(self.B.count("private static void WireScrollRects("), 1)
+        self.assertNotIn("list_content", self.B)
+
+    def test_vertical_is_opt_in_and_defaults_to_the_milestone_behaviour(self):
+        self.assertIn("public string scroll_axis;", self.B)
+        scroll = self.B.split('case "scroll":')[1].split("break;")[0]
+        self.assertIn('if (node.scroll_axis == "vertical" && go.TryGetComponent<ScrollRect>(out var scroll))', scroll)
+        self.assertIn("scroll.horizontal = false; scroll.vertical = true;", scroll)
+        content = self.B.split('case "scroll_content":')[1].split("break;")[0]
+        horizontal, vertical = content.split('if (node.scroll_axis == "vertical")')
+        # the milestone base's horizontal path comes first, verbatim; its group lookup is a no-op on a vertical list
+        for snippet in ("pivot = new Vector2(0f, 0.5f)", "GetComponent<HorizontalLayoutGroup>()", "spacing = 12f",
+                        "padding = new RectOffset(8, 8, 8, 8)", "childControlWidth = true", "childControlHeight = true",
+                        "childForceExpandWidth = false", "childForceExpandHeight = true"):
+            self.assertIn(snippet, horizontal)
+        # only a plan node that says scroll_axis "vertical" reaches the list settings
+        self.assertIn("pivot = new Vector2(0.5f, 1f)", vertical)
+        self.assertIn("listFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;", vertical)
+        component = self.B.split('case "ScrollRect":')[1].split("break;")[0]
+        self.assertIn("sr.horizontal = true; sr.vertical = false;", component)
+
+    def test_mission_list_is_the_vertical_scroll_chain(self):
+        plan = _mission_plan()
+        by = {n["name"]: n for n in plan["nodes"]}
+        self.assertEqual((by["MissionList"]["binding"], by["MissionList"]["components"], by["MissionList"]["field"],
+                          by["MissionList"]["field_type"], by["MissionList"]["scroll_axis"]),
+                         ("scroll", ["ScrollRect"], "missionScroll", "ScrollRect", "vertical"))
+        self.assertEqual((by["MissionViewport"]["parent"], by["MissionViewport"]["binding"], by["MissionViewport"]["components"]),
+                         ("MissionList", "viewport", ["Image", "RectMask2D"]))
+        self.assertEqual((by["MissionRows"]["parent"], by["MissionRows"]["binding"], by["MissionRows"]["components"],
+                          by["MissionRows"]["scroll_axis"]),
+                         ("MissionViewport", "scroll_content", ["VerticalLayoutGroup", "ContentSizeFitter"], "vertical"))
+        view = _view(plan)
+        self.assertIn("missionScroll.gameObject.SetActive(state != null);", view)
+        self.assertIn("missionScroll.verticalNormalizedPosition = 1f;", view)
+        self.assertNotIn("missionListRoot", view)
+
+    def test_ladders_are_horizontal_scroll_chains(self):
+        for plan, names in ((_mission_plan(), ("MissionBarScroll", "MissionBarViewport", "MissionBarContent")),
+                            (_milestone_plan("per_step"), ("MilestoneScroll", "MilestoneViewport", "MilestoneContent"))):
+            by = {n["name"]: n for n in plan["nodes"]}
+            scroll, viewport, content = (by[n] for n in names)
+            self.assertEqual((scroll["binding"], scroll["components"], scroll["scroll_axis"]), ("scroll", ["ScrollRect"], None))
+            self.assertEqual((viewport["parent"], viewport["binding"]), (scroll["name"], "viewport"))
+            self.assertEqual((content["parent"], content["binding"], content["components"], content["scroll_axis"]),
+                             (viewport["name"], "scroll_content", ["HorizontalLayoutGroup", "ContentSizeFitter"], None))
+
+    def test_old_milestone_plan_still_builds_the_same(self):
+        # a plan written by the milestone base has no scroll_axis / color on any node: JsonUtility leaves them
+        # empty, so every new builder branch (vertical scroll, node colour) is skipped for it
+        plan = _milestone_plan("per_step")
+        for node in plan["nodes"]:
+            self.assertIsNone(node["scroll_axis"], node["name"])
+            self.assertIsNone(node["color"], node["name"])
+        apply_color = self.B.split("private static void ApplyColor(")[1].split("\n        }\n")[0]
+        self.assertLess(apply_color.index("if (string.IsNullOrEmpty(node.color)"), apply_color.index('node.binding == "milestone_step"'))
+        old = copy.deepcopy(plan)
+        for node in old["nodes"]:
+            for key in ("feature_action", "color", "scroll_axis"):
+                del node[key]
+        # report.milestone_geometry came with the milestone-feature regions; this layout has none, so it adds no node
+        self.assertEqual(old["report"].pop("milestone_geometry"), {"regions": [], "ladder_source": "default", "clipped": []})
+        self.assertEqual(_read_exact(os.path.join(GOLDEN_VIEWS, "milestone_per_step_plan.json")),
+                         json.dumps(old, indent=2, ensure_ascii=False) + "\n")
 
 
 class TestBuilderArtIsClickThrough(unittest.TestCase):
@@ -495,3 +1384,414 @@ class TestBuilderCanvas(unittest.TestCase):
         fields = set(re.findall(r"public (?:string|bool|int|float|float\[\]) (\w+);", decl))
         plan = _plan()
         self.assertEqual(fields, set(plan["ui"]["canvas"].keys()))
+
+
+GOLDEN = os.path.join(os.path.dirname(__file__), "golden", "inapp_prefab")
+SHARED = "Assets/Kinoa/InApps/Shared/"
+
+
+def _read_exact(path):
+    with open(path, encoding="utf-8", newline="") as fh:
+        return fh.read()
+
+
+class TestNewSharedFiles(unittest.TestCase):
+    def _generate(self, root, plan, *extra):
+        import contextlib
+        import io
+        plan_path = os.path.join(root, "p.json")
+        with open(plan_path, "w", encoding="utf-8") as fh:
+            json.dump(plan, fh)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = mod.main(["generate", "--plan", plan_path, "--project-root", root, *extra])
+        return code, json.loads(buf.getvalue())
+
+    def _seed(self, root, name, content):
+        path = os.path.join(root, *(SHARED + name).split("/"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="") as fh:
+            fh.write(content)
+        return path
+
+    def test_feature_hooks_declaration(self):
+        src = mod.render_feature_hooks({})
+        self.assertIn("namespace Kinoa.InApps", src)
+        for using in ("System", "System.Threading.Tasks", "Kinoa.Data.Messaging.InApp",
+                      "Kinoa.Data.Messaging.InApp.Templates.Custom", "UnityEngine"):
+            self.assertIn("using %s;" % using, src)
+        self.assertIn("public static class KinoaInAppFeatureHooks", src)
+        self.assertIn("public static Func<InAppMessage, InAppCustomButton, Task<bool>> RunButtonAction = null;", src)
+        self.assertIn("internal static void WarnMissing(string hook)", src)
+        self.assertEqual(src.count("TODO(kinoa-prefab):"), 1)
+        self.assertNotIn("KinoaText", src)
+
+    def test_supplied_runner_is_assigned(self):
+        src = mod.render_feature_hooks({"feature_action_runner": "Game.Shop.RunAsync"})
+        self.assertIn("Task<bool>> RunButtonAction = Game.Shop.RunAsync;", src)
+        self.assertNotIn("TODO(kinoa-prefab):", src)
+
+    def test_step_view_api(self):
+        src = mod.render_milestone_step_view("legacy")
+        self.assertIn("using KinoaText = UnityEngine.UI.Text;", src)
+        self.assertIn("namespace Kinoa.InApps", src)
+        for using in ("Kinoa.Data.Enum", "UnityEngine", "UnityEngine.Events", "UnityEngine.UI"):
+            self.assertIn("using %s;" % using, src)
+        self.assertIn("public class KinoaInAppMilestoneStepView : MonoBehaviour", src)
+        for field in ("KinoaText score", "Image rewardIcon", "KinoaText rewardAmount", "Image progress",
+                      "GameObject lockedMark", "GameObject collectedMark", "Button collectButton", "KinoaText collectLabel"):
+            self.assertIn("[SerializeField] private %s;" % field, src)
+        for sig in ("public void SetScore(string text)", "public void SetReward(Sprite icon, string amount)",
+                    "public void SetProgress(float amount)", "public void SetStatus(InAppMilestoneStatus status)",
+                    "public void SetCollect(bool visible, bool interactable, string label, UnityAction onClick)"):
+            self.assertIn(sig, src)
+        self.assertIn("Mathf.Clamp01", src)
+        self.assertIn("using KinoaText = TMPro.TMP_Text;", mod.render_milestone_step_view("tmp"))
+
+    def test_old_shared_renderers_are_unchanged(self):
+        for name, text in (("hooks", mod.render_hooks({})), ("item_view_legacy", mod.render_item_view("legacy")),
+                           ("item_view_tmp", mod.render_item_view("tmp"))):
+            self.assertEqual(text, _read_exact(os.path.join(GOLDEN, name + ".cs")), name)
+
+    def test_generate_code_emits_both_new_files_for_every_plan(self):
+        for plan in (_plan(), _milestone_plan(), _mission_plan()):
+            files = mod.generate_code(plan, {})["files"]
+            self.assertIn(SHARED + "KinoaInAppFeatureHooks.cs", files)
+            self.assertIn(SHARED + "KinoaInAppMilestoneStepView.cs", files)
+
+    def test_existing_project_is_extended_not_rewritten(self):
+        import tempfile
+        root = tempfile.mkdtemp()
+        hooks = "// game edit\npublic static class KinoaInAppHooks { }\n"
+        item = "// game edit\nusing KinoaText = UnityEngine.UI.Text;\npublic class KinoaInAppItemView { }\n"
+        hooks_path = self._seed(root, "KinoaInAppHooks.cs", hooks)
+        item_path = self._seed(root, "KinoaInAppItemView.cs", item)
+        code, data = self._generate(root, _milestone_plan())
+        self.assertEqual(code, 0, data)
+        self.assertEqual(_read_exact(hooks_path), hooks)
+        self.assertEqual(_read_exact(item_path), item)
+        self.assertIn(SHARED + "KinoaInAppHooks.cs", data["skipped"])
+        self.assertIn(SHARED + "KinoaInAppItemView.cs", data["skipped"])
+        for name in ("KinoaInAppFeatureHooks.cs", "KinoaInAppMilestoneStepView.cs"):
+            self.assertTrue(os.path.isfile(os.path.join(root, *(SHARED + name).split("/"))), name)
+            self.assertIn(SHARED + name, data["written"])
+
+    def test_new_files_skipped_when_present_and_forced_with_flag(self):
+        import tempfile
+        root = tempfile.mkdtemp()
+        fh_path = self._seed(root, "KinoaInAppFeatureHooks.cs", "// game edit\n")
+        sv_path = self._seed(root, "KinoaInAppMilestoneStepView.cs", "// game edit\nusing KinoaText = UnityEngine.UI.Text;\n")
+        code, data = self._generate(root, _milestone_plan())
+        self.assertEqual(code, 0, data)
+        self.assertIn(SHARED + "KinoaInAppFeatureHooks.cs", data["skipped"])
+        self.assertIn(SHARED + "KinoaInAppMilestoneStepView.cs", data["skipped"])
+        self.assertEqual(_read_exact(fh_path), "// game edit\n")
+        code, data = self._generate(root, _milestone_plan(), "--overwrite", "--force-shared",
+                                    "--feature-action-runner", "Game.Shop.RunAsync")
+        self.assertEqual(code, 0, data)
+        self.assertIn("RunButtonAction = Game.Shop.RunAsync;", _read_exact(fh_path))
+        self.assertIn("public class KinoaInAppMilestoneStepView", _read_exact(sv_path))
+
+    def test_feature_action_runner_flag_is_validated(self):
+        import tempfile
+        root = tempfile.mkdtemp()
+        code, data = self._generate(root, _milestone_plan(), "--feature-action-runner", "Foo.Bar;System.Exit()")
+        self.assertEqual(code, 2)
+        self.assertEqual(data["error"], "invalid_hook_method")
+        self.assertEqual(data["flag"], "--feature-action-runner")
+        code, data = self._generate(root, _milestone_plan(), "--feature-action-runner", "Game.Shop.RunAsync")
+        self.assertEqual(code, 0, data)
+        src = _read_exact(os.path.join(root, *(SHARED + "KinoaInAppFeatureHooks.cs").split("/")))
+        self.assertIn("RunButtonAction = Game.Shop.RunAsync;", src)
+
+    def test_feature_action_runner_not_applied_warning_when_hooks_exist(self):
+        import tempfile
+        root = tempfile.mkdtemp()
+        self._seed(root, "KinoaInAppFeatureHooks.cs", "// game edit\n")
+        code, data = self._generate(root, _milestone_plan(), "--feature-action-runner", "Game.Shop.RunAsync")
+        self.assertEqual(code, 0, data)
+        self.assertTrue(any("--feature-action-runner was not applied" in w for w in data["warnings"]), data["warnings"])
+
+    def test_step_view_alias_mismatch_is_reported(self):
+        import tempfile
+        root = tempfile.mkdtemp()
+        self._seed(root, "KinoaInAppMilestoneStepView.cs", "using KinoaText = TMPro.TMP_Text;\n")
+        code, data = self._generate(root, _milestone_plan())  # legacy plan
+        self.assertEqual(code, 2)
+        self.assertEqual(data["error"], "shared_text_system_mismatch")
+        self.assertTrue(data["path"].endswith("KinoaInAppMilestoneStepView.cs"))
+
+    def test_outdated_milestone_plan_is_refused_and_nothing_is_written(self):
+        import tempfile
+        for drop in ("block", "scroll"):
+            root = tempfile.mkdtemp()
+            plan = _milestone_plan()
+            if drop == "block":
+                del plan["milestone"]
+            else:
+                plan["nodes"] = [n for n in plan["nodes"] if n["name"] != "MilestoneScroll"]
+            code, data = self._generate(root, plan)
+            self.assertEqual(code, 2, data)
+            self.assertFalse(data["ok"])
+            self.assertEqual(data["error"], "milestone_plan_outdated")
+            self.assertIn("re-run `plan`", data["detail"])
+            self.assertIn("p.json", data["detail"])
+            self.assertEqual(os.listdir(root), ["p.json"], "a refused plan must write nothing")
+
+    def test_no_forbidden_strings(self):
+        for src in (mod.render_feature_hooks({}), mod.render_feature_hooks({"feature_action_runner": "A.B.C"}),
+                    mod.render_milestone_step_view("legacy"), mod.render_milestone_step_view("tmp")):
+            for bad in FORBIDDEN:
+                self.assertNotIn(bad, src)
+
+
+# Every `case "..."` literal in BUILDER_CS as shipped in release 1.1.0 (AddComponent, ApplyBinding, Resolve).
+# Frozen from the unmodified builder: the milestone-scroll change is additive, so none may disappear.
+RELEASE_1_1_0_BUILDER_CASES = [
+    "Image", "Button", "Text", "HorizontalLayoutGroup", "VerticalLayoutGroup",
+    "dimmer", "strike", "fill", "item_template", "image", "text", "button_label",
+    "GameObject", "RectTransform", "KinoaInAppItemView",
+]
+
+
+class TestBuilderScroll(unittest.TestCase):
+    B = mod.BUILDER_CS
+    STEP = B.split("private static void BuildMilestoneStep")[-1].split("private static GameObject Child")[0]
+
+    def test_plan_node_gains_step_button(self):
+        self.assertIn("public bool step_button;", self.B)
+
+    def test_scroll_components(self):
+        for snippet in ('case "ScrollRect":', "horizontal = true", "vertical = false",
+                        "movementType = ScrollRect.MovementType.Clamped", "inertia = true",
+                        'case "RectMask2D":', 'case "ContentSizeFitter":',
+                        "horizontalFit = ContentSizeFitter.FitMode.PreferredSize",
+                        "verticalFit = ContentSizeFitter.FitMode.Unconstrained"):
+            self.assertIn(snippet, self.B)
+
+    def test_viewport_binding(self):
+        self.assertIn('case "viewport":', self.B)
+        body = self.B.split('case "viewport":')[1].split("break;")[0]
+        self.assertIn("new Color(1f, 1f, 1f, 0f)", body)
+        self.assertIn("raycastTarget = true", body)
+
+    def test_scroll_content_binding_overrides_the_layout_group(self):
+        self.assertIn('case "scroll_content":', self.B)
+        body = self.B.split('case "scroll_content":')[1].split("break;")[0]
+        self.assertIn("pivot = new Vector2(0f, 0.5f)", body)
+        self.assertIn("GetComponent<HorizontalLayoutGroup>()", body)
+        self.assertNotIn("AddComponent<HorizontalLayoutGroup>", body)   # the generic component case already added it
+        for snippet in ("spacing = 12f", "padding = new RectOffset(8, 8, 8, 8)", "childControlWidth = true",
+                        "childControlHeight = true", "childForceExpandWidth = false", "childForceExpandHeight = true"):
+            self.assertIn(snippet, body)
+
+    def test_components_are_added_before_bindings(self):
+        loop = self.B.split("foreach (var node in plan.nodes)")[1]
+        self.assertLess(loop.index("AddComponent(go, component, plan.ui)"), loop.index("ApplyBinding(go, node, plan.ui)"))
+
+    def test_milestone_step_binding_and_layout_element(self):
+        self.assertIn('case "milestone_step":', self.B)
+        self.assertIn("BuildMilestoneStep(go, ui, node);", self.B)
+        self.assertIn("preferredWidth = node.size[0]", self.STEP)
+        self.assertIn("flexibleHeight = 1f", self.STEP)
+        self.assertIn("new Color(1f, 1f, 1f, 0.15f)", self.STEP)
+        self.assertIn("raycastTarget = true", self.STEP)
+
+    def test_step_children_and_anchors(self):
+        for name, amin, amax in (
+                ("Score", "0.05f, 0.80f", "0.95f, 0.98f"), ("RewardIcon", "0.20f, 0.42f", "0.80f, 0.78f"),
+                ("RewardAmount", "0.05f, 0.30f", "0.95f, 0.42f"), ("Progress", "0.05f, 0.25f", "0.95f, 0.29f"),
+                ("CollectButton", "0.10f, 0.03f", "0.90f, 0.22f"), ("LockedMark", "0f, 0f", "1f, 1f"),
+                ("CollectedMark", "0.60f, 0.75f", "0.95f, 0.98f")):
+            self.assertIn('Child(go, "%s", new Vector2(%s), new Vector2(%s))' % (name, amin, amax), self.STEP)
+        self.assertIn('"CollectLabel"', self.STEP)
+        self.assertIn("preserveAspect = true", self.STEP)
+        self.assertIn("Image.Type.Filled", self.STEP)
+        self.assertIn("fillAmount = 0f", self.STEP)
+        self.assertIn("new Color(0f, 0f, 0f, 0.45f)", self.STEP)
+        self.assertIn("SetActive(false)", self.STEP)
+
+    def test_collect_button_only_when_step_button(self):
+        before, guarded = self.STEP.split("if (node.step_button)", 1)
+        self.assertIn('"CollectButton"', guarded)
+        self.assertIn('SetRef(so, "collectButton"', guarded)
+        self.assertIn('SetRef(so, "collectLabel"', guarded)
+        self.assertNotIn('"CollectButton"', before)
+        self.assertNotIn('SetRef(so, "collectButton"', before)
+
+    def test_step_view_fields_are_all_assigned(self):
+        src = mod.render_milestone_step_view("legacy")
+        names = re.findall(r"\[SerializeField\] private \w+ (\w+);", src)
+        self.assertEqual(len(names), 8)
+        for name in names:
+            self.assertIn('SetRef(so, "%s"' % name, self.B)
+
+    def test_wire_scroll_rects(self):
+        self.assertIn("WireScrollRects(plan.nodes, byName);", self.B)
+        wire = self.B.split("private static void WireScrollRects")[1].split("private static ")[0]
+        for snippet in ('"scroll"', '"viewport"', '"scroll_content"', ".viewport =", ".content ="):
+            self.assertIn(snippet, wire)
+        # wiring happens after every node is built, before the view fields and the save
+        main = self.B.split("public static BuildReport BuildFromPlan")[1]
+        self.assertLess(main.index("byName[node.name] = go;"), main.index("WireScrollRects(plan.nodes, byName);"))
+        self.assertLess(main.index("WireScrollRects(plan.nodes, byName);"), main.index("FindType(plan.view.class_name"))
+
+    def test_resolve_gains_scroll_and_step_cases(self):
+        self.assertIn("private static UnityEngine.Object Resolve", self.B)
+        resolve = self.B.split("private static UnityEngine.Object Resolve")[1].split("private static Type FindType")[0]
+        self.assertIn('case "ScrollRect": return go.GetComponent<ScrollRect>();', resolve)
+        self.assertIn('case "KinoaInAppMilestoneStepView": return go.GetComponent<KinoaInAppMilestoneStepView>();', resolve)
+
+    def test_old_plan_cases_still_supported(self):
+        for case in RELEASE_1_1_0_BUILDER_CASES:
+            self.assertIn('case "%s":' % case, self.B)
+
+
+def _region_plan(regions=True, bar_slot=False, style=STYLE):
+    """A per-step milestone plan from an artifact carrying (or not) the milestone-feature regions."""
+    t = copy.deepcopy(TEMPLATE)
+    t["key"] = "chase"
+    t["featureType"] = "milestone"
+    t["features"] = {"milestone": {"key": "main_progressbar", "limit": 3, "mainActionTypes": ["close"]}}
+    if bar_slot:
+        t["images"].append({"key": "bar_image", "name": "Bar", "index": 10, "canBeHidden": False, "customFields": []})
+    with open(os.path.join(FIX, "one_cta_offer.layout.json"), encoding="utf-8") as fh:
+        art = json.load(fh)
+    art["template_key"] = "chase"
+    art["feature"] = {"type": "milestone", "area_bbox": {"x": 0.119, "y": 0.37, "w": 0.783, "h": 0.205}}
+    art["client_rendered"].append({"role": "grand_prize_area", "bbox": {"x": 0.787, "y": 0.393, "w": 0.114, "h": 0.183}})
+    if regions:
+        for role, bbox in (("score_icon_image", {"x": 0.119, "y": 0.406, "w": 0.095, "h": 0.125}),
+                           ("prize_image", {"x": 0.22, "y": 0.431, "w": 0.055, "h": 0.066}),
+                           ("bar_image", {"x": 0.207, "y": 0.45, "w": 0.587, "h": 0.027})):
+            art["client_rendered"].append({"role": role, "bbox": bbox, "feature": "milestone"})
+    result = mod.plan_prefab(t, mod.layout_from_artifact(art), style, {})
+    assert result["ok"], result
+    return result["plan"]
+
+
+_REGION_VIEW_LINES = (
+    "var total = steps.Count > 0 && steps[steps.Count - 1] != null ? steps[steps.Count - 1].Score : 0L;",
+    "if (milestoneTrack != null) milestoneTrack.gameObject.SetActive(true);",
+    "if (milestoneTrackFill != null) milestoneTrackFill.fillAmount = total > 0 ? Mathf.Clamp01((float)(feature.Progress / total)) : 0f;",
+    "if (milestoneScoreRoot != null) milestoneScoreRoot.SetActive(true);",
+    'if (milestoneProgressText != null) milestoneProgressText.text = $"{feature.Progress:0}/{total}";',
+)
+
+
+class TestMilestoneRegionView(unittest.TestCase):
+    def test_lines_present_when_the_nodes_exist(self):
+        view = _view(_region_plan())
+        bind = _method(view, "private void BindFeature()")
+        for line in _REGION_VIEW_LINES:
+            self.assertEqual(bind.count(line), 1, line)
+        self.assertEqual(bind.count("var total"), 1)
+        self.assertIn("        [SerializeField] private Image milestoneTrack;", view)
+        self.assertIn("        [SerializeField] private Image milestoneTrackFill;", view)
+        self.assertIn("        [SerializeField] private GameObject milestoneScoreRoot;", view)
+        self.assertIn("        [SerializeField] private Image milestoneScoreIcon;", view)
+        self.assertIn("        [SerializeField] private KinoaText milestoneProgressText;", view)
+        # the counter and the fill come after the steps are known, before any of them is used
+        self.assertLess(bind.index("var steps = "), bind.index("var total = "))
+
+    def test_feature_null_hides_track_and_score_root(self):
+        bind = _method(_view(_region_plan()), "private void BindFeature()")
+        self.assertIn("            if (milestoneScroll != null) milestoneScroll.gameObject.SetActive(feature != null);\n"
+                      "            if (feature == null)\n"
+                      "            {\n"
+                      "                if (milestoneTrack != null) milestoneTrack.gameObject.SetActive(false);\n"
+                      "                if (milestoneScoreRoot != null) milestoneScoreRoot.SetActive(false);\n"
+                      "                return;\n"
+                      "            }\n", bind)
+
+    def test_bar_slot_keeps_the_score_lines_only(self):
+        bind = _method(_view(_region_plan(bar_slot=True)), "private void BindFeature()")
+        self.assertNotIn("milestoneTrack", bind)
+        self.assertIn(_REGION_VIEW_LINES[0], bind)
+        self.assertIn(_REGION_VIEW_LINES[3], bind)
+        self.assertIn(_REGION_VIEW_LINES[4], bind)
+        self.assertIn("if (milestoneScoreRoot != null) milestoneScoreRoot.SetActive(false);", bind)
+
+    def test_no_regions_no_lines(self):
+        plan = _region_plan(regions=False)
+        view = _view(plan)
+        for token in ("milestoneTrack", "milestoneScoreRoot", "milestoneProgressText", "var total"):
+            self.assertNotIn(token, view)
+        self.assertIn("            if (feature == null) return;\n", view)
+
+    def test_ladder_anchors_never_reach_the_view(self):
+        # the grand-prize clip only moves MilestoneScroll's anchors (plan JSON); the C# does not change
+        with_area = _view(_region_plan(regions=False))
+        plan = _region_plan(regions=False)
+        scroll = next(n for n in plan["nodes"] if n["name"] == "MilestoneScroll")
+        scroll["anchor_max"] = [0.99, scroll["anchor_max"][1]]
+        self.assertEqual(_view(plan), with_area)
+
+    def test_tmp_text_and_no_forbidden_strings(self):
+        tmp = dict(STYLE, text_system="tmp")
+        for view in (_view(_region_plan()), _view(_region_plan(style=tmp)), _view(_region_plan(), {"facade": "present"})):
+            for bad in FORBIDDEN:
+                self.assertNotIn(bad, view)
+
+
+class TestPerTemplateBuildMenu(unittest.TestCase):
+    MENU = "Assets/Kinoa/InApps/Editor/Templates/KinoaInAppOneCtaOfferBuildMenu.cs"
+
+    def test_menu_label(self):
+        self.assertEqual(mod._menu_label("One CTA Template", "one_cta_offer"), "One CTA Template (one_cta_offer)")
+        self.assertEqual(mod._menu_label(None, "one_cta_offer"), "one_cta_offer")
+        self.assertEqual(mod._menu_label("", "k"), "k")
+        self.assertEqual(mod._menu_label("one_cta_offer", "one_cta_offer"), "one_cta_offer")
+        self.assertEqual(mod._menu_label('A/B \ "Sale" & 50% #1 _x', "k"), "A-B - Sale 50 1 x (k)")
+        self.assertEqual(mod._menu_label("  Two   words ", "k"), "Two words (k)")
+
+    def test_file_content(self):
+        files = mod.generate_code(_plan(), {})["files"]
+        self.assertIn(self.MENU, files)
+        c = files[self.MENU]
+        self.assertTrue(c.startswith("// <auto-generated>"))
+        for s in ("namespace Kinoa.InApps.Editor", "using UnityEditor;", "public static class KinoaInAppOneCtaOfferBuildMenu",
+                  'public const string MenuPath = KinoaInAppPrefabBuilder.TemplateMenuRoot + "One CTA Offer (one_cta_offer)";',
+                  'public const string PlanPath = "Assets/Kinoa/InApps/OneCtaOffer/one_cta_offer.inapp-plan.json";',
+                  "[MenuItem(MenuPath)]", "public static void Build() => KinoaInAppPrefabBuilder.BuildPlanMenu(PlanPath);",
+                  "[MenuItem(MenuPath, true)]", "private static bool CanBuild() => System.IO.File.Exists(PlanPath);"):
+            self.assertIn(s, c)
+        for bad in FORBIDDEN:
+            self.assertNotIn(bad, c)
+
+    def test_label_escaped_as_cs_literal_and_nameless(self):
+        plan = _plan()
+        plan["template"]["name"] = 'A/B "x" & 50%\ _n'
+        c = mod.generate_code(plan, {})["files"][self.MENU]
+        self.assertIn('TemplateMenuRoot + "A-B x 50- n (one_cta_offer)";', c)
+        plan["template"]["name"] = None
+        c = mod.generate_code(plan, {})["files"][self.MENU]
+        self.assertIn('TemplateMenuRoot + "one_cta_offer";', c)
+
+    def test_cs_literal_escapes_backslash_quote(self):
+        bs = chr(92)
+        self.assertEqual(mod._cs_string('a' + bs + 'b"c'), '"a' + bs + bs + 'b' + bs + '"c"')
+
+    def test_cli_rewrites_menu_and_reports_items(self):
+        import subprocess
+        import sys
+        import tempfile
+        root = tempfile.mkdtemp()
+        plan_path = os.path.join(root, "p.json")
+        with open(plan_path, "w", encoding="utf-8") as fh:
+            json.dump(_plan(), fh)
+        cmd = [sys.executable, HELPER, "generate", "--plan", plan_path, "--project-root", root]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        data = json.loads(res.stdout)
+        self.assertIn(self.MENU, data["written"])
+        self.assertEqual(data["menu_item"], "Tools/Kinoa/In-Apps/Build Prefab/One CTA Offer (one_cta_offer)")
+        self.assertEqual(data["menu_item_all"], "Tools/Kinoa/In-Apps/Build All Prefabs From Plans")
+        path = os.path.join(root, *self.MENU.split("/"))
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("stale")
+        res = subprocess.run(cmd + ["--overwrite"], capture_output=True, text=True)
+        data = json.loads(res.stdout)
+        self.assertIn(self.MENU, data["written"])
+        self.assertNotIn(self.MENU, data["skipped"])
+        with open(path, encoding="utf-8") as fh:
+            self.assertNotIn("stale", fh.read())

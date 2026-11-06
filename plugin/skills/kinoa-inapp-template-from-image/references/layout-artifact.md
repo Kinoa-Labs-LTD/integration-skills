@@ -13,7 +13,7 @@ own by the consumer's author.
 
 ```json
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "template_key": "journey_offer",
   "source_image": { "width": 434, "height": 964, "sha256": "…", "path": "…" },
   "coordinates": { "space": "normalized", "origin": "top-left" },
@@ -39,7 +39,21 @@ own by the consumer's author.
   "client_rendered": [
     { "role": "timer", "bbox": { "x": 0.28, "y": 0.185, "w": 0.34, "h": 0.04 } }
   ],
-  "feature": { "type": "mission", "area_bbox": { "x": 0.06, "y": 0.30, "w": 0.88, "h": 0.55 } }
+  "feature": {
+    "type": "mission",
+    "area_bbox": { "x": 0.06, "y": 0.30, "w": 0.88, "h": 0.55 },
+    "parts": {
+      "tabs": { "x": 0.06, "y": 0.26, "w": 0.88, "h": 0.05 },
+      "task_list": { "x": 0.06, "y": 0.32, "w": 0.88, "h": 0.40 },
+      "row": { "x": 0.06, "y": 0.32, "w": 0.88, "h": 0.12 },
+      "progress_bar": { "x": 0.06, "y": 0.78, "w": 0.88, "h": 0.05 }
+    },
+    "row_parts": {
+      "title": { "x": 0.14, "y": 0.33, "w": 0.45, "h": 0.04 },
+      "action_button": { "x": 0.72, "y": 0.34, "w": 0.18, "h": 0.06 }
+    },
+    "style": { "card": "#1E2A44", "progress_fill": "#3FD07A", "action": "#F5A623" }
+  }
 }
 ```
 
@@ -66,12 +80,74 @@ own by the consumer's author.
   They are listed so the consumer reserves screen space for them; they are NOT
   template elements and must not become slots or UI stubs the operator is asked
   to fill.
+- **Milestone feature regions** — in a milestone layout, `client_rendered`
+  entries for the roles `bar_image`, `score_icon_image`, `prize_image` (one per
+  step; several is normal) and `grand_prize_area` carry `"feature": "milestone"`.
+  Path B (`remap`) moves milestone visuals the dashboard template has no slot
+  for into `client_rendered` this way (a role that does match a slot stays an
+  element). The consumer (the prefab skill) places the milestone ladder, the
+  score area and the grand prize from these boxes. They are never template
+  elements. The tag is additive: other entries keep the `{role, bbox}` shape and
+  `schema_version` stays `"1.1"`.
+- **Mission feature regions** — in a mission layout, `client_rendered` entries
+  for the roles `mission_area` (the missions UI: tabs, task cards and, when the
+  template shows it, the combined progress bar) and `mission_progress_bar`
+  carry `"feature": "mission"`. Path B (`remap`) bounds the area from the tip
+  image's `feature.detected.area_bbox`, else the union of the valid
+  `detected.parts` among `tabs` / `tab` / `task_list` / `row` (plus
+  `progress_bar` when the template shows the bar); with neither there is no
+  `mission_area` and a warning says the prefab uses default geometry. Whether
+  the bar exists comes from the **template**, not the image: it is shown unless
+  `features.mission.progressBar.display` is `dont_show_at_all`. A
+  `detected.progress_bar: false` flag wins over a `parts.progress_bar` box:
+  the box is then ignored everywhere (no region, not in the area, nothing
+  absorbed from it).
+  `mission_progress_bar` (the `detected.parts.progress_bar` box) is emitted only
+  when the template shows it; when the template hides it, an `area_bbox` is
+  narrowed to the non-bar parts (when there are any), `feature.parts.progress_bar`
+  is dropped from the artifact with a warning, and a bar on the image is
+  reported as `report.mismatch.progress_bar_unexpected` (a shown bar missing on
+  the image is `progress_bar_missing`). Tip-image elements lying at least 80 %
+  inside the area (or inside a shown bar) — a card's Claim button, task text,
+  reward art — are mission content, unless they enclose it (an element at
+  least as large as the area, or containing it, such as a full-image
+  background or a frame, is chrome and still matches its slot): `remap` keeps them out of slot matching and
+  lists them in `report.mission_feature.absorbed`, never as slots or
+  mismatches. A template slot that really sits inside the area therefore shows
+  as unmatched and is placed by hand on the page. In a mission layout the
+  `mission_area` region's box **is** `feature.area_bbox`: it takes precedence
+  over the analysis's `detected.area_bbox` (the two are equal unless `remap`
+  narrowed the area around a hidden bar, and the narrowed box is the one the
+  consumer must use) and fills in when the analysis has none. Additive:
+  `schema_version` stays `"1.1"`.
 - **`feature.area_bbox`** (optional; mission/milestone) marks the region the
   progression UI (task list / progress bar) occupies on the mockup. Absent when
   the vision pass could not bound it.
+- **Missions geometry** — `feature.parts`, `feature.row_parts` and
+  `feature.style` (mission only; each present only when non-empty after
+  validation). `parts` bounds the screen-level pieces (`tabs`, `tab`,
+  `task_list`, `row`, `progress_bar` — the combined bar together with its step
+  markers and rewards, which the prefab skill renders as a ladder of step
+  cards); `row_parts` the inner pieces of **one
+  representative card** — the same card as `parts.row` — (`placement_badge`,
+  `title`, `sub_mission`, `status`, `progress_track`, `progress_text`,
+  `rewards`, `action_button`, `dismiss_button`); `style` samples colours as
+  `#RRGGBB` / `#RRGGBBAA` (`card`, `card_text`, `accent`, `progress_track`,
+  `progress_fill`, `action`, `dismiss`, `tab_text`, `tab_selected`, `bar_track`,
+  `bar_fill`). All of it is **advisory**: an invalid bbox, a malformed colour or
+  an unknown key is dropped with a warning naming it, and `row_parts` without a
+  valid `parts.row` are dropped whole. None of it is template elements — a card
+  is a feature-layer instance, never a slot — and the colours are approximate,
+  sampled from the mockup. Ignored (with a warning) on non-mission templates.
 - **`source_image.sha256`** fingerprints the exact image the boxes were drawn
   against — compare it before rendering a layout over a different export of
   the same design.
+
+## Schema history
+
+- `1.0` — initial contract.
+- `1.1` — adds the optional mission `feature.parts` / `row_parts` / `style`,
+  additively. Consumers read the major only; a `1.0` artifact stays valid.
 
 ## Precision promise
 

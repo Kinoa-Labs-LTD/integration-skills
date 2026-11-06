@@ -235,14 +235,28 @@ VIEW_NAMESPACE = "Kinoa.InApps"
 
 RESERVED_NODE_NAMES = {"Dimmer", "Frame", "Panel", "Unplaced", "TimerZone", "TimerText", "PriceBeforeSaleZone",
                        "PriceBeforeSaleText", "PriceBeforeSaleStrike", "ResourceArea", "ResourceItem",
-                       "GrandPrizeArea", "GrandPrizeImage", "GrandPrizeText", "MilestoneBar", "MilestoneFill",
-                       "MilestoneMarkers", "MilestoneMarker", "MilestoneMainButton", "MilestoneMainButtonLabel",
+                       "GrandPrizeArea", "GrandPrizeImage", "GrandPrizeText", "MilestoneMainButton", "MilestoneMainButtonLabel",
+                       "MilestoneScroll", "MilestoneViewport", "MilestoneContent", "MilestoneStep",
                        "MissionList", "MissionRow", "MissionBar", "MissionBarFill"}
 RESERVED_FIELDS = {"dimmer", "panel", "timerRoot", "timerText", "priceBeforeSaleRoot", "priceBeforeSaleText",
                    "resourceAreaRoot", "resourceItemTemplate", "grandPrizeRoot", "grandPrizeImage", "grandPrizeText",
-                   "milestoneBarRoot", "milestoneFill", "milestoneMarkersRoot", "milestoneMarkerTemplate",
                    "milestoneMainButton", "milestoneMainButtonLabel", "missionListRoot", "missionRowTemplate",
-                   "missionBarRoot", "missionBarFill"}
+                   "missionBarRoot", "missionBarFill", "milestoneScroll", "milestoneContent", "milestoneStepTemplate"}
+# Reserved on mission templates only (the nodes and fields the missions UI adds): a standard or milestone
+# template whose slot key happens to read like one of them keeps the name it always got.
+MISSION_RESERVED_NODE_NAMES = {"MissionTabs", "MissionTab", "MissionTabLabel", "MissionTabSelected", "MissionViewport",
+                               "MissionRows", "MissionRowPlacement", "MissionRowPlacementText", "MissionRowTitle",
+                               "MissionRowSubMission", "MissionRowStatus", "MissionRowDismiss", "MissionRowDismissLabel",
+                               "MissionRowProgress", "MissionRowProgressFill", "MissionRowProgressText", "MissionRowRewards",
+                               "MissionRowReward", "MissionRowAction", "MissionRowActionLabel",
+                               "MissionBarScroll", "MissionBarViewport", "MissionBarContent", "MissionBarStep"}
+MISSION_RESERVED_FIELDS = {"missionTabsRoot", "missionTabTemplate", "missionScroll", "missionRowsRoot",
+                           "missionBarScroll", "missionBarContent", "missionBarStepTemplate"}
+# Reserved on milestone templates only, the same way: the bar track and score area the milestone-feature regions add.
+MILESTONE_RESERVED_NODE_NAMES = {"MilestoneTrack", "MilestoneTrackFill", "MilestoneScoreArea", "MilestoneScoreIcon",
+                                 "MilestoneProgressText"}
+MILESTONE_RESERVED_FIELDS = {"milestoneTrack", "milestoneTrackFill", "milestoneScoreRoot", "milestoneScoreIcon",
+                             "milestoneProgressText"}
 
 
 def pascal(key):
@@ -427,7 +441,11 @@ def _index_layout(layout):
         by_key.setdefault(e.get("key"), e)
     for z in (layout or {}).get("client_zones") or []:
         if z.get("bbox"):
-            zones[z.get("zone")] = z["bbox"]
+            name = z.get("zone")
+            if name in MILESTONE_REGION_ROLES and name in zones:
+                zones[name] = _union([zones[name], z["bbox"]])   # one prize_image per step: the ladder spans them all
+            else:
+                zones[name] = z["bbox"]
     return by_pair, by_key, zones
 
 
@@ -435,12 +453,15 @@ def _index_layout(layout):
 
 def _node(name, parent, binding, components=None, field=None, field_type=None, anchor_min=None,
           anchor_max=None, size=None, placed=True, can_be_hidden=False, inactive=False, key=None,
-          bucket=None, role=None, click_actions=None, custom_cta_names=None, sprite_guid=None):
+          bucket=None, role=None, click_actions=None, custom_cta_names=None, sprite_guid=None,
+          step_button=False, feature_action=None, color=None, scroll_axis=None):
     return {"name": name, "parent": parent, "binding": binding, "components": components or [],
             "field": field, "field_type": field_type, "anchor_min": anchor_min, "anchor_max": anchor_max,
             "size": size, "placed": placed, "can_be_hidden": can_be_hidden, "inactive": inactive,
             "key": key, "bucket": bucket, "role": role, "click_actions": click_actions or [],
-            "custom_cta_names": custom_cta_names or [], "sprite_guid": sprite_guid}
+            "custom_cta_names": custom_cta_names or [], "sprite_guid": sprite_guid,
+            "step_button": bool(step_button), "feature_action": feature_action, "color": color,
+            "scroll_axis": scroll_axis}
 
 
 DEFAULT_SORTING_ORDER = 100   # above a typical HUD canvas; align it with the game's pop-up layer
@@ -532,9 +553,13 @@ def plan_prefab(template, layout=None, style=None, options=None):
         for (bucket, lkey), e in by_pair.items():
             if (bucket, lkey) not in template_keys and lkey not in {k for _, k in template_keys}:
                 report["unmapped_layout"].append({"bucket": bucket, "key": lkey})
+    is_milestone = (template.get("featureType") or "standard") == "milestone"
+    is_mission = (template.get("featureType") or "standard") == "mission"
+    known_zones = (CLIENT_ZONES + (MILESTONE_REGION_ROLES if is_milestone else ())
+                   + (MISSION_REGION_ROLES if is_mission else ()))
     for zname in (layout or {}).get("client_zones") or []:
         zname = zname.get("zone")
-        if zname not in CLIENT_ZONES:
+        if zname not in known_zones:
             report["unmapped_layout"].append({"zone": zname})
 
     # Panel = the union of every box the plan positions: the background art, every slot, every
@@ -551,11 +576,29 @@ def plan_prefab(template, layout=None, style=None, options=None):
                 used_boxes.append(found["bbox"])
     wanted_zones = _wanted_zones(template)
     used_boxes.extend(box for zone, box in zone_boxes.items() if zone in wanted_zones)
+    if is_milestone:
+        used_boxes.extend(zone_boxes[role] for role in MILESTONE_REGION_ROLES if role in zone_boxes)
     feature_area = (layout or {}).get("feature_area")
-    if feature_area and (layout or {}).get("feature_type") not in (None, template.get("featureType") or "standard"):
+    feature_geo = {"parts": {}, "row_parts": {}, "style": {}}
+    if (layout or {}).get("feature_type") not in (None, template.get("featureType") or "standard"):
         feature_area = None  # a mission area must not become a milestone bar (the mismatch is already a warning)
+    elif (template.get("featureType") or "standard") == "mission":
+        feature_geo = {"parts": dict((layout or {}).get("feature_parts") or {}),
+                       "row_parts": dict((layout or {}).get("feature_row_parts") or {}),
+                       "style": dict((layout or {}).get("feature_style") or {})}
+        # Mission-feature regions (from-image path B) stand in for the geometry the artifact lacks.
+        if not feature_area and "mission_area" in zone_boxes:
+            feature_area = zone_boxes["mission_area"]
+        if ("progress_bar" not in feature_geo["parts"] and "mission_progress_bar" in zone_boxes
+                and _mission_bar_shown(template)):
+            feature_geo["parts"]["progress_bar"] = zone_boxes["mission_progress_bar"]
     if feature_area:
         used_boxes.append(feature_area)
+    # The screen-level mission parts the Panel positions (tab strip, task list, bar) are inside the panel too.
+    has_mission_bar = _mission_bar_shown(template)
+    for part in ("tabs", "task_list", "progress_bar"):
+        if part in feature_geo["parts"] and (part != "progress_bar" or has_mission_bar):
+            used_boxes.append(feature_geo["parts"][part])
     panel_bbox = _union(used_boxes) if used_boxes else {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}
     report["panel_bbox"] = {k: round(float(v), 4) for k, v in panel_bbox.items()}
     full = {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}
@@ -589,6 +632,12 @@ def plan_prefab(template, layout=None, style=None, options=None):
 
     taken_names = set(RESERVED_NODE_NAMES)
     taken_fields = set(RESERVED_FIELDS)
+    if (template.get("featureType") or "standard") == "mission":
+        taken_names |= MISSION_RESERVED_NODE_NAMES
+        taken_fields |= MISSION_RESERVED_FIELDS
+    elif is_milestone:
+        taken_names |= MILESTONE_RESERVED_NODE_NAMES
+        taken_fields |= MILESTONE_RESERVED_FIELDS
 
     # Art behind, controls and copy in front (the layout contract's z-order): the Editor builder
     # renders siblings in node order, so every image comes first, then buttons/texts by index.
@@ -706,7 +755,12 @@ def plan_prefab(template, layout=None, style=None, options=None):
     }
     _add_client_zones(plan, template, zone_boxes, panel_bbox)
     _add_customs(plan, template)
-    _add_feature(plan, template, by_key, panel_bbox, feature_area)
+    if (template.get("featureType") or "standard") == "milestone":
+        layout_has_elements = bool(layout and layout.get("elements"))
+        placed_keys = {n["key"] for n in nodes if n.get("binding") == "button" and n.get("placed") and n.get("key")}
+        plan["milestone"] = _milestone_cta(template, nodes, layout_has_elements, placed_keys,
+                                           options.get("milestone_cta"), report)
+    _add_feature(plan, template, by_key, panel_bbox, feature_area, feature_geo, zone_boxes)
     # Set placed=False on every node whose name is in estimated_positions
     estimated_node_names = set(report["estimated_positions"])
     for node in plan["nodes"]:
@@ -723,15 +777,24 @@ def plan_prefab(template, layout=None, style=None, options=None):
 
 ITEM_BEARING_ACTIONS = ("collect_resource", "billing", "soft_billing", "show_ad", "promise_rewards")
 CLIENT_ZONES = ("timer", "price_before_sale", "resource_area", "grand_prize_area")
+# Milestone-feature regions (layout artifact client_rendered entries tagged feature "milestone", milestone templates
+# only): tip-image milestone art with no template slot. They place the ladder, the bar track and the score area.
+MILESTONE_REGION_ROLES = ("score_icon_image", "bar_image", "prize_image")
+# Mission-feature regions (client_rendered entries tagged feature "mission", mission templates only): the missions
+# area and the combined progress bar on the tip image. They stand in for feature.area_bbox / parts.progress_bar.
+MISSION_REGION_ROLES = ("mission_area", "mission_progress_bar")
+_LADDER_CLIP_GAP = 0.005    # image units left between the ladder and a clipped-out score icon / grand prize
+_LADDER_MIN_SHARE = 0.25    # a clip that would leave less of the base width than this is skipped
 _ZONE_DEFAULT_ANCHORS = {
     "timer": ([0.3, 0.02], [0.7, 0.07]),
     "price_before_sale": ([0.3, 0.26], [0.7, 0.31]),
     "resource_area": ([0.1, 0.35], [0.9, 0.5]),
     "grand_prize_area": ([0.7, 0.55], [0.95, 0.8]),
-    "milestone_bar": ([0.1, 0.3], [0.9, 0.36]),
+    "milestone_scroll": ([0.05, 0.3], [0.95, 0.55]),
     "milestone_main": ([0.3, 0.1], [0.7, 0.17]),
     "mission_list": ([0.05, 0.2], [0.95, 0.75]),
-    "mission_bar": ([0.1, 0.12], [0.9, 0.17]),
+    "mission_tabs": ([0.05, 0.76], [0.95, 0.81]),
+    "mission_bar": ([0.05, 0.82], [0.95, 0.95]),   # the ProgressBarState ladder (a scroll of steps), above the tabs
 }
 _TOGGLE_PREFIX_RE = re.compile(r"^(show|has|display|enable)_")
 
@@ -745,11 +808,69 @@ def _zone_anchors(plan, name, zone_boxes, panel_bbox, default_key, bbox=None):
     return list(amin), list(amax)
 
 
+MISSION_ACTIONS = ("reach_all", "collect_all", "collect_all_milestones")
+
+
+def mission_action(button):
+    """The mission feature action a template button stands for, or None for an ordinary button.
+
+    Matches on the compacted key / name (lower-case a-z0-9 only), first rule that hits wins:
+    collect/claim-all + milestone|bar|progress -> collect_all_milestones; collect/claim-all -> collect_all;
+    reach-all -> reach_all.
+    """
+    texts = [re.sub(r"[^a-z0-9]", "", (button.get(f) or "").lower()) for f in ("key", "name")]
+    for text in texts:
+        if ("collectall" in text or "claimall" in text) and ("milestone" in text or "bar" in text or "progress" in text):
+            return "collect_all_milestones"
+    for text in texts:
+        if "collectall" in text or "claimall" in text:
+            return "collect_all"
+    for text in texts:
+        if "reachall" in text:
+            return "reach_all"
+    return None
+
+
+def _mission_bar_shown(template):
+    """True when a mission template shows its progress bar (any display but dont_show_at_all)."""
+    if (template.get("featureType") or "standard") != "mission":
+        return False
+    mission = (template.get("features") or {}).get("mission") or {}
+    return (mission.get("progressBar") or {}).get("display") != "dont_show_at_all"
+
+
+def _mission_feature_buttons(template):
+    """(wired, warnings): the template buttons wired to a mission feature action ({action: slot}), and why
+    any other look-alike stays an ordinary button. Mission templates only; the lowest template index wins."""
+    wired, warnings = {}, []
+    if (template.get("featureType") or "standard") != "mission":
+        return wired, warnings
+    has_bar = _mission_bar_shown(template)
+    buttons = sorted((b for b in template["buttons"] if b.get("key")),
+                     key=lambda b: (b.get("index") is None, b.get("index") or 0))
+    for b in buttons:
+        action = mission_action(b)
+        if not action:
+            continue
+        if action == "collect_all_milestones" and not has_bar:
+            warnings.append("button '%s' looks like collect_all_milestones but the template has no progress bar — "
+                            "it stays an ordinary button" % b["key"])
+        elif action in wired:
+            warnings.append("button '%s' also looks like %s; only '%s' is wired — it stays an ordinary button"
+                            % (b["key"], action, wired[action]["key"]))
+        else:
+            wired[action] = b
+    return wired, warnings
+
+
 def _wanted_zones(template):
     """The client-rendered zones this template's prefab gets (timer always; the rest by click actions / feature)."""
     actions = set()
+    # A button wired to a mission feature action (collect all, ...) drives the feature, not an item zone.
+    wired = {id(b) for b in _mission_feature_buttons(template)[0].values()}
     for b in template["buttons"]:
-        actions.update(b.get("clickActionType") or [])
+        if id(b) not in wired:
+            actions.update(b.get("clickActionType") or [])
     wanted = ["timer"]
     if "billing" in actions:
         wanted.append("price_before_sale")
@@ -826,46 +947,340 @@ def _add_customs(plan, template):
         plan["customs"].append(entry)
 
 
-def _add_feature(plan, template, by_key, panel_bbox, feature_area=None):
+_COLLECT_ALL_RE = re.compile(r"(?:^|[\s_-])(collect|claim|get)[\s_-]*all(?:$|[\s_-])", re.I)
+_CLOSE_KEY_RE = re.compile(r"close|dismiss", re.I)
+_NON_CTA_ACTIONS = {"close", "custom"}   # close the pop-up / open info-rules UI: neither collects a step
+
+
+def _milestone_cta(template, nodes, layout_has_elements, placed_keys, override, report):
+    """Decide how a milestone template's step CTA is wired and find its collect-all slot.
+
+    The collect-all slot is the first button (by index) whose key or name reads "collect/claim/get all"
+    as whole segments (so "budget_all" does not count).
+    A CTA slot is any other button that offers an action other than close / custom (or no actions and
+    is not a close button) and whose layout role is not info_button; when a layout is in play only
+    buttons drawn on the tip image count. Exactly one CTA slot
+    means the template carries a single main CTA ("single"); otherwise each milestone step carries its
+    own ("per_step"). An explicit override wins.
+    """
+    by_key = {n["key"]: n for n in nodes if n.get("binding") == "button" and n.get("key")}
+    buttons = sorted((b for b in template.get("buttons") or [] if b.get("key")),
+                     key=lambda b: (b.get("index") is None, b.get("index") if b.get("index") is not None else 0))
+    matches = [b for b in buttons if _COLLECT_ALL_RE.search(b["key"]) or _COLLECT_ALL_RE.search(b.get("name") or "")]
+    collect_all = None
+    if matches:
+        slot = matches[0]
+        node = by_key.get(slot["key"]) or {}
+        fld = node.get("field") or field_name("buttons", slot["key"])
+        collect_all = {"key": slot["key"], "button_field": fld, "label_field": fld + "Label",
+                       "can_be_hidden": bool(slot.get("canBeHidden", False))}
+        if len(matches) > 1:
+            report["warnings"].append(
+                "milestone template has %d collect-all buttons (%s); using %r"
+                % (len(matches), ", ".join(m["key"] for m in matches), slot["key"]))
+    cta_slots = []
+    for b in buttons:
+        if collect_all and b["key"] == collect_all["key"]:
+            continue
+        if (by_key.get(b["key"]) or {}).get("role") == "info_button":
+            continue   # info / rules / preview control, never the step CTA
+        actions = set(b.get("clickActionType") or [])
+        is_cta = bool(actions - _NON_CTA_ACTIONS) if actions else not _CLOSE_KEY_RE.search(b["key"])
+        if not is_cta:
+            continue
+        if layout_has_elements and b["key"] not in placed_keys:
+            continue
+        cta_slots.append(b["key"])
+    if override in ("per_step", "single"):
+        mode, source = override, "override"
+    elif len(cta_slots) == 1:
+        mode, source = "single", "template_cta_count"
+    else:
+        mode, source = "per_step", "default"
+    single_cta = None
+    if mode == "single":
+        if len(cta_slots) == 1:
+            fld = (by_key.get(cta_slots[0]) or {}).get("field") or field_name("buttons", cta_slots[0])
+            single_cta = {"key": cta_slots[0], "button_field": fld, "label_field": fld + "Label"}
+        else:
+            single_cta = {"key": None, "button_field": "milestoneMainButton", "label_field": "milestoneMainButtonLabel"}
+            if override and len(cta_slots) >= 2:
+                report["warnings"].append(
+                    "--milestone-cta single with %d CTA slots: the step CTA goes onto MilestoneMainButton" % len(cta_slots))
+    report["milestone"] = {"cta_mode": mode, "cta_mode_source": source,
+                           "collect_all": collect_all["key"] if collect_all else None}
+    return {"cta_mode": mode, "cta_mode_source": source, "cta_slots": cta_slots,
+            "single_cta": single_cta, "collect_all": collect_all}
+
+
+def _add_milestone_main_button(plan, template, panel_bbox):
+    nodes = plan["nodes"]
+    amin, amax = _zone_anchors(plan, "MilestoneMainButton", {}, panel_bbox, "milestone_main")
+    nodes.append(_node("MilestoneMainButton", "Panel", "button", ["Image", "Button"], field="milestoneMainButton",
+                       field_type="Button", anchor_min=amin, anchor_max=amax, can_be_hidden=True,
+                       click_actions=list(((template.get("features") or {}).get("milestone") or {}).get("mainActionTypes") or [])))
+    nodes.append(_node("MilestoneMainButtonLabel", "MilestoneMainButton", "button_label", ["Text"],
+                       field="milestoneMainButtonLabel", field_type="Text", anchor_min=[0.0, 0.0], anchor_max=[1.0, 1.0]))
+
+
+def _milestone_ladder_box(feature_area, bar_slot_box, zone_boxes, warnings):
+    """(image bbox or None, ladder_source, clipped roles) for MilestoneScroll.
+
+    Base box: feature.area_bbox, else the union of the milestone-feature regions present (with the grand prize box),
+    else the bar_image slot, else none (default anchors). A score icon left of the base centre and a grand prize right
+    of it are then clipped out horizontally, unless that would leave under 25% of the base width (a warning says so).
+    The vertical extent is always the base box's.
+    """
+    regions = [zone_boxes[role] for role in MILESTONE_REGION_ROLES if role in zone_boxes]
+    grand = zone_boxes.get("grand_prize_area")
+    if feature_area:
+        base, source = feature_area, "area_bbox"
+    elif regions:
+        base, source = _union(regions + ([grand] if grand else [])), "regions"
+    elif bar_slot_box:
+        base, source = bar_slot_box, "bar_slot"
+    else:
+        return None, "default", []
+    x0, x1 = float(base["x"]), float(base["x"]) + float(base["w"])
+    centre, floor = (x0 + x1) / 2.0, _LADDER_MIN_SHARE * float(base["w"])
+    clipped = []
+    score = zone_boxes.get("score_icon_image")
+    if score and score["x"] + score["w"] / 2.0 < centre:
+        new_x0 = max(x0, score["x"] + score["w"] + _LADDER_CLIP_GAP)
+        if x1 - new_x0 < floor:
+            warnings.append("milestone ladder: clipping out the score icon would leave the ladder under 25% of its "
+                            "base width; the clip was skipped — check the score_icon_image and area boxes")
+        elif new_x0 > x0:
+            x0 = new_x0
+            clipped.append("score_icon_image")
+    if grand and grand["x"] + grand["w"] / 2.0 > centre:
+        new_x1 = min(x1, grand["x"] - _LADDER_CLIP_GAP)
+        if new_x1 - x0 < floor:
+            warnings.append("milestone ladder: clipping out the grand prize would leave the ladder under 25% of its "
+                            "base width; the clip was skipped — check the grand_prize_area and area boxes")
+        elif new_x1 < x1:
+            x1 = new_x1
+            clipped.append("grand_prize_area")
+    if not clipped:
+        return base, source, clipped
+    return {"x": x0, "y": base["y"], "w": x1 - x0, "h": base["h"]}, source, sorted(clipped)
+
+
+def _add_milestone_regions(plan, template, zone_boxes, panel_bbox):
+    """The bar track (bar_image region, when no bar_image slot draws the art) and the score area (score_icon_image)."""
+    nodes = plan["nodes"]
+    track, score = zone_boxes.get("bar_image"), zone_boxes.get("score_icon_image")
+    if track and not any(s.get("key") == "bar_image" for s in template["images"]):
+        amin, amax = anchors_from_bbox(track, panel_bbox)
+        nodes.append(_node("MilestoneTrack", "Panel", "image", ["Image"], field="milestoneTrack", field_type="Image",
+                           anchor_min=amin, anchor_max=amax))
+        nodes.append(_node("MilestoneTrackFill", "MilestoneTrack", "fill", ["Image"], field="milestoneTrackFill",
+                           field_type="Image", anchor_min=[0.0, 0.0], anchor_max=[1.0, 1.0]))
+    if score:
+        amin, amax = anchors_from_bbox(score, panel_bbox)
+        return [_node("MilestoneScoreArea", "Panel", "zone", [], field="milestoneScoreRoot", field_type="GameObject",
+                      anchor_min=amin, anchor_max=amax, placed=True),
+                _node("MilestoneScoreIcon", "MilestoneScoreArea", "image", ["Image"], field="milestoneScoreIcon",
+                      field_type="Image", anchor_min=[0.0, 0.3], anchor_max=[1.0, 1.0]),
+                _node("MilestoneProgressText", "MilestoneScoreArea", "text", ["Text"], field="milestoneProgressText",
+                      field_type="Text", anchor_min=[0.0, 0.0], anchor_max=[1.0, 0.3])]
+    return []
+
+
+def _add_feature(plan, template, by_key, panel_bbox, feature_area=None, feature_geo=None, zone_boxes=None):
     ftype = template.get("featureType") or "standard"
     nodes = plan["nodes"]
     if ftype == "milestone":
-        bar_box = (by_key.get("bar_image") or {}).get("bbox") or feature_area
-        amin, amax = _zone_anchors(plan, "MilestoneBar", {}, panel_bbox, "milestone_bar", bbox=bar_box)
-        nodes.append(_node("MilestoneBar", "Panel", "zone", ["Image"], field="milestoneBarRoot", field_type="GameObject",
-                           anchor_min=amin, anchor_max=amax, placed=bool(bar_box)))
-        nodes.append(_node("MilestoneFill", "MilestoneBar", "fill", ["Image"], field="milestoneFill", field_type="Image",
-                           anchor_min=[0.0, 0.0], anchor_max=[1.0, 1.0]))
-        nodes.append(_node("MilestoneMarkers", "MilestoneBar", "markers", ["HorizontalLayoutGroup"],
-                           field="milestoneMarkersRoot", field_type="RectTransform",
-                           anchor_min=[0.0, -1.0], anchor_max=[1.0, 2.0]))
-        nodes.append(_node("MilestoneMarker", "MilestoneMarkers", "item_template", [], field="milestoneMarkerTemplate",
-                           field_type="KinoaInAppItemView", size=[120.0, 120.0], inactive=True))
-        amin, amax = _zone_anchors(plan, "MilestoneMainButton", {}, panel_bbox, "milestone_main")
-        nodes.append(_node("MilestoneMainButton", "Panel", "button", ["Image", "Button"], field="milestoneMainButton",
-                           field_type="Button", anchor_min=amin, anchor_max=amax, can_be_hidden=True,
-                           click_actions=list(((template.get("features") or {}).get("milestone") or {}).get("mainActionTypes") or [])))
-        nodes.append(_node("MilestoneMainButtonLabel", "MilestoneMainButton", "button_label", ["Text"],
-                           field="milestoneMainButtonLabel", field_type="Text", anchor_min=[0.0, 0.0], anchor_max=[1.0, 1.0]))
+        zone_boxes = zone_boxes or {}
+        scroll_box, source, clipped = _milestone_ladder_box(feature_area, (by_key.get("bar_image") or {}).get("bbox"),
+                                                            zone_boxes, plan["report"]["warnings"])
+        plan["report"]["milestone_geometry"] = {
+            "regions": sorted(r for r in MILESTONE_REGION_ROLES + ("grand_prize_area",) if r in zone_boxes),
+            "ladder_source": source, "clipped": clipped}
+        score_nodes = _add_milestone_regions(plan, template, zone_boxes, panel_bbox)   # the track goes behind the ladder
+        amin, amax = _zone_anchors(plan, "MilestoneScroll", {}, panel_bbox, "milestone_scroll", bbox=scroll_box)
+        nodes.extend(_scroll_nodes(("MilestoneScroll", "MilestoneViewport", "MilestoneContent"),
+                                   ("milestoneScroll", "milestoneContent"), amin, amax, placed=bool(scroll_box)))
+        ms = plan.get("milestone") or {}
+        nodes.append(_node("MilestoneStep", "MilestoneContent", "milestone_step", [], field="milestoneStepTemplate",
+                           field_type="KinoaInAppMilestoneStepView", size=_step_size(plan, panel_bbox, amin, amax),
+                           inactive=True, step_button=ms.get("cta_mode") == "per_step"))
+        nodes.extend(score_nodes)
+        if not ((ms.get("single_cta") or {}).get("key")):   # a template slot, when there is one, IS the single CTA
+            _add_milestone_main_button(plan, template, panel_bbox)
     elif ftype == "mission":
-        amin, amax = _zone_anchors(plan, "MissionList", {}, panel_bbox, "mission_list", bbox=feature_area)
-        nodes.append(_node("MissionList", "Panel", "zone", ["VerticalLayoutGroup"], field="missionListRoot",
-                           field_type="RectTransform", anchor_min=amin, anchor_max=amax))
-        nodes.append(_node("MissionRow", "MissionList", "item_template", [], field="missionRowTemplate",
-                           field_type="KinoaInAppItemView", size=[800.0, 140.0], inactive=True))
-        mission = (template.get("features") or {}).get("mission") or {}
-        display = (mission.get("progressBar") or {}).get("display")
-        if display != "dont_show_at_all":
-            amin, amax = _zone_anchors(plan, "MissionBar", {}, panel_bbox, "mission_bar")
-            nodes.append(_node("MissionBar", "Panel", "zone", ["Image"], field="missionBarRoot", field_type="GameObject",
-                               anchor_min=amin, anchor_max=amax))
-            nodes.append(_node("MissionBarFill", "MissionBar", "fill", ["Image"], field="missionBarFill",
-                               field_type="Image", anchor_min=[0.0, 0.0], anchor_max=[1.0, 1.0]))
+        _add_mission_feature(plan, template, panel_bbox, feature_area, feature_geo or {})
+
+
+def _scroll_nodes(names, fields, anchor_min, anchor_max, placed=True, vertical=False, viewport_color=None):
+    """The one scroll chain the builder knows: ScrollRect (binding `scroll`) -> viewport (`viewport`, the mask and
+    drag area) -> content (`scroll_content`, the layout group the items are spawned into), wired by the builder's
+    WireScrollRects. Horizontal by default (the milestone ladders); a vertical chain (the mission card list)
+    carries scroll_axis "vertical" on its scroll and content nodes, a field old plans never have.
+    """
+    scroll, viewport, content = names
+    scroll_field, content_field = fields
+    axis = "vertical" if vertical else None
+    group = "VerticalLayoutGroup" if vertical else "HorizontalLayoutGroup"
+    content_min, content_max = ([0.0, 1.0], [1.0, 1.0]) if vertical else ([0.0, 0.0], [0.0, 1.0])
+    return [
+        _node(scroll, "Panel", "scroll", ["ScrollRect"], field=scroll_field, field_type="ScrollRect",
+              anchor_min=anchor_min, anchor_max=anchor_max, placed=placed, scroll_axis=axis),
+        _node(viewport, scroll, "viewport", ["Image", "RectMask2D"], anchor_min=[0.0, 0.0], anchor_max=[1.0, 1.0],
+              color=viewport_color),
+        _node(content, viewport, "scroll_content", [group, "ContentSizeFitter"], field=content_field,
+              field_type="RectTransform", anchor_min=content_min, anchor_max=content_max, scroll_axis=axis),
+    ]
+
+
+def _step_size(plan, panel_bbox, amin, amax):
+    """[w, h] px of one ladder step: the scroll's height less the content padding, never under 120 px."""
+    scroll_px_h = plan["ui"]["frame_size"][1] * panel_bbox["h"] * (amax[1] - amin[1])
+    step_h = max(120, round(scroll_px_h - 16))
+    step_w = min(260, max(120, round(step_h * 0.75)))
+    return [step_w, step_h]
+
+
+_STRETCH = ([0.0, 0.0], [1.0, 1.0])
+# The inner parts of one mission card (MissionRow), in sibling order:
+# (name, parent, binding, components, role, field_type, row_parts key, neutral default anchors inside the card,
+#  style key). Positioned from row_parts relative to parts.row; the defaults are a neutral fallback (D11), not
+# taken from any sample. Card children carry no field: `role` names the [SerializeField] on the shared row view.
+_MISSION_CARD_NODES = (
+    ("MissionRowPlacement", "MissionRow", "row_part", ["Image"], None, None,
+     "placement_badge", ([0.02, 0.6], [0.08, 0.9]), "accent"),
+    ("MissionRowPlacementText", "MissionRowPlacement", "row_part", ["Text"], "placementText", "Text",
+     None, _STRETCH, "card_text"),
+    ("MissionRowTitle", "MissionRow", "row_part", ["Text"], "titleText", "Text",
+     "title", ([0.1, 0.66], [0.75, 0.95]), "card_text"),
+    ("MissionRowSubMission", "MissionRow", "row_part", ["Text"], "subMissionText", "Text",
+     "sub_mission", ([0.1, 0.5], [0.75, 0.66]), "card_text"),
+    ("MissionRowStatus", "MissionRow", "row_part", ["Text"], "statusText", "Text",
+     "status", ([0.77, 0.66], [0.9, 0.95]), "card_text"),
+    ("MissionRowDismiss", "MissionRow", "row_part", ["Image", "Button"], "dismissButton", "Button",
+     "dismiss_button", ([0.92, 0.72], [0.98, 0.95]), "dismiss"),
+    ("MissionRowDismissLabel", "MissionRowDismiss", "row_part", ["Text"], "dismissLabel", "Text",
+     None, _STRETCH, "card_text"),
+    ("MissionRowProgress", "MissionRow", "row_part", ["Image"], None, None,
+     "progress_track", ([0.1, 0.36], [0.75, 0.46]), "progress_track"),
+    ("MissionRowProgressFill", "MissionRowProgress", "fill", ["Image"], "progressFill", "Image",
+     None, _STRETCH, "progress_fill"),
+    ("MissionRowProgressText", "MissionRow", "row_part", ["Text"], "progressText", "Text",
+     "progress_text", ([0.77, 0.32], [0.9, 0.5]), "card_text"),
+    ("MissionRowRewards", "MissionRow", "row_part", ["HorizontalLayoutGroup"], "rewardsRoot", "RectTransform",
+     "rewards", ([0.1, 0.05], [0.7, 0.3]), None),
+    ("MissionRowAction", "MissionRow", "row_part", ["Image", "Button"], "actionButton", "Button",
+     "action_button", ([0.75, 0.05], [0.98, 0.3]), "action"),
+    ("MissionRowActionLabel", "MissionRowAction", "row_part", ["Text"], "actionLabel", "Text",
+     None, _STRETCH, "card_text"),
+)
+
+
+_MIN_LADDER_PX = 136   # one ladder step's 120 px floor + the content padding (see _step_size)
+
+
+def _add_mission_feature(plan, template, panel_bbox, feature_area, geo):
+    """Tabs, the scrolling task list with one template card, and the progress bar as a milestone ladder.
+
+    Panel-level nodes are positioned from the artifact's feature.parts (the task list falls back to
+    area_bbox), card children from feature.row_parts relative to parts.row, colours from feature.style.
+    Every node whose geometry has an artifact source but got the neutral default is listed in
+    report.mission_geometry.defaulted.
+    """
+    nodes, report = plan["nodes"], plan["report"]
+    parts, row_parts, style = geo.get("parts") or {}, geo.get("row_parts") or {}, geo.get("style") or {}
+    row = parts.get("row")
+    if not row:
+        row_parts = {}   # card children are positioned relative to the card; without it they all default
+    frame_w, frame_h = plan["ui"]["frame_size"]
+    defaulted = []
+
+    def panel_anchors(name, part, default_key, fallback=None):
+        box = parts.get(part) or fallback
+        if not box:
+            defaulted.append(name)
+        amin, amax = _zone_anchors(plan, name, {}, panel_bbox, default_key, bbox=box)
+        return amin, amax, bool(box)
+
+    def px_size(name, part, default):
+        box = parts.get(part)
+        if not box:
+            defaulted.append(name)
+            return list(default)
+        return [round(float(box["w"]) * frame_w, 1), round(float(box["h"]) * frame_h, 1)]
+
+    amin, amax, placed = panel_anchors("MissionTabs", "tabs", "mission_tabs")
+    nodes.append(_node("MissionTabs", "Panel", "zone", ["HorizontalLayoutGroup"], field="missionTabsRoot",
+                       field_type="RectTransform", anchor_min=amin, anchor_max=amax, placed=placed))
+    nodes.append(_node("MissionTab", "MissionTabs", "tab_template", ["Image", "Button"], field="missionTabTemplate",
+                       field_type="KinoaInAppTabView", size=px_size("MissionTab", "tab", [300.0, 60.0]),
+                       inactive=True, color="#00000000"))
+    nodes.append(_node("MissionTabLabel", "MissionTab", "tab_part", ["Text"], field_type="Text", role="label",
+                       anchor_min=[0.0, 0.15], anchor_max=[1.0, 1.0], color=style.get("tab_text")))
+    nodes.append(_node("MissionTabSelected", "MissionTab", "tab_part", ["Image"], field_type="GameObject",
+                       role="selectedMarker", anchor_min=[0.3, 0.0], anchor_max=[0.7, 0.06],
+                       color=style.get("tab_selected")))
+
+    # The task list is the same scroll chain as the milestone ladder, vertical.
+    amin, amax, placed = panel_anchors("MissionList", "task_list", "mission_list", fallback=feature_area)
+    nodes.extend(_scroll_nodes(("MissionList", "MissionViewport", "MissionRows"), ("missionScroll", "missionRowsRoot"),
+                               amin, amax, placed=placed, vertical=True))
+    nodes.append(_node("MissionRow", "MissionRows", "mission_row_template", ["Image"], field="missionRowTemplate",
+                       field_type="KinoaInAppMissionRowView", size=px_size("MissionRow", "row", [900.0, 180.0]),
+                       inactive=True, color=style.get("card")))
+    for name, parent, binding, components, role, field_type, part, default, style_key in _MISSION_CARD_NODES:
+        box = row_parts.get(part) if part else None
+        if box:
+            amin, amax = anchors_from_bbox(box, row)
+        else:
+            amin, amax = list(default[0]), list(default[1])
+            if part:
+                defaulted.append(name)
+        nodes.append(_node(name, parent, binding, list(components), field_type=field_type, role=role,
+                           anchor_min=amin, anchor_max=amax, placed=bool(box) or not part,
+                           color=style.get(style_key) if style_key else None))
+        if name == "MissionRowRewards":
+            nodes.append(_node("MissionRowReward", "MissionRowRewards", "item_template", [],
+                               field_type="KinoaInAppItemView", role="rewardTemplate", size=[140.0, 48.0],
+                               inactive=True))
+
+    wired, action_warnings = _mission_feature_buttons(template)
+    for node in nodes:
+        if node["binding"] == "button" and node.get("bucket") == "buttons":
+            node["feature_action"] = next((a for a, b in wired.items() if b.get("key") == node.get("key")), None)
+    report["warnings"].extend(action_warnings)
+    report["mission_actions"] = {a: (wired[a]["key"] if a in wired else None) for a in MISSION_ACTIONS}
+
+    if _mission_bar_shown(template):
+        # ProgressBarState is the milestone ladder: the same horizontal scroll of KinoaInAppMilestoneStepView steps,
+        # each with its own claim button, placed by parts.progress_bar. bar_track tints the ladder's backdrop
+        # (the viewport), bar_fill each step's progress fill.
+        amin, amax, placed = panel_anchors("MissionBarScroll", "progress_bar", "mission_bar")
+        ladder_px = round(frame_h * panel_bbox["h"] * (amax[1] - amin[1]))
+        if ladder_px < _MIN_LADDER_PX:
+            report["warnings"].append(
+                "mission progress bar area is %d px tall; its ladder steps need about %d px (score, reward, claim "
+                "button) — bound parts.progress_bar around the bar's markers and rewards too (from-image path B), "
+                "or resize MissionBarScroll in the built prefab" % (ladder_px, _MIN_LADDER_PX))
+        nodes.extend(_scroll_nodes(("MissionBarScroll", "MissionBarViewport", "MissionBarContent"),
+                                   ("missionBarScroll", "missionBarContent"), amin, amax, placed=placed,
+                                   viewport_color=style.get("bar_track")))
+        nodes.append(_node("MissionBarStep", "MissionBarContent", "milestone_step", [], field="missionBarStepTemplate",
+                           field_type="KinoaInAppMilestoneStepView", size=_step_size(plan, panel_bbox, amin, amax),
+                           inactive=True, step_button=True, color=style.get("bar_fill")))
+
+    report["mission_geometry"] = {
+        "source": "layout_artifact" if (parts or geo.get("row_parts") or style) else "defaults",
+        "parts": [p for p in MISSION_PARTS if p in parts],
+        "row_parts": [p for p in MISSION_ROW_PARTS if p in row_parts],
+        "style": [s for s in MISSION_STYLE_KEYS if s in style],
+        "defaulted": defaulted,
+    }
 
 
 # --------------------------------------------------------------------------- de-overlap
 
-_FLOW_BINDINGS = ("text", "button", "zone", "unplaced")
+_FLOW_BINDINGS = ("text", "button", "zone", "scroll", "unplaced")
 _OVERLAP_TOL = 0.002     # anchor units; touching edges are not an overlap
 _SPLIT_GAP = 0.004       # gap left between two boxes split apart
 _MIN_KEEP = 0.4          # a split box keeps at least this share of its ORIGINAL height/width
@@ -874,10 +1289,9 @@ _SLOP_RATIO = 0.35       # overlap <= this share of the smaller box: vision-edge
 _SCAN_STEP = 0.005
 _MIN_SLOT = 0.02         # a moved box is never shrunk below this height
 _UNPLACED_ROW_PX = 88.0  # builder: each Unplaced child is 80 px + 8 px spacing
-# Nodes that hold other UI (rows, markers, items): never trimmed against what sits on them.
-_CONTAINERS = ("MissionList", "MilestoneBar", "ResourceArea", "GrandPrizeArea")
-# MilestoneMarkers hang one bar-height above and below the bar (anchors [0,-1]..[1,2]).
-_INFLATE = {"MilestoneBar": 1.0}
+# Nodes that hold other UI (rows, steps, tabs, items): never trimmed against what sits on them.
+_CONTAINERS = ("MissionList", "MissionTabs", "MissionBarScroll", "MilestoneScroll", "ResourceArea", "GrandPrizeArea",
+               "MilestoneScoreArea")
 
 
 def _is_flow(node):
@@ -890,20 +1304,16 @@ def _is_flow(node):
 
 
 def _box(node):
-    """The node's footprint for collision checks — anchors, plus what it draws outside them."""
+    """The node's footprint for collision checks — its anchors."""
     x0, y0 = node["anchor_min"]
     x1, y1 = node["anchor_max"]
-    grow = _INFLATE.get(node["name"], 0.0) * (y1 - y0)
-    return [x0, y0 - grow, x1, y1 + grow]
+    return [x0, y0, x1, y1]
 
 
 def _set_box(node, box):
-    """Store a footprint back as anchors (undoing _box's inflation)."""
-    grow_share = _INFLATE.get(node["name"], 0.0)
-    h = (box[3] - box[1]) / (1.0 + 2.0 * grow_share)
-    grow = grow_share * h
-    node["anchor_min"] = [round(_clamp01(box[0]), 4), round(_clamp01(box[1] + grow), 4)]
-    node["anchor_max"] = [round(_clamp01(box[2]), 4), round(_clamp01(box[3] - grow), 4)]
+    """Store a footprint back as anchors."""
+    node["anchor_min"] = [round(_clamp01(box[0]), 4), round(_clamp01(box[1]), 4)]
+    node["anchor_max"] = [round(_clamp01(box[2]), 4), round(_clamp01(box[3]), 4)]
 
 
 def _overlap(a, b):
@@ -1082,7 +1492,6 @@ def resolve_overlaps(nodes, report, panel_px_height=None):
         if node.get("binding") == "unplaced" and panel_px_height:
             rows = sum(1 for n in nodes if n.get("parent") == node["name"])
             min_h = max(min_h, rows * _UNPLACED_ROW_PX / float(panel_px_height))
-        min_h *= 1.0 + 2.0 * _INFLATE.get(node["name"], 0.0)   # the floor is on the real height, not the footprint
         before_anchors = anchors(node)
         target = _free_slot(before, [box for _, box in settled], min_height=min_h)
         if target is None:
@@ -1165,6 +1574,15 @@ def layout_from_layout_file(layout):
 
 ARTIFACT_SCHEMA_MAJOR = "1"
 _POSITIONED_BUCKETS = ("images", "buttons", "texts")
+# Mission geometry (artifact 1.1, advisory like area_bbox, never template elements): `parts` bounds the
+# screen-level pieces, `row_parts` the inner pieces of the one card in parts.row, `style` its colours.
+MISSION_PARTS = ("tabs", "tab", "task_list", "row", "progress_bar")
+MISSION_ROW_PARTS = ("placement_badge", "title", "sub_mission", "status", "progress_track",
+                     "progress_text", "rewards", "action_button", "dismiss_button")
+MISSION_STYLE_KEYS = ("card", "card_text", "accent", "progress_track", "progress_fill", "action",
+                      "dismiss", "tab_text", "tab_selected", "bar_track", "bar_fill")
+_HEX_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$")
+_GEOMETRY_FALLBACK = "the mission UI uses its default geometry there"
 
 
 def _unit_bbox_problem(bbox):
@@ -1180,6 +1598,47 @@ def _unit_bbox_problem(bbox):
     if float(bbox["w"]) == 0 or float(bbox["h"]) == 0:
         return "bbox w/h must be non-zero"
     return None
+
+
+def _feature_boxes(block, allowed, where, warnings):
+    """Validated {name: bbox} copy of a feature.parts / feature.row_parts block. Advisory: anything
+    unusable is dropped with a warning naming it; the artifact is never refused for it."""
+    if block is None:
+        return {}
+    if not isinstance(block, dict):
+        warnings.append("layout artifact %s ignored: must be an object of name -> bbox; %s" % (where, _GEOMETRY_FALLBACK))
+        return {}
+    out = {}
+    for name, bbox in block.items():
+        if name not in allowed:
+            warnings.append("layout artifact %s.%s ignored: unknown key (allowed: %s)" % (where, name, ", ".join(allowed)))
+            continue
+        problem = _unit_bbox_problem(bbox)
+        if problem:
+            warnings.append("layout artifact %s.%s ignored: %s; %s" % (where, name, problem, _GEOMETRY_FALLBACK))
+            continue
+        out[name] = {k: float(bbox[k]) for k in ("x", "y", "w", "h")}
+    return out
+
+
+def _feature_style(block, warnings):
+    """Validated {name: '#RRGGBB[AA]'} copy of feature.style; a malformed colour is dropped with a warning."""
+    if block is None:
+        return {}
+    if not isinstance(block, dict):
+        warnings.append("layout artifact feature.style ignored: must be an object of name -> #RRGGBB")
+        return {}
+    out = {}
+    for name, color in block.items():
+        if name not in MISSION_STYLE_KEYS:
+            warnings.append("layout artifact feature.style.%s ignored: unknown key (allowed: %s)"
+                            % (name, ", ".join(MISSION_STYLE_KEYS)))
+        elif not (isinstance(color, str) and _HEX_COLOR.match(color)):
+            warnings.append("layout artifact feature.style.%s ignored: %r is not #RRGGBB or #RRGGBBAA; "
+                            "that node keeps its default colour" % (name, color))
+        else:
+            out[name] = color
+    return out
 
 
 def layout_from_artifact(artifact):
@@ -1249,6 +1708,15 @@ def layout_from_artifact(artifact):
         problem = _unit_bbox_problem(feature["area_bbox"])
         if problem:
             raise ValueError("layout artifact feature.area_bbox: %s" % problem)
+    feature_parts = _feature_boxes(feature.get("parts"), MISSION_PARTS, "feature.parts", warnings)
+    feature_row_parts = {}
+    if feature.get("row_parts") is not None:
+        if "row" in feature_parts:
+            feature_row_parts = _feature_boxes(feature["row_parts"], MISSION_ROW_PARTS, "feature.row_parts", warnings)
+        else:
+            warnings.append("layout artifact feature.row_parts ignored: no valid feature.parts.row to position the "
+                            "card's inner parts in; %s" % _GEOMETRY_FALLBACK)
+    feature_style = _feature_style(feature.get("style"), warnings)
 
     src = artifact.get("source_image") or {}
     size = [src["width"], src["height"]] if src.get("width") and src.get("height") else None
@@ -1256,6 +1724,7 @@ def layout_from_artifact(artifact):
             "source": "layout_artifact", "template_key": template_key,
             "indexes": indexes, "entries": entries, "warnings": warnings,
             "feature_type": feature.get("type"), "feature_area": feature.get("area_bbox"),
+            "feature_parts": feature_parts, "feature_row_parts": feature_row_parts, "feature_style": feature_style,
             "sha256": src.get("sha256"), "hand_placed": hand_placed, "adjusted": adjusted}
 
 
@@ -1285,7 +1754,8 @@ def cmd_plan(args):
         elif args.layout:
             layout = layout_from_layout_file(_read_json(args.layout))
         image_size = _parse_size(args.image_size) or (layout or {}).get("image_size")
-        result = plan_prefab(template, layout, style, {"image_size": image_size, "out_dir": args.out_dir})
+        result = plan_prefab(template, layout, style, {"image_size": image_size, "out_dir": args.out_dir,
+                                                       "milestone_cta": args.milestone_cta})
     except (OSError, ValueError, json.JSONDecodeError, KeyError, TypeError, AttributeError) as exc:
         _emit({"ok": False, "error": "unreadable_input", "detail": str(exc)})
         return 2
@@ -1422,6 +1892,247 @@ namespace Kinoa.InApps
 """
 
 
+def render_feature_hooks(options):
+    body = _AUTOGEN % "game-supplied delegate for feature (milestone) button actions. Fill the TODO line from YOUR game code; regenerated only with --force-shared."
+    body += """using System;
+using System.Threading.Tasks;
+using Kinoa.Data.Messaging.InApp;
+using Kinoa.Data.Messaging.InApp.Templates.Custom;
+using UnityEngine;
+
+namespace Kinoa.InApps
+{
+    /// <summary>
+    ///     Delegates the generated feature views (milestones) call for actions the game already owns.
+    ///     Kept apart from KinoaInAppHooks so projects generated by an earlier release keep compiling unchanged.
+    /// </summary>
+    public static class KinoaInAppFeatureHooks
+    {
+        /// <summary>
+        ///     Runs a milestone button's paid / ad / link action (billing, soft_billing, show_ad, deep_link, web_link, ...)
+        ///     with the game's own IAP / ads / router; returns true once it completed so the view may collect the step.
+        ///     Never grant the reward here - the view collects through Kinoa.
+        /// </summary>
+"""
+    body += _hook_line("Func<InAppMessage, InAppCustomButton, Task<bool>>", "RunButtonAction", options.get("feature_action_runner"),
+                       "route button.ClickConfig through your game's click handler and return true when it succeeded, e.g. KinoaInAppFeatureHooks.RunButtonAction = async (message, button) => await MyClickHandler.RunAsync(message, button);")
+    body += """
+        internal static void WarnMissing(string hook) =>
+            Debug.LogWarning($"[KinoaInApp] {hook} is not assigned — see TODO(kinoa-prefab) in KinoaInAppFeatureHooks.cs");
+    }
+}
+"""
+    return body
+
+
+def render_milestone_step_view(text_system):
+    return (_AUTOGEN % "shared milestone step view (one row of the milestone ladder). Regenerated only with --force-shared.") + """using Kinoa.Data.Enum;
+using UnityEngine;
+using UnityEngine.Events;
+using UnityEngine.UI;
+""" + _text_alias(text_system) + """
+
+namespace Kinoa.InApps
+{
+    public class KinoaInAppMilestoneStepView : MonoBehaviour
+    {
+        [SerializeField] private KinoaText score;
+        [SerializeField] private Image rewardIcon;
+        [SerializeField] private KinoaText rewardAmount;
+        [SerializeField] private Image progress;
+        [SerializeField] private GameObject lockedMark;
+        [SerializeField] private GameObject collectedMark;
+        [SerializeField] private Button collectButton;
+        [SerializeField] private KinoaText collectLabel;
+
+        public void SetScore(string text)
+        {
+            if (score != null) score.text = text ?? string.Empty;
+        }
+
+        public void SetReward(Sprite icon, string amount)
+        {
+            if (rewardIcon != null)
+            {
+                rewardIcon.sprite = icon;
+                rewardIcon.enabled = icon != null;
+            }
+
+            if (rewardAmount != null)
+            {
+                rewardAmount.text = amount ?? string.Empty;
+                rewardAmount.gameObject.SetActive(!string.IsNullOrEmpty(amount));
+            }
+        }
+
+        public void SetProgress(float amount)
+        {
+            if (progress != null) progress.fillAmount = Mathf.Clamp01(amount);
+        }
+
+        public void SetStatus(InAppMilestoneStatus status)
+        {
+            if (lockedMark != null) lockedMark.SetActive(status == InAppMilestoneStatus.Closed || status == InAppMilestoneStatus.Unknown);
+            if (collectedMark != null) collectedMark.SetActive(status == InAppMilestoneStatus.Collected);
+        }
+
+        public void SetCollect(bool visible, bool interactable, string label, UnityAction onClick)
+        {
+            if (collectButton == null) return;
+            collectButton.gameObject.SetActive(visible);
+            collectButton.onClick.RemoveAllListeners();
+            collectButton.interactable = interactable;
+            if (onClick != null) collectButton.onClick.AddListener(onClick);
+            if (collectLabel != null) collectLabel.text = label ?? string.Empty;
+        }
+    }
+}
+"""
+
+
+def render_mission_row_view(text_system):
+    return (_AUTOGEN % "shared mission card view (mission tabs UI). Regenerated only with --force-shared.") + """using System.Collections.Generic;
+using System.Globalization;
+using UnityEngine;
+using UnityEngine.Events;
+using UnityEngine.UI;
+""" + _text_alias(text_system) + """
+
+namespace Kinoa.InApps
+{
+    /// <summary>Dumb view of one mission card; the generated template view fills it from the InAppMission.</summary>
+    public class KinoaInAppMissionRowView : MonoBehaviour
+    {
+        [SerializeField] private KinoaText placementText;
+        [SerializeField] private KinoaText titleText;
+        [SerializeField] private KinoaText subMissionText;
+        [SerializeField] private KinoaText statusText;
+        [SerializeField] private KinoaText progressText;
+        [SerializeField] private KinoaText actionLabel;
+        [SerializeField] private KinoaText dismissLabel;
+        [SerializeField] private Image progressFill;
+        [SerializeField] private RectTransform rewardsRoot;
+        [SerializeField] private KinoaInAppItemView rewardTemplate;
+        [SerializeField] private Button actionButton;
+        [SerializeField] private Button dismissButton;
+
+        private readonly List<KinoaInAppItemView> spawnedRewards = new List<KinoaInAppItemView>();
+
+        public void SetPlacement(int placementNumber)
+        {
+            if (placementText != null) placementText.text = "P" + placementNumber;
+        }
+
+        public void SetTitle(string text)
+        {
+            if (titleText != null) titleText.text = text ?? string.Empty;
+        }
+
+        public void SetSubMission(int? number)
+        {
+            if (subMissionText == null) return;
+            subMissionText.gameObject.SetActive(number.HasValue);
+            if (number.HasValue) subMissionText.text = "Sub-mission " + number.Value;
+        }
+
+        public void SetStatus(string text)
+        {
+            if (statusText != null) statusText.text = text ?? string.Empty;
+        }
+
+        public void SetProgress(decimal current, decimal goal)
+        {
+            if (progressFill != null) progressFill.fillAmount = goal > 0 ? Mathf.Clamp01((float)(current / goal)) : 0f;
+            if (progressText != null) progressText.text = current.ToString("0.##", CultureInfo.InvariantCulture) + "/" + goal.ToString("0.##", CultureInfo.InvariantCulture);
+        }
+
+        public KinoaInAppItemView AddReward(Sprite icon, string amount)
+        {
+            if (rewardTemplate == null || rewardsRoot == null) return null;
+            var reward = Instantiate(rewardTemplate, rewardsRoot);
+            reward.gameObject.SetActive(true);
+            reward.SetIcon(icon);
+            reward.SetLabel(amount);
+            spawnedRewards.Add(reward);
+            return reward;
+        }
+
+        public void ClearRewards()
+        {
+            foreach (var reward in spawnedRewards)
+                if (reward != null) Destroy(reward.gameObject);
+            spawnedRewards.Clear();
+        }
+
+        public void SetAction(string label, UnityAction onClick)
+        {
+            if (actionButton == null) return;
+            actionButton.gameObject.SetActive(label != null);
+            if (label == null) return;
+            if (actionLabel != null) actionLabel.text = label;
+            actionButton.onClick.RemoveAllListeners();
+            if (onClick != null) actionButton.onClick.AddListener(onClick);
+        }
+
+        public void SetDismiss(bool visible, UnityAction onClick)
+        {
+            if (dismissButton == null) return;
+            dismissButton.gameObject.SetActive(visible);
+            dismissButton.onClick.RemoveAllListeners();
+            if (onClick != null) dismissButton.onClick.AddListener(onClick);
+            if (dismissLabel != null && string.IsNullOrEmpty(dismissLabel.text)) dismissLabel.text = "\\u00d7";
+        }
+
+        public void SetInteractable(bool interactable)
+        {
+            if (actionButton != null) actionButton.interactable = interactable;
+            if (dismissButton != null) dismissButton.interactable = interactable;
+        }
+    }
+}
+"""
+
+
+def render_tab_view(text_system):
+    return (_AUTOGEN % "shared mission-set tab view (mission tabs UI). Regenerated only with --force-shared.") + """using UnityEngine;
+using UnityEngine.Events;
+using UnityEngine.UI;
+""" + _text_alias(text_system) + """
+
+namespace Kinoa.InApps
+{
+    public class KinoaInAppTabView : MonoBehaviour
+    {
+        [SerializeField] private KinoaText label;
+        [SerializeField] private GameObject selectedMarker;
+        [SerializeField] private Button button;
+
+        public int SetNumber { get; private set; }
+
+        public void Setup(int setNumber, string text, bool selected, UnityAction onClick)
+        {
+            SetNumber = setNumber;
+            if (label != null) label.text = text ?? string.Empty;
+            SetSelected(selected);
+            if (button == null) return;
+            button.onClick.RemoveAllListeners();
+            if (onClick != null) button.onClick.AddListener(onClick);
+        }
+
+        public void SetSelected(bool selected)
+        {
+            if (selectedMarker != null) selectedMarker.SetActive(selected);
+        }
+
+        public void SetInteractable(bool interactable)
+        {
+            if (button != null) button.interactable = interactable;
+        }
+    }
+}
+"""
+
+
 BUILDER_CS = (_AUTOGEN % "generic plan -> prefab builder (Editor only). Tool-owned: rewritten by every generate run.") + r"""using System;
 using System.Collections.Generic;
 using System.IO;
@@ -1439,7 +2150,8 @@ namespace Kinoa.InApps.Editor
     /// </summary>
     public static class KinoaInAppPrefabBuilder
     {
-        public const string MenuPath = "Tools/Kinoa/In-Apps/Build Prefabs From Plans";
+        public const string MenuPath = "Tools/Kinoa/In-Apps/Build All Prefabs From Plans";
+        public const string TemplateMenuRoot = "Tools/Kinoa/In-Apps/Build Prefab/";
         private const string PlanSuffix = ".inapp-plan.json";
 
         [Serializable] public class Plan { public string schema_version; public PlanTemplate template; public PlanUi ui; public PlanView view; public PlanPaths paths; public PlanNode[] nodes; }
@@ -1453,6 +2165,8 @@ namespace Kinoa.InApps.Editor
             public string name; public string parent; public string binding; public string[] components;
             public string field; public string field_type; public float[] anchor_min; public float[] anchor_max; public float[] size;
             public bool placed; public bool can_be_hidden; public bool inactive; public string key; public string bucket; public string sprite_guid;
+            public bool step_button;
+            public string color; public string role; public string scroll_axis;
         }
         [Serializable] public class BuildReport
         {
@@ -1479,6 +2193,18 @@ namespace Kinoa.InApps.Editor
             var summary = $"[KinoaInAppPrefabBuilder] {ok}/{plans.Count} plan(s) built";
             Debug.Log(summary);
             return summary;
+        }
+
+        /// <summary>Builds one plan; the per-template menu items call this.</summary>
+        public static BuildReport BuildPlanMenu(string planPath)
+        {
+            var report = BuildFromPlan(planPath);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            Debug.Log(report.ok
+                ? $"[KinoaInAppPrefabBuilder] {planPath}: built"
+                : $"[KinoaInAppPrefabBuilder] {planPath}: failed — {(report.errors.Count > 0 ? report.errors[0] : "unknown error")}");
+            return report;
         }
 
         public static BuildReport BuildFromPlan(string planPath)
@@ -1511,10 +2237,13 @@ namespace Kinoa.InApps.Editor
                     ApplyRect(rt, node);
                     foreach (var component in node.components ?? Array.Empty<string>()) AddComponent(go, component, plan.ui);
                     ApplyBinding(go, node, plan.ui);
+                    ApplyColor(go, node);
                     if (node.inactive) go.SetActive(false);
                     byName[node.name] = go;
                     report.nodes_built++;
                 }
+                WireScrollRects(plan.nodes, byName);
+                WireTemplates(plan, byName, report);
 
                 var viewType = FindType(plan.view.class_name, plan.view.ns);
                 if (viewType == null)
@@ -1660,6 +2389,24 @@ namespace Kinoa.InApps.Editor
                     g.childForceExpandWidth = true; g.childForceExpandHeight = false;
                     break;
                 }
+                case "ScrollRect":
+                {
+                    var sr = go.AddComponent<ScrollRect>();
+                    sr.horizontal = true; sr.vertical = false;
+                    sr.movementType = ScrollRect.MovementType.Clamped;
+                    sr.inertia = true;
+                    break;
+                }
+                case "RectMask2D":
+                    go.AddComponent<RectMask2D>();
+                    break;
+                case "ContentSizeFitter":
+                {
+                    var fitter = go.AddComponent<ContentSizeFitter>();
+                    fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+                    fitter.verticalFit = ContentSizeFitter.FitMode.Unconstrained;
+                    break;
+                }
                 default:
                     Debug.LogWarning($"[KinoaInAppPrefabBuilder] unknown component '{component}' on {go.name}");
                     break;
@@ -1724,12 +2471,77 @@ namespace Kinoa.InApps.Editor
                 case "item_template":
                     BuildItemTemplate(go, ui);
                     break;
+                case "viewport":
+                {
+                    var image = go.GetComponent<Image>();
+                    image.color = new Color(1f, 1f, 1f, 0f);   // invisible, but a raycast target so the scroll can be dragged
+                    image.raycastTarget = true;
+                    break;
+                }
+                case "scroll_content":
+                {
+                    go.GetComponent<RectTransform>().pivot = new Vector2(0f, 0.5f);
+                    // the generic "HorizontalLayoutGroup" component case already added the group: override it, never add a second one
+                    var group = go.GetComponent<HorizontalLayoutGroup>();
+                    if (group != null)
+                    {
+                        group.spacing = 12f; group.padding = new RectOffset(8, 8, 8, 8);
+                        group.childControlWidth = true; group.childControlHeight = true;
+                        group.childForceExpandWidth = false; group.childForceExpandHeight = true;
+                    }
+                    if (node.scroll_axis == "vertical")
+                    {
+                        // a vertical list (scroll_axis is absent from horizontal plans): items stack from the top and the
+                        // content grows downwards with them; the generic VerticalLayoutGroup case configured the group
+                        go.GetComponent<RectTransform>().pivot = new Vector2(0.5f, 1f);
+                        if (go.TryGetComponent<ContentSizeFitter>(out var listFitter))
+                        {
+                            listFitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+                            listFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+                        }
+                    }
+                    break;
+                }
+                case "milestone_step":
+                    BuildMilestoneStep(go, ui, node);
+                    break;
                 case "image":
                 case "text":
                 case "button_label":
                 {
                     var graphic = go.GetComponent<Graphic>();
                     if (graphic != null) graphic.raycastTarget = false;
+                    break;
+                }
+                case "scroll":
+                {
+                    // the "ScrollRect" component case builds a horizontal scroll (a plan without scroll_axis, e.g. the
+                    // milestone ladder); a vertical one (the mission card list) only flips the axis
+                    if (node.scroll_axis == "vertical" && go.TryGetComponent<ScrollRect>(out var scroll))
+                    {
+                        scroll.horizontal = false; scroll.vertical = true;
+                    }
+                    break;
+                }
+                case "tab_template":
+                {
+                    go.AddComponent<KinoaInAppTabView>();
+                    var layout = PrepareTemplate(go);
+                    if (node.size != null && node.size.Length == 2) layout.preferredWidth = node.size[0];
+                    break;
+                }
+                case "mission_row_template":
+                {
+                    go.AddComponent<KinoaInAppMissionRowView>();
+                    var layout = PrepareTemplate(go);
+                    if (node.size != null && node.size.Length == 2) layout.preferredHeight = node.size[1];
+                    break;
+                }
+                case "tab_part":
+                case "row_part":
+                {
+                    var graphic = go.GetComponent<Graphic>();
+                    if (graphic != null && go.GetComponent<Button>() == null) graphic.raycastTarget = false;
                     break;
                 }
             }
@@ -1747,6 +2559,93 @@ namespace Kinoa.InApps.Editor
                 rt.pivot = new Vector2(0.5f, 1f);
                 rt.sizeDelta = new Vector2(0f, 80f);
                 go.AddComponent<LayoutElement>().preferredHeight = 80f;
+            }
+        }
+
+        /// <summary>Neutral template background (node.color replaces it when the plan has one) + the LayoutElement its list sizes it by.</summary>
+        private static LayoutElement PrepareTemplate(GameObject go)
+        {
+            if (go.TryGetComponent<Image>(out var background)) background.color = new Color(1f, 1f, 1f, 0.15f);
+            if (!go.TryGetComponent<LayoutElement>(out var layout)) layout = go.AddComponent<LayoutElement>();
+            return layout;
+        }
+
+        /// <summary>
+        ///     The plan's colour (layout artifact style) on the node's Image, else on its text. On a milestone_step it
+        ///     tints the step's progress fill (the ladder's bar fill); the step background keeps its neutral tint.
+        ///     No colour keeps the defaults.
+        /// </summary>
+        private static void ApplyColor(GameObject go, PlanNode node)
+        {
+            if (string.IsNullOrEmpty(node.color) || !ColorUtility.TryParseHtmlString(node.color, out var color)) return;
+            if (node.binding == "milestone_step")
+            {
+                var fill = go.transform.Find("Progress");
+                if (fill != null && fill.TryGetComponent<Image>(out var fillImage)) fillImage.color = color;
+                return;
+            }
+            if (go.TryGetComponent<Image>(out var image)) image.color = color;
+            else if (go.TryGetComponent<Graphic>(out var text)) text.color = color;
+        }
+
+        private static bool IsWiredTemplate(string binding) => binding == "tab_template" || binding == "mission_row_template";
+        private static bool IsPartBinding(string binding) => binding == "tab_part" || binding == "row_part";
+
+        /// <summary>The closest tab / mission-row template above a node (null when there is none).</summary>
+        private static PlanNode NearestTemplate(PlanNode node, Dictionary<string, PlanNode> byNode)
+        {
+            var name = node.parent;
+            for (var hops = 0; !string.IsNullOrEmpty(name) && hops <= byNode.Count; hops++)
+            {
+                if (!byNode.TryGetValue(name, out var parent)) return null;
+                if (IsWiredTemplate(parent.binding)) return parent;
+                name = parent.parent;
+            }
+            return null;
+        }
+
+        /// <summary>
+        ///     After every node is built (and WireScrollRects): wires every tab / mission-row template's view. Each
+        ///     descendant node carrying a <c>role</c> (whatever its own binding) is assigned to the view field of that
+        ///     name on its nearest template ancestor.
+        /// </summary>
+        private static void WireTemplates(Plan plan, Dictionary<string, GameObject> byName, BuildReport report)
+        {
+            var byNode = new Dictionary<string, PlanNode>();
+            foreach (var node in plan.nodes) if (!string.IsNullOrEmpty(node.name)) byNode[node.name] = node;
+
+            // Slot nodes also carry a layout role ("header", "bar_image", ...) that is not a view field: only a
+            // tab_part / row_part role is a wiring contract, so only those are reported when no template owns them.
+            var roleNodes = plan.nodes.Where(n => !string.IsNullOrEmpty(n.role)).ToList();
+            foreach (var orphan in roleNodes.Where(n => IsPartBinding(n.binding) && NearestTemplate(n, byNode) == null))
+                report.errors.Add($"{orphan.name}: role '{orphan.role}' not assigned (no tab or mission-row template above it)");
+
+            foreach (var template in plan.nodes.Where(n => IsWiredTemplate(n.binding)))
+            {
+                if (!byName.TryGetValue(template.name, out var templateGo)) continue;
+                var parts = roleNodes.Where(n => NearestTemplate(n, byNode) == template).ToList();
+                var view = template.binding == "tab_template"
+                    ? (Component)templateGo.GetComponent<KinoaInAppTabView>()
+                    : templateGo.GetComponent<KinoaInAppMissionRowView>();
+                if (view == null)
+                {
+                    foreach (var part in parts) report.errors.Add($"{part.name}: role '{part.role}' not assigned (no view on {template.name})");
+                    continue;
+                }
+                var so = new SerializedObject(view);
+                if (template.binding == "tab_template") SetRef(so, "button", templateGo.GetComponent<Button>());
+                foreach (var part in parts)
+                {
+                    var prop = so.FindProperty(part.role);
+                    var value = byName.TryGetValue(part.name, out var partGo) ? Resolve(partGo, part.field_type, plan.ui) : null;
+                    if (prop == null || prop.propertyType != SerializedPropertyType.ObjectReference || value == null)
+                    {
+                        report.errors.Add($"{part.name}: role '{part.role}' not assigned");
+                        continue;
+                    }
+                    prop.objectReferenceValue = value;
+                }
+                so.ApplyModifiedPropertiesWithoutUndo();
             }
         }
 
@@ -1772,6 +2671,72 @@ namespace Kinoa.InApps.Editor
             so.ApplyModifiedPropertiesWithoutUndo();
         }
 
+        /// <summary>
+        ///     One milestone step: score, reward icon + amount, progress, locked/collected marks and (per-step CTA only)
+        ///     a collect button. Assigns every serialized field of the generated KinoaInAppMilestoneStepView.
+        /// </summary>
+        private static void BuildMilestoneStep(GameObject go, PlanUi ui, PlanNode node)
+        {
+            if (!go.TryGetComponent<Image>(out var background)) background = go.AddComponent<Image>();
+            background.color = new Color(1f, 1f, 1f, 0.15f);
+            background.raycastTarget = true;
+            var layout = go.AddComponent<LayoutElement>();
+            if (node.size != null && node.size.Length == 2) layout.preferredWidth = node.size[0];
+            layout.flexibleHeight = 1f;
+
+            var score = AddText(Child(go, "Score", new Vector2(0.05f, 0.80f), new Vector2(0.95f, 0.98f)), ui);
+            var rewardIcon = Child(go, "RewardIcon", new Vector2(0.20f, 0.42f), new Vector2(0.80f, 0.78f)).AddComponent<Image>();
+            rewardIcon.preserveAspect = true; rewardIcon.raycastTarget = false;
+            var rewardAmount = AddText(Child(go, "RewardAmount", new Vector2(0.05f, 0.30f), new Vector2(0.95f, 0.42f)), ui);
+            var progress = Child(go, "Progress", new Vector2(0.05f, 0.25f), new Vector2(0.95f, 0.29f)).AddComponent<Image>();
+            progress.type = Image.Type.Filled; progress.fillMethod = Image.FillMethod.Horizontal;
+            progress.fillAmount = 0f; progress.raycastTarget = false;
+            foreach (var c in new[] { score, rewardAmount }) { var g = c.GetComponent<Graphic>(); if (g != null) g.raycastTarget = false; }
+
+            Button collectButton = null;
+            Component collectLabel = null;
+            if (node.step_button)
+            {
+                var buttonGo = Child(go, "CollectButton", new Vector2(0.10f, 0.03f), new Vector2(0.90f, 0.22f));
+                var buttonImage = buttonGo.AddComponent<Image>();
+                collectButton = buttonGo.AddComponent<Button>();
+                collectButton.targetGraphic = buttonImage;
+                collectLabel = AddText(Child(buttonGo, "CollectLabel", Vector2.zero, Vector2.one), ui);
+                var labelGraphic = collectLabel.GetComponent<Graphic>();
+                if (labelGraphic != null) labelGraphic.raycastTarget = false;
+            }
+
+            var lockedGo = Child(go, "LockedMark", new Vector2(0f, 0f), new Vector2(1f, 1f));
+            var lockedImage = lockedGo.AddComponent<Image>();
+            lockedImage.color = new Color(0f, 0f, 0f, 0.45f); lockedImage.raycastTarget = false;
+            lockedGo.SetActive(false);
+            var collectedGo = Child(go, "CollectedMark", new Vector2(0.60f, 0.75f), new Vector2(0.95f, 0.98f));
+            var collectedImage = collectedGo.AddComponent<Image>();
+            collectedImage.color = new Color(0.25f, 0.8f, 0.35f, 0.9f); collectedImage.raycastTarget = false;
+            collectedGo.SetActive(false);
+
+            var step = go.AddComponent<KinoaInAppMilestoneStepView>();
+            var so = new SerializedObject(step);
+            SetRef(so, "score", score); SetRef(so, "rewardIcon", rewardIcon); SetRef(so, "rewardAmount", rewardAmount);
+            SetRef(so, "progress", progress); SetRef(so, "lockedMark", lockedGo); SetRef(so, "collectedMark", collectedGo);
+            if (node.step_button) { SetRef(so, "collectButton", collectButton); SetRef(so, "collectLabel", collectLabel); }
+            so.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        /// <summary>Points each ScrollRect at its viewport child and the content grandchild (found by plan parent names).</summary>
+        private static void WireScrollRects(PlanNode[] nodes, Dictionary<string, GameObject> built)
+        {
+            foreach (var scroll in nodes.Where(n => n.binding == "scroll"))
+            {
+                if (!built.TryGetValue(scroll.name, out var scrollGo) || !scrollGo.TryGetComponent<ScrollRect>(out var rect)) continue;
+                var viewport = nodes.FirstOrDefault(n => n.binding == "viewport" && n.parent == scroll.name);
+                if (viewport == null || !built.TryGetValue(viewport.name, out var viewportGo)) continue;
+                rect.viewport = viewportGo.GetComponent<RectTransform>();
+                var content = nodes.FirstOrDefault(n => n.binding == "scroll_content" && n.parent == viewport.name);
+                if (content != null && built.TryGetValue(content.name, out var contentGo)) rect.content = contentGo.GetComponent<RectTransform>();
+            }
+        }
+
         private static GameObject Child(GameObject parent, string name, Vector2 anchorMin, Vector2 anchorMax)
         {
             var go = new GameObject(name, typeof(RectTransform));
@@ -1792,6 +2757,10 @@ namespace Kinoa.InApps.Editor
                 case "Button": return go.GetComponent<Button>();
                 case "Text": return UseTmp(ui) ? go.GetComponent(TmpType) : (Component)go.GetComponent<Text>();
                 case "KinoaInAppItemView": return go.GetComponent<KinoaInAppItemView>();
+                case "ScrollRect": return go.GetComponent<ScrollRect>();
+                case "KinoaInAppMilestoneStepView": return go.GetComponent<KinoaInAppMilestoneStepView>();
+                case "KinoaInAppTabView": return go.GetComponent<KinoaInAppTabView>();
+                case "KinoaInAppMissionRowView": return go.GetComponent<KinoaInAppMissionRowView>();
                 default: return go;
             }
         }
@@ -1819,6 +2788,52 @@ namespace Kinoa.InApps.Editor
 """
 
 
+class PlanOutdatedError(ValueError):
+    """A milestone plan written before the scroll ladder, or a mission plan written before the tabs / cards /
+    progress-ladder tree: there is no view to generate for it."""
+
+
+MENU_ALL = "Tools/Kinoa/In-Apps/Build All Prefabs From Plans"
+MENU_TEMPLATE_ROOT = "Tools/Kinoa/In-Apps/Build Prefab/"
+
+
+def _menu_label(name, key):
+    """Unity menu label for one template: "<name> (<key>)", or the key alone when the name is empty / equals it."""
+    name = (name or "").strip()
+    label = "%s (%s)" % (name, key) if name and name != key else (key or "")
+    label = label.replace("/", "-").replace("\\", "-").replace('"', "")
+    # %, # and & are always shortcut markers; _ is one only at the start of the label or after whitespace.
+    label = re.sub(r"[%#&]", "", label)
+    label = re.sub(r"(^|(?<=\s))_", "", label)
+    return re.sub(r"\s+", " ", label).strip()
+
+
+def _cs_string(value):
+    return '"%s"' % value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def render_build_menu(plan):
+    key = plan["template"]["key"]
+    label = _menu_label(plan["template"].get("name"), key)
+    return (_AUTOGEN % "per-template Unity menu item (Editor only). Tool-owned: rewritten by every generate run.") + """using UnityEditor;
+
+namespace Kinoa.InApps.Editor
+{
+    public static class KinoaInApp%sBuildMenu
+    {
+        public const string MenuPath = KinoaInAppPrefabBuilder.TemplateMenuRoot + %s;
+        public const string PlanPath = %s;
+
+        [MenuItem(MenuPath)]
+        public static void Build() => KinoaInAppPrefabBuilder.BuildPlanMenu(PlanPath);
+
+        [MenuItem(MenuPath, true)]
+        private static bool CanBuild() => System.IO.File.Exists(PlanPath);   // greyed out when the plan was removed
+    }
+}
+""" % (pascal(key), _cs_string(label), _cs_string(plan["paths"]["plan_path"]))
+
+
 def generate_code(plan, options=None):
     options = options or {}
     out_dir = plan["paths"]["out_dir"].rstrip("/")
@@ -1826,7 +2841,12 @@ def generate_code(plan, options=None):
     files = {
         "%s/Shared/KinoaInAppHooks.cs" % out_dir: render_hooks(options),
         "%s/Shared/KinoaInAppItemView.cs" % out_dir: render_item_view(text_system),
+        "%s/Shared/KinoaInAppFeatureHooks.cs" % out_dir: render_feature_hooks(options),
+        "%s/Shared/KinoaInAppMilestoneStepView.cs" % out_dir: render_milestone_step_view(text_system),
+        "%s/Shared/KinoaInAppMissionRowView.cs" % out_dir: render_mission_row_view(text_system),
+        "%s/Shared/KinoaInAppTabView.cs" % out_dir: render_tab_view(text_system),
         "%s/Editor/KinoaInAppPrefabBuilder.cs" % out_dir: BUILDER_CS,
+        "%s/Editor/Templates/KinoaInApp%sBuildMenu.cs" % (out_dir, pascal(plan["template"]["key"])): render_build_menu(plan),
     }
     files[plan["paths"]["view_path"]] = render_view(plan, options)
     files[plan["paths"]["plan_path"]] = json.dumps(plan, indent=2, ensure_ascii=False) + "\n"
@@ -1842,7 +2862,10 @@ def _cs_type(field_type):
 
 def _fields_block(plan):
     groups = [("Frame", ("dimmer", "panel")), ("Images", ("image",)), ("Texts", ("text",)),
-              ("Buttons", ("button", "button_label")), ("Client-rendered zones", ("zone", "strike", "item_template", "fill", "markers"))]
+              ("Buttons", ("button", "button_label")), ("Client-rendered zones", ("zone", "strike", "item_template", "fill"))]
+    if plan["template"]["feature_type"] == "mission":
+        # milestone views keep their fields ungrouped (as they always were); mission views group theirs
+        groups.append(("Missions", ("tab_template", "scroll", "scroll_content", "mission_row_template", "milestone_step")))
     emitted, lines = set(), []
     for header, bindings in groups:
         block = []
@@ -1863,7 +2886,9 @@ def _fields_block(plan):
 
 def _bind_calls(plan):
     t = plan["template"]
-    by_key = {(n["bucket"], n["key"]): n for n in plan["nodes"] if n.get("key") and n["binding"] in ("image", "text", "button")}
+    # Feature-action buttons (missions D2) are bound by the feature code, never routed through ApplyButton/ClickConfig.
+    by_key = {(n["bucket"], n["key"]): n for n in plan["nodes"]
+              if n.get("key") and n["binding"] in ("image", "text", "button") and not n.get("feature_action")}
     texts = ['            ApplyText(%s, "%s", canBeHidden: %s);' % (by_key[("texts", s["key"])]["field"], s["key"], "true" if s["can_be_hidden"] else "false")
              for s in t["texts"] if ("texts", s["key"]) in by_key]
     images = ['            ApplyImage(%s, "%s", canBeHidden: %s);' % (by_key[("images", s["key"])]["field"], s["key"], "true" if s["can_be_hidden"] else "false")
@@ -1904,11 +2929,13 @@ def render_view(plan, options):
               "using Kinoa.Data.Messaging.InApp.Templates.Custom;", "using Kinoa.Data.ResourceManagement;"]
     if ftype == "milestone":
         usings += ["using Kinoa.Data.Messaging.InApp.Features;", "using Kinoa.Data.Messaging.InApp.Features.Milestones;"]
-    if ftype == "mission":
+    mission = ftype == "mission"
+    if mission:
+        usings.insert(2, "using System.Linq;")
         usings += ["using Kinoa.Data.Messaging.InApp.Features.Missions;"]
     if facade:
         usings.append("using %s;" % facade_ns)
-    usings += ["using UnityEngine;", "using UnityEngine.UI;", _text_alias(plan["ui"]["text_system"])]
+    usings += ["using UnityEngine;"] + (["using UnityEngine.Events;"] if mission else []) + ["using UnityEngine.UI;", _text_alias(plan["ui"]["text_system"])]
 
     texts, images, buttons, toggles = _bind_calls(plan)
     zone_calls = []
@@ -1941,12 +2968,12 @@ def render_view(plan, options):
         public event Action<%(cls)s> Closed;
         /// <summary>Raised on every button click, before routing — for analytics or custom handling.</summary>
         public event Action<%(cls)s, string, InAppClickConfiguration> ButtonClicked;
-
+%(mission_event)s
         private readonly List<GameObject> _spawned = new List<GameObject>();
         private bool _impressionSent;
         private bool _timerActive;
         private bool _closed;
-
+%(mission_fields)s
         // ------------------------------------------------------------------ public API
 
         /// <summary>Fills every slot from the message. Returns false (and logs) when the message is not this template.</summary>
@@ -1963,7 +2990,7 @@ def render_view(plan, options):
                 Debug.LogError($"[{nameof(%(cls)s)}] expected template '{TemplateKey}', got '{data?.TemplateKey ?? message.Data?.GetType().Name}'");
                 return false;
             }
-            Message = message;
+%(bind_reset)s            Message = message;
             Data = data;
             ClearSpawned();
             BindTexts();
@@ -2179,7 +3206,10 @@ def render_view(plan, options):
             _spawned.Clear();
         }
 """ % {"cls": cls, "texts": texts, "images": images, "buttons": buttons, "toggles": toggles,
-       "zones": "\n".join(zone_calls), "feature_call": feature_call, "route": route, "todo": TODO}
+       "zones": "\n".join(zone_calls), "feature_call": feature_call, "route": route, "todo": TODO,
+       "mission_event": _MISSION_EVENT_CS % {"cls": cls} if mission else "",
+       "mission_fields": _mission_fields(plan) if mission else "",
+       "bind_reset": _MISSION_BIND_RESET_CS if mission else ""}
     body += render_zone_methods(plan)
     body += render_feature_methods(plan)
     body += "    }\n}\n"
@@ -2284,32 +3314,247 @@ _RESOLVE_ICON_CS = """
         }
 """
 
-_MILESTONE_CS = """
+_MILESTONE_HEAD_CS = """
         // ------------------------------------------------------------------ milestones feature
+
+        private bool _collecting;
+        private int _pendingFocusIndex = -1;   // a focus requested while the view was inactive (Bind before Show)
+        private int _pendingFocusCount;
 
         private void BindFeature()
         {
             var feature = Data.Feature as InAppMilestonesFeature;
-            if (milestoneBarRoot != null) milestoneBarRoot.SetActive(feature != null);
-            if (feature == null) return;
-            var steps = feature.Steps ?? new List<InAppMilestoneStep>();
-            var total = steps.Count > 0 ? steps[steps.Count - 1].Score : 0L;
-            if (milestoneFill != null) milestoneFill.fillAmount = total > 0 ? Mathf.Clamp01((float)(feature.Progress / total)) : 0f;
-            if (milestoneMarkerTemplate != null)
+            if (milestoneScroll != null) milestoneScroll.gameObject.SetActive(feature != null);
+%(feature_null)s            var steps = feature.Steps ?? new List<InAppMilestoneStep>();
+%(progress)s            var reached = new List<uint>();   // CollectMilestonesAsync takes 0-based step indexes
+            for (var i = 0; i < steps.Count; i++)
+                if (steps[i] != null && steps[i].Status == InAppMilestoneStatus.Reached) reached.Add((uint)i);
+            if (milestoneStepTemplate != null)
             {
+                // ClearSpawned's Destroy only lands at end of frame: hide the old steps now so the layout FocusStep measures holds only the new ones.
+                if (milestoneStepTemplate.transform.parent != null)
+                    foreach (Transform child in milestoneStepTemplate.transform.parent)
+                        if (child != milestoneStepTemplate.transform) child.gameObject.SetActive(false);
+                var previous = 0L;
                 for (var i = 0; i < steps.Count; i++)
                 {
                     var step = steps[i];
-                    var index = (uint)i;   // CollectMilestonesAsync takes 0-based step indexes
-                    var item = Spawn(milestoneMarkerTemplate);
-                    item.SetLabel(step.Score.ToString());
-                    item.SetValue(step.Status.ToString());
-                    item.SetFill(step.Status == InAppMilestoneStatus.Closed ? 0f : 1f);
-                    item.SetButton(step.Status == InAppMilestoneStatus.Reached, () => _ = CollectMilestoneAsync(item, index));
+                    if (step == null) continue;
+                    var index = (uint)i;
+                    var item = SpawnStep(milestoneStepTemplate);
+                    item.SetScore(step.Score.ToString());
+                    var resources = step.Button?.Resources;
+                    var hasReward = resources != null && resources.Count > 0;
+                    item.SetReward(hasReward ? ResolveIcon(resources[0].ResourceKey) : null,
+                        hasReward ? (resources.Count == 1 ? resources[0].Amount.ToString() : $"x{resources.Count}") : null);
+                    item.SetProgress(StepProgress(feature.Progress, previous, step.Score));
+                    item.SetStatus(step.Status);
+%(step_collect)s
+                    previous = step.Score;
                 }
             }
-            ApplyButtonSlot(milestoneMainButton, milestoneMainButtonLabel, "milestone_main", feature.ActiveProgressButton, canBeHidden: true);
+%(after_steps)s%(collect_all)s
+            var focus = steps.FindIndex(s => s != null && s.Status == InAppMilestoneStatus.Reached);
+            if (focus < 0) focus = steps.FindIndex(s => s != null && s.Status == InAppMilestoneStatus.Closed);
+            if (focus < 0) focus = steps.Count - 1;
+            FocusStep(focus, steps.Count);
             BindGrandPrize(steps);
+        }
+"""
+
+_MILESTONE_PER_STEP_COLLECT_CS = """                    item.SetCollect(step.Status != InAppMilestoneStatus.Collected, step.Status == InAppMilestoneStatus.Reached, StepLabel(step.Button),
+                        () => OnFeatureButtonClicked("milestone_step_" + index, step.Button, new List<uint> { index }));"""
+
+_MILESTONE_PER_STEP_AFTER_CS = """            ApplyFeatureButton(milestoneMainButton, milestoneMainButtonLabel, feature.ActiveProgressButton, "milestone_main",
+                FeatureIndexes(feature.ActiveProgressButton, steps, reached), canBeHidden: true);
+"""
+
+_MILESTONE_SINGLE_COLLECT_CS = """                    item.SetCollect(false, false, null, null);   // single CTA: the ready step's button goes onto %(button)s"""
+
+_MILESTONE_SINGLE_AFTER_CS = """            BindSingleCta(feature, steps, reached);
+"""
+
+_MILESTONE_SINGLE_CTA_CS = """
+        private void BindSingleCta(InAppMilestonesFeature feature, List<InAppMilestoneStep> steps, List<uint> reached)
+        {
+            if (reached.Count > 0)
+                ApplyFeatureButton(%(button)s, %(label)s, steps[(int)reached[0]].Button, "milestone_step_" + reached[0], new List<uint> { reached[0] }, canBeHidden: false);
+            else if (feature.ActiveProgressButton != null)
+                ApplyFeatureButton(%(button)s, %(label)s, feature.ActiveProgressButton, "milestone_main", new List<uint>(), canBeHidden: false);
+%(idle)s        }
+"""
+
+_MILESTONE_COLLECT_ALL_CS = """            InAppCustomButton collectAllSlot = null;
+            Data.Buttons?.TryGetValue("%(key)s", out collectAllSlot);
+            var collectAllIndexes = FeatureIndexes(collectAllSlot, steps, reached);
+            ApplyFeatureButton(%(button)s, %(label)s, collectAllSlot, "%(key)s", collectAllIndexes, canBeHidden: %(hidden)s);
+            if (%(button)s != null) %(button)s.interactable = collectAllSlot != null && collectAllIndexes.Count > 0;
+"""
+
+_MILESTONE_TAIL_CS = """
+        private KinoaInAppMilestoneStepView SpawnStep(KinoaInAppMilestoneStepView template)
+        {
+            var item = Instantiate(template, template.transform.parent);
+            item.gameObject.SetActive(true);
+            _spawned.Add(item.gameObject);
+            return item;
+        }
+
+        private static float StepProgress(decimal progress, long previous, long score)
+        {
+            if (score > previous) return Mathf.Clamp01((float)((progress - previous) / (score - previous)));
+            return progress >= score ? 1f : 0f;
+        }
+
+        private string StepLabel(InAppCustomButton button)
+        {
+            var label = button == null ? null : ResolveButtonLabel(button);
+            return string.IsNullOrEmpty(label) ? "Collect" : label;
+        }
+
+        private void FocusStep(int index, int count)
+        {
+            _pendingFocusIndex = -1;   // the latest Bind wins over an older pending focus
+            if (milestoneScroll == null || count == 0) return;
+            if (!isActiveAndEnabled)
+            {
+                // an inactive hierarchy is not laid out - apply the focus once the view is shown (OnEnable)
+                _pendingFocusIndex = index;
+                _pendingFocusCount = count;
+                return;
+            }
+            Canvas.ForceUpdateCanvases();
+            if (milestoneContent != null) LayoutRebuilder.ForceRebuildLayoutImmediate(milestoneContent);
+            milestoneScroll.horizontalNormalizedPosition = count > 1 ? (float)index / (count - 1) : 0f;
+        }
+
+        private void OnEnable()
+        {
+            if (_pendingFocusIndex < 0) return;
+            StartCoroutine(ApplyPendingFocusNextFrame());
+        }
+
+        private System.Collections.IEnumerator ApplyPendingFocusNextFrame()
+        {
+            yield return null;   // let the just-activated layout group and content size fitter settle first
+            if (_pendingFocusIndex >= 0) FocusStep(_pendingFocusIndex, _pendingFocusCount);
+        }
+
+        private void ApplyFeatureButton(Button button, KinoaText label, InAppCustomButton slot, string clickKey, List<uint> indexes, bool canBeHidden)
+        {
+            ApplyButtonSlot(button, label, clickKey, slot, canBeHidden);
+            if (button == null) return;
+            if (slot == null)
+            {
+                if (!canBeHidden)
+                {
+                    button.onClick.RemoveAllListeners();   // a kept-visible button with no slot this bind: drop the old bind's action
+                    button.interactable = false;
+                }
+                return;
+            }
+            button.interactable = true;
+            if (indexes.Count > 0 && label != null && string.IsNullOrEmpty(label.text)) label.text = StepLabel(slot);   // a collecting CTA never shows blank
+            button.onClick.RemoveAllListeners();
+            button.onClick.AddListener(() => OnFeatureButtonClicked(clickKey, slot, indexes));
+        }
+
+        private void OnFeatureButtonClicked(string clickKey, InAppCustomButton slot, List<uint> indexes)
+        {
+            if (_collecting) return;
+            Kinoa.GameEvents.SendInAppClickEvent(new InAppClickEventData(Message));
+            ButtonClicked?.Invoke(this, clickKey, slot?.ClickConfig);
+            var config = slot?.ClickConfig;
+            if (config is InAppCloseClickConfiguration)
+            {
+                Close();
+                return;
+            }
+            if (IsFreeClick(config))
+            {
+                if (indexes.Count > 0) _ = CollectStepsAsync(indexes);
+                return;
+            }
+            _ = RunActionThenCollectAsync(slot, indexes);
+        }
+
+        private static bool IsFreeClick(InAppClickConfiguration config) =>
+            config == null || config is InAppCollectResourceClickConfiguration || config is InAppPromiseRewardsClickConfiguration;
+
+        // The steps a feature button (main / collect-all) collects depend on its own click config. A free one takes only the
+        // reached steps whose own CTA is free too - a paid / ad / link step still needs its own action. A paid / ad / link one
+        // takes every reached step: its action runs first (RunButtonAction) and gates them all. Close never collects.
+        private static List<uint> FeatureIndexes(InAppCustomButton slot, List<InAppMilestoneStep> steps, List<uint> reached)
+        {
+            if (!IsFreeClick(slot?.ClickConfig)) return reached;
+            var free = new List<uint>();
+            foreach (var index in reached)
+                if (IsFreeClick(steps[(int)index]?.Button?.ClickConfig)) free.Add(index);
+            return free;
+        }
+
+        // Paid / ad / link actions (billing, soft_billing, show_ad, deep_link, web_link, ...) run through the game's own
+        // handler; the step is collected only once that handler reports success. No handler - no collect.
+        private async Task RunActionThenCollectAsync(InAppCustomButton slot, List<uint> indexes)
+        {
+            if (KinoaInAppFeatureHooks.RunButtonAction == null)
+            {
+                KinoaInAppFeatureHooks.WarnMissing(nameof(KinoaInAppFeatureHooks.RunButtonAction));
+                return;
+            }
+            bool done;
+            _collecting = true;   // one action at a time: a double tap must not start a second purchase
+            try { done = await KinoaInAppFeatureHooks.RunButtonAction(Message, slot); }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[{GetType().Name}] milestone button action failed: {e.Message}");
+                return;
+            }
+            finally { _collecting = false; }
+            if (this == null) return;
+            if (done && indexes.Count > 0) await CollectStepsAsync(indexes);
+        }
+
+        private async Task CollectStepsAsync(List<uint> indexes)
+        {
+            _collecting = true;
+            try
+            {
+                var steps = (Data.Feature as InAppMilestonesFeature)?.Steps;   // read before the call: a rebind replaces Data
+                var response = await Kinoa.Messaging.CollectMilestonesAsync(Message, indexes);
+                if (this == null) return;
+                if (response == null || !response.IsSuccessful() || response.Data == null)
+                {
+                    Debug.LogWarning($"[{GetType().Name}] milestone collect failed for steps {string.Join(",", indexes)}: {response?.Error?.Message ?? "no response"}");
+                    Bind(Message);
+                    return;
+                }
+                if (response.Data.Collected != null)
+                {
+                    foreach (var index in response.Data.Collected)
+                    {
+                        if (steps == null || index >= steps.Count || steps[(int)index]?.Button == null) continue;
+                        // %(todo)s apply steps[(int)index].Button.Resources to the player's economy here (same place as KinoaUiService.GrantRewards).
+                    }
+                }
+                if (response.Data.InApp != null)
+                {
+                    Bind(response.Data.InApp);   // the instance was reset - the server sent a fresh message
+                    return;
+                }
+                if (response.Data.Collected != null && response.Data.Collected.Count > 0)
+                    Message.SetMilestonesStatusAsCollected(response.Data.Collected);
+                Bind(Message);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[{GetType().Name}] milestone collect failed for steps {string.Join(",", indexes)}: {e.Message}");
+                if (this != null) Bind(Message);
+            }
+            finally
+            {
+                _collecting = false;
+            }
         }
 
         private void BindGrandPrize(List<InAppMilestoneStep> steps)
@@ -2322,32 +3567,118 @@ _MILESTONE_CS = """
             if (grandPrizeImage != null) grandPrizeImage.sprite = ResolveIcon(prize[0].ResourceKey);
             if (grandPrizeText != null) grandPrizeText.text = prize.Count == 1 ? prize[0].Amount.ToString() : $"x{prize.Count}";
         }
+"""
 
-        private async Task CollectMilestoneAsync(KinoaInAppItemView marker, uint index)
-        {
-            marker.SetButton(false, null);
-            var response = await Kinoa.Messaging.CollectMilestonesAsync(Message, new List<uint> { index });
-            if (this == null) return;
-            if (response == null || !response.IsSuccessful() || response.Data == null)
+
+def _milestone_region_lines(plan):
+    """(feature == null branch, progress lines) of BindFeature for the bar track / score area nodes. A plan without
+    them keeps the plain early return and no progress lines, so its view is byte-identical to before the regions."""
+    names = {n["name"] for n in plan["nodes"]}
+    track, fill = "MilestoneTrack" in names, "MilestoneTrackFill" in names
+    score, text = "MilestoneScoreArea" in names, "MilestoneProgressText" in names
+    if not (track or score):
+        return "            if (feature == null) return;\n", ""
+    hide = ["            if (feature == null)", "            {"]
+    if track:
+        hide.append("                if (milestoneTrack != null) milestoneTrack.gameObject.SetActive(false);")
+    if score:
+        hide.append("                if (milestoneScoreRoot != null) milestoneScoreRoot.SetActive(false);")
+    hide += ["                return;", "            }"]
+    lines = []
+    if fill or text:
+        lines.append("            var total = steps.Count > 0 && steps[steps.Count - 1] != null ? steps[steps.Count - 1].Score : 0L;")
+    if track:
+        lines.append("            if (milestoneTrack != null) milestoneTrack.gameObject.SetActive(true);")
+    if fill:
+        lines.append("            if (milestoneTrackFill != null) milestoneTrackFill.fillAmount = total > 0 ? "
+                     "Mathf.Clamp01((float)(feature.Progress / total)) : 0f;")
+    if score:
+        lines.append("            if (milestoneScoreRoot != null) milestoneScoreRoot.SetActive(true);")
+    if text:
+        lines.append('            if (milestoneProgressText != null) milestoneProgressText.text = $"{feature.Progress:0}/{total}";')
+    return "\n".join(hide) + "\n", "".join(line + "\n" for line in lines)
+
+
+def render_milestone_methods(plan):
+    """The milestone section of the view: a horizontal ladder of steps, one CTA mode, optional collect-all."""
+    ms = plan.get("milestone")
+    if not ms or not any(n["name"] == "MilestoneScroll" for n in plan["nodes"]):
+        raise PlanOutdatedError("the milestone plan has no milestone block / MilestoneScroll node")
+    single = ms.get("cta_mode") == "single" and ms.get("single_cta")
+    extra = ""
+    if single:
+        cta = ms["single_cta"]
+        step_collect = _MILESTONE_SINGLE_COLLECT_CS % {"button": cta["button_field"]}
+        after_steps = _MILESTONE_SINGLE_AFTER_CS
+        if cta.get("key"):
+            idle = "            // otherwise the template slot keeps the binding BindButtons gave it\n"
+        else:
+            idle = "            else if (%(b)s != null)\n                %(b)s.gameObject.SetActive(false);\n" % {"b": cta["button_field"]}
+        extra = _MILESTONE_SINGLE_CTA_CS % {"button": cta["button_field"], "label": cta["label_field"], "idle": idle}
+    else:
+        step_collect = _MILESTONE_PER_STEP_COLLECT_CS
+        after_steps = _MILESTONE_PER_STEP_AFTER_CS
+    collect_all = ""
+    ca = ms.get("collect_all")
+    if ca:
+        collect_all = _MILESTONE_COLLECT_ALL_CS % {"key": ca["key"], "button": ca["button_field"], "label": ca["label_field"],
+                                                   "hidden": "true" if ca.get("can_be_hidden") else "false"}
+    feature_null, progress = _milestone_region_lines(plan)
+    head = _MILESTONE_HEAD_CS % {"step_collect": step_collect, "after_steps": after_steps, "collect_all": collect_all,
+                                 "feature_null": feature_null, "progress": progress}
+    return head + extra + _MILESTONE_TAIL_CS % {"todo": TODO}
+
+
+_MISSION_EVENT_CS = """        /// <summary>Raised when a mission card's Go (ProgressionCta) is clicked: per-row CTAs are not template buttons, so the facade cannot route them; the int is the mission's setNumber, as ReachMissionsProgress takes it.</summary>
+        public event Action<%(cls)s, int, InAppMission, InAppClickConfiguration> MissionCtaClicked;
+"""
+
+_MISSION_BIND_RESET_CS = """            if (message.MessageId != _boundMessageId)
             {
-                Debug.LogWarning($"[{GetType().Name}] milestone {index} collect failed: {response?.Error?.Message ?? "no response"}");
-                marker.SetButton(true, () => _ = CollectMilestoneAsync(marker, index));
-                return;
+                // another in-app: the rows dismissed and the bar steps collected belong to the previous one
+                _boundMessageId = message.MessageId;
+                _dismissedRows.Clear();
+                _collectedBarRows.Clear();
             }
-            if (response.Data.Collected != null && response.Data.Collected.Contains(index))
-            {
-                // %(todo)s apply the collected step's Button.Resources to the player's economy here (same place as KinoaUiService.GrantRewards).
-            }
-            if (response.Data.InApp != null)
-            {
-                Bind(response.Data.InApp);   // the instance was reset — the server sent a fresh message
-                return;
-            }
-            if (response.Data.Collected != null && response.Data.Collected.Count > 0)
-                Message.SetMilestonesStatusAsCollected(response.Data.Collected);
-            Bind(Message);
-        }
-""" % {"todo": TODO}
+"""
+
+
+def _mission_has_bar(plan):
+    """The ProgressBarState ladder (MissionBarScroll) is in the plan: the template shows its progress bar."""
+    return any(n["name"] == "MissionBarScroll" for n in plan["nodes"])
+
+
+def _mission_plan_current(plan):
+    """A mission plan from before the tabs / cards UI (the release's flat MissionList zone + item-view rows), or from
+    before the ladder (MissionBar + markers), has no view to generate: its nodes lack the fields the view binds."""
+    names = {n["name"]: n for n in plan["nodes"]}
+    if (names.get("MissionList") or {}).get("binding") != "scroll" or "MissionTabs" not in names:
+        return False
+    return "MissionBar" not in names   # the bar is the MissionBarScroll ladder now
+
+
+def _mission_action_nodes(plan):
+    """Feature-action button nodes (D2) the view wires; collect_all_milestones only alongside a bar."""
+    has_bar = _mission_has_bar(plan)
+    return [n for n in plan["nodes"] if n.get("feature_action") in MISSION_ACTIONS and n.get("field")
+            and (has_bar or n["feature_action"] != "collect_all_milestones")]
+
+
+def _mission_fields(plan):
+    lines = ["        private int? _selectedSetNumber;",
+             "        private string _boundMessageId;",
+             "        private InAppMissionSetProgress _shownSet;",
+             "        private bool _missionBusy;",
+             "        private readonly List<GameObject> _missionTabs = new List<GameObject>();",
+             "        private readonly List<GameObject> _missionRows = new List<GameObject>();"]
+    if _mission_has_bar(plan):
+        lines += ["        private readonly List<GameObject> _missionBarSteps = new List<GameObject>();",
+                  "        private int _pendingBarFocusIndex = -1;   // a ladder focus requested while the view was inactive (Bind before Show)",
+                  "        private int _pendingBarFocusCount;"]
+    lines += ["        private readonly HashSet<(int setNumber, int rowNumber)> _dismissedRows = new HashSet<(int setNumber, int rowNumber)>();",
+              "        private readonly HashSet<int> _collectedBarRows = new HashSet<int>();"]
+    return "\n".join(lines) + "\n"
+
 
 _MISSION_CS = """
         // ------------------------------------------------------------------ missions feature
@@ -2355,49 +3686,467 @@ _MISSION_CS = """
         private void BindFeature()
         {
             var feature = Data.Feature as InAppMissionsFeature;
-            if (missionListRoot != null) missionListRoot.gameObject.SetActive(feature != null);
-            if (feature == null) return;
-            var set = feature.MissionState?.ActiveSetProgress;
-            var missions = set?.ActiveMissions ?? new List<InAppMission>();
+            var state = feature?.MissionState;
+            if (missionTabsRoot != null) missionTabsRoot.gameObject.SetActive(state != null);
+            if (missionScroll != null) missionScroll.gameObject.SetActive(state != null);
+            ClearMission(_missionTabs);
+%(bar_call)s            if (state == null)
+            {
+                ShowMissionSet(null);
+                return;
+            }
+            // D4: the selected set stays selected after a rebind while it still has rows; otherwise the active set,
+            // then the previous set, whichever has rows; the (empty) active set only when no set has any.
+            var target = (_selectedSetNumber == state.PreviousSetProgress?.SetNumber && HasRows(state.PreviousSetProgress) ? state.PreviousSetProgress : null)
+                         ?? (_selectedSetNumber == state.ActiveSetProgress?.SetNumber && HasRows(state.ActiveSetProgress) ? state.ActiveSetProgress : null)
+                         ?? (HasRows(state.ActiveSetProgress) ? state.ActiveSetProgress : null)
+                         ?? (HasRows(state.PreviousSetProgress) ? state.PreviousSetProgress : null)
+                         ?? state.ActiveSetProgress;
+            foreach (var set in new[] { state.PreviousSetProgress, state.ActiveSetProgress })
+            {
+                if (missionTabTemplate == null || !HasRows(set)) continue;
+                var tab = SpawnMission(missionTabTemplate, _missionTabs);
+                var label = set == state.PreviousSetProgress ? $"Set {set.SetNumber} (prev)" : $"Set {set.SetNumber}";
+                tab.Setup(set.SetNumber, label, set == target, () => OnMissionTabClicked(set));
+                tab.SetInteractable(!_missionBusy);
+            }
+            ShowMissionSet(target);
+        }
+
+        private bool HasRows(InAppMissionSetProgress set) => VisibleMissions(set).Count > 0;
+
+        private List<InAppMission> VisibleMissions(InAppMissionSetProgress set)
+        {
+            if (set?.ActiveMissions == null) return new List<InAppMission>();
+            return set.ActiveMissions.Where(m => m != null && !_dismissedRows.Contains((set.SetNumber, m.RowNumber))).ToList();
+        }
+
+        private void OnMissionTabClicked(InAppMissionSetProgress set)
+        {
+            if (_missionBusy || set == null) return;
+            ShowMissionSet(set);
+        }
+
+        private void ShowMissionSet(InAppMissionSetProgress set)
+        {
+            var switched = _selectedSetNumber != set?.SetNumber;
+            _selectedSetNumber = set?.SetNumber;
+            _shownSet = set;
+            foreach (var go in _missionTabs)
+                if (go != null && go.TryGetComponent<KinoaInAppTabView>(out var tab)) tab.SetSelected(set != null && tab.SetNumber == set.SetNumber);
+            ClearMission(_missionRows);
+            // D5: Reached, then Active, then Collected, then anything else; within a group by placement.
+            var missions = VisibleMissions(set)
+                .OrderBy(m => m.Status switch
+                {
+                    InAppMissionStatus.Reached => 0,
+                    InAppMissionStatus.Active => 1,
+                    InAppMissionStatus.Collected => 2,
+                    _ => 3
+                })
+                .ThenBy(m => m.PlacementNumber)
+                .ToList();
             if (missionRowTemplate != null && set != null)
             {
+                var setNumber = set.SetNumber;
                 foreach (var mission in missions)
                 {
-                    var row = Spawn(missionRowTemplate);
-                    row.SetLabel(mission.MissionText);
-                    row.SetValue($"{mission.CurrentScore}/{mission.GoalScore}");
-                    row.SetFill(mission.GoalScore > 0 ? (float)(mission.CurrentScore / mission.GoalScore) : 0f);
+                    var row = SpawnMission(missionRowTemplate, _missionRows);
+                    row.SetPlacement(mission.PlacementNumber);
+                    row.SetTitle(mission.MissionText);
+                    row.SetSubMission(mission.SubMissionNumber);
+                    row.SetStatus(mission.Status.ToString());
+                    row.SetProgress(mission.CurrentScore, mission.GoalScore);
+                    row.ClearRewards();
+                    if (mission.ProcessedResources != null)
+                        foreach (var resource in mission.ProcessedResources)
+                            if (resource != null) row.AddReward(ResolveIcon(resource.ResourceKey), resource.Amount.ToString());
                     var captured = mission;
-                    row.SetButton(mission.Status == InAppMissionStatus.Reached, () => _ = CollectMissionAsync(row, set.SetNumber, captured));
+                    if (mission.Status == InAppMissionStatus.Reached && mission.CompletionCta != null)
+                        row.SetAction("Collect", () => _ = CollectMissionAsync(row, setNumber, captured));
+                    else if (mission.Status == InAppMissionStatus.Active && mission.ProgressionCta != null)
+                        row.SetAction("Go", () => OnMissionProgressionClicked(setNumber, captured));
+                    else
+                        row.SetAction(null, null);
+                    row.SetDismiss(mission.Status == InAppMissionStatus.Reached || mission.Status == InAppMissionStatus.Collected,
+                                   () => _ = DismissMissionAsync(setNumber, captured));
+                    row.SetInteractable(!_missionBusy);
                 }
             }
-%(bar)s        }
+            if (switched && missionScroll != null) missionScroll.verticalNormalizedPosition = 1f;
+%(set_actions)s        }
 
-        private async Task CollectMissionAsync(KinoaInAppItemView row, int setNumber, InAppMission mission)
+        private async Task CollectMissionAsync(KinoaInAppMissionRowView row, int setNumber, InAppMission mission)
         {
-            row.SetButton(false, null);
+            if (_missionBusy) return;
+            SetMissionBusy(true);
             var response = await Kinoa.Messaging.CollectMissionsProgressAsync(Message, setNumber, new List<int> { mission.RowNumber });
             if (this == null) return;
             if (response == null || !response.IsSuccessful() || response.Data == null)
             {
                 Debug.LogWarning($"[{GetType().Name}] mission row {mission.RowNumber} collect failed: {response?.Error?.Message ?? "no response"}");
-                row.SetButton(true, () => _ = CollectMissionAsync(row, setNumber, mission));
+                SetMissionBusy(false);
                 return;
             }
-            // %(todo)s apply mission.ProcessedResources to the player's economy here (same place as KinoaUiService.GrantRewards).
-            Bind(response.Data);
+            // %(todo)s grant only if response.Data shows this row no longer Reached (Collected or removed), as the SDK sample's GetCollectedRows does: then route mission.CompletionCta and apply mission.ProcessedResources to the player's economy here (same place as KinoaUiService.GrantRewards).
+            _missionBusy = false;
+            if (!Bind(response.Data)) SetMissionBusy(false);
+        }
+
+        private void OnMissionProgressionClicked(int setNumber, InAppMission mission)
+        {
+            if (_missionBusy) return;
+            MissionCtaClicked?.Invoke(this, setNumber, mission, mission.ProgressionCta);
+            // %(todo)s route mission.ProgressionCta here or in a MissionCtaClicked subscriber (per-row CTAs are not template buttons, so KinoaUiService cannot route them): deep_link / web_link → the game's router; show_ad → after the ad completes, var response = await Kinoa.Messaging.ReachMissionsProgress(Message, setNumber, new List<int> { mission.RowNumber }) and, on success, Bind(response.Data); close → Close().
+            Debug.LogWarning($"[{GetType().Name}] mission row {mission.RowNumber} CTA ({mission.ProgressionCta?.GetType().Name}) is not routed — see TODO(kinoa-prefab)");
+        }
+
+        private async Task DismissMissionAsync(int setNumber, InAppMission mission)
+        {
+            if (_missionBusy) return;
+            SetMissionBusy(true);
+            var response = await Kinoa.Messaging.DeleteMissionsProgress(Message, setNumber, new List<int> { mission.RowNumber });
+            if (this == null) return;
+            if (response == null || !response.IsSuccessful())
+            {
+                Debug.LogWarning($"[{GetType().Name}] mission row {mission.RowNumber} dismiss failed: {response?.Error?.Message ?? "no response"}");
+                SetMissionBusy(false);
+                return;
+            }
+            _dismissedRows.Add((setNumber, mission.RowNumber));
+            SetMissionBusy(false);   // re-renders without the row; a set left empty loses its tab and D4 picks a set with rows
+        }
+
+        private void SetMissionBusy(bool busy)
+        {
+            _missionBusy = busy;
+            if (!busy)
+            {
+                BindFeature();   // re-renders every mission control from the current message, interactable again
+                return;
+            }
+            foreach (var go in _missionTabs)
+                if (go != null && go.TryGetComponent<KinoaInAppTabView>(out var tab)) tab.SetInteractable(false);
+            foreach (var go in _missionRows)
+                if (go != null && go.TryGetComponent<KinoaInAppMissionRowView>(out var row)) row.SetInteractable(false);
+%(busy_extra)s        }
+
+        private T SpawnMission<T>(T template, List<GameObject> into) where T : Component
+        {
+            var item = Instantiate(template, template.transform.parent);
+            item.gameObject.SetActive(true);
+            into.Add(item.gameObject);
+            return item;
+        }
+
+        private static void ClearMission(List<GameObject> spawned)
+        {
+            foreach (var go in spawned)
+            {
+                if (go == null) continue;
+                go.SetActive(false);   // leaves the layout now; Destroy only happens at the end of the frame
+                Destroy(go);
+            }
+            spawned.Clear();
         }
 """
 
-_MISSION_BAR_CS = """            var bar = feature.MissionState?.ProgressBarState;
-            var hasBar = bar?.Milestones != null && bar.Milestones.Count > 0;
-            if (missionBarRoot != null) missionBarRoot.SetActive(hasBar);
-            if (missionBarFill != null && hasBar)
+_MISSION_ACTION_BUTTON_CS = """
+        private void ApplyMissionActionButton(Button button, KinoaText label, string key, bool canBeHidden, bool show, bool interactable, Func<Task> action)
+        {
+            if (button == null) return;
+            InAppCustomButton slot = null;
+            Data.Buttons?.TryGetValue(key, out slot);
+            // D10 decides visibility; the slot gives label and background as ApplyButtonSlot does.
+            var visible = show && (slot != null || !canBeHidden);
+            button.gameObject.SetActive(visible);
+            if (!visible) return;
+            if (slot != null)
             {
-                var last = bar.Milestones[bar.Milestones.Count - 1].Score;
-                missionBarFill.fillAmount = last > 0 ? Mathf.Clamp01((float)(bar.TotalScore / last)) : 0f;
+                if (label != null) label.text = ResolveButtonLabel(slot);
+                if (slot.BackgroundImage != null && !string.IsNullOrEmpty(slot.BackgroundImage.Content))
+                    ApplyImageContent(button.GetComponent<Image>(), slot.BackgroundImage, canBeHidden: false);
             }
+            button.interactable = interactable;
+            button.onClick.RemoveAllListeners();
+            button.onClick.AddListener(() =>
+            {
+                if (_missionBusy) return;
+                // D2: in_app_click and ButtonClicked like any slot, then the mission call; never routed through ClickConfig.
+                Kinoa.GameEvents.SendInAppClickEvent(new InAppClickEventData(Message));
+                ButtonClicked?.Invoke(this, key, slot?.ClickConfig);
+                _ = action();
+            });
+        }
 """
+
+_MISSION_BAR_CS = """
+        // ------------------------------------------------------------------ missions progress bar (milestone ladder)
+
+        // ProgressBarState renders as the milestone ladder: one KinoaInAppMilestoneStepView per step, ordered by
+        // MilestoneNumber, each claimed through the milestone click resolver (ClaimMissionBarStepsAsync).
+        private void BindMissionBar(InAppMissionsProgress state)
+        {
+            ClearMission(_missionBarSteps);
+            var bar = state != null ? state.ProgressBarState : null;
+            var steps = bar?.Milestones == null || bar.Milestones.Count == 0
+                ? new List<InAppMissionsMilestoneStep>()
+                : bar.Milestones.Where(s => s != null).OrderBy(s => s.MilestoneNumber).ToList();
+            var hasBar = steps.Count > 0;
+            if (missionBarScroll != null) missionBarScroll.gameObject.SetActive(hasBar);
+            var setNumber = state?.ActiveSetProgress?.SetNumber;   // bar steps are claimed against the active set
+            var focus = -1;
+            var firstClosed = -1;
+            if (missionBarStepTemplate != null)
+            {
+                var previous = 0m;
+                for (var i = 0; i < steps.Count; i++)
+                {
+                    var step = steps[i];
+                    // CollectMissionsMilestonesProgress returns results, not a refreshed in-app: a step collected here
+                    // stays Reached in the message, so the locally collected rows are shown as Collected
+                    var status = _collectedBarRows.Contains(step.RowNumber) ? InAppMilestoneStatus.Collected : step.Status;
+                    if (status == InAppMilestoneStatus.Reached && focus < 0) focus = i;
+                    if (status == InAppMilestoneStatus.Closed && firstClosed < 0) firstClosed = i;
+                    var item = SpawnMission(missionBarStepTemplate, _missionBarSteps);
+                    item.SetScore(step.Score.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture));
+                    var resources = step.Button?.Resources;
+                    var hasReward = resources != null && resources.Count > 0 && resources[0] != null;
+                    item.SetReward(hasReward ? ResolveIcon(resources[0].ResourceKey) : null,
+                        hasReward ? (resources.Count == 1 ? resources[0].Amount.ToString() : $"x{resources.Count}") : null);
+                    item.SetProgress(MissionStepProgress(bar.TotalScore, previous, step.Score));
+                    item.SetStatus(status);
+                    var captured = step;
+                    var claimSet = setNumber ?? 0;
+                    item.SetCollect(status != InAppMilestoneStatus.Collected,
+                        status == InAppMilestoneStatus.Reached && setNumber.HasValue && !_missionBusy, StepLabel(step.Button),
+                        () => OnMissionBarStepClicked(claimSet, captured));
+                    previous = step.Score;
+                }
+            }
+%(bar_action)s            if (focus < 0) focus = firstClosed;
+            if (focus < 0) focus = steps.Count - 1;
+            FocusMissionBarStep(focus, steps.Count);
+        }
+
+        private static float MissionStepProgress(decimal total, decimal previous, decimal score)
+        {
+            if (score > previous) return Mathf.Clamp01((float)((total - previous) / (score - previous)));
+            return total >= score ? 1f : 0f;
+        }
+
+        private string StepLabel(InAppCustomButton button)
+        {
+            var label = button == null ? null : ResolveButtonLabel(button);
+            return string.IsNullOrEmpty(label) ? "Collect" : label;
+        }
+
+        private void FocusMissionBarStep(int index, int count)
+        {
+            _pendingBarFocusIndex = -1;   // the latest bind wins over an older pending focus
+            if (missionBarScroll == null || count == 0) return;
+            if (!isActiveAndEnabled)
+            {
+                // an inactive hierarchy is not laid out - apply the focus once the view is shown (OnEnable)
+                _pendingBarFocusIndex = index;
+                _pendingBarFocusCount = count;
+                return;
+            }
+            Canvas.ForceUpdateCanvases();
+            if (missionBarContent != null) LayoutRebuilder.ForceRebuildLayoutImmediate(missionBarContent);
+            missionBarScroll.horizontalNormalizedPosition = count > 1 ? (float)index / (count - 1) : 0f;
+        }
+
+        private void OnEnable()
+        {
+            if (_pendingBarFocusIndex < 0) return;
+            StartCoroutine(ApplyPendingBarFocusNextFrame());
+        }
+
+        private System.Collections.IEnumerator ApplyPendingBarFocusNextFrame()
+        {
+            yield return null;   // let the just-activated layout group and content size fitter settle first
+            if (_pendingBarFocusIndex >= 0) FocusMissionBarStep(_pendingBarFocusIndex, _pendingBarFocusCount);
+        }
+
+        private void OnMissionBarStepClicked(int setNumber, InAppMissionsMilestoneStep step)
+        {
+            if (_missionBusy) return;
+            Kinoa.GameEvents.SendInAppClickEvent(new InAppClickEventData(Message));
+            ButtonClicked?.Invoke(this, "mission_bar_step_" + step.MilestoneNumber, step.Button?.ClickConfig);
+            _ = ClaimMissionBarStepsAsync(step.Button, setNumber, new List<InAppMissionsMilestoneStep> { step });
+        }
+
+        // The milestone click resolver on a bar step's (or Collect all milestones') button: close closes, a free config
+        // collects, a paid / ad / link one runs the game's action first and collects only once it succeeded.
+        private async Task ClaimMissionBarStepsAsync(InAppCustomButton slot, int setNumber, List<InAppMissionsMilestoneStep> steps)
+        {
+            var config = slot?.ClickConfig;
+            if (config is InAppCloseClickConfiguration)
+            {
+                Close();
+                return;
+            }
+            if (IsFreeClick(config))
+            {
+                if (steps.Count > 0) await CollectMissionBarStepAsync(setNumber, steps);
+                return;
+            }
+            await RunBarActionThenCollectAsync(slot, setNumber, steps);
+        }
+
+        private static bool IsFreeClick(InAppClickConfiguration config) =>
+            config == null || config is InAppCollectResourceClickConfiguration || config is InAppPromiseRewardsClickConfiguration;
+
+        // Paid / ad / link actions (billing, soft_billing, show_ad, deep_link, web_link, ...) run through the game's own
+        // handler; the steps are collected only once that handler reports success. No handler - no collect.
+        private async Task RunBarActionThenCollectAsync(InAppCustomButton slot, int setNumber, List<InAppMissionsMilestoneStep> steps)
+        {
+            if (KinoaInAppFeatureHooks.RunButtonAction == null)
+            {
+                KinoaInAppFeatureHooks.WarnMissing(nameof(KinoaInAppFeatureHooks.RunButtonAction));
+                return;
+            }
+            if (_missionBusy) return;
+            SetMissionBusy(true);   // one action at a time: a double tap must not start a second purchase
+            bool done;
+            try { done = await KinoaInAppFeatureHooks.RunButtonAction(Message, slot); }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[{GetType().Name}] mission bar button action failed: {e.Message}");
+                done = false;
+            }
+            if (this == null) return;
+            if (!done || steps.Count == 0)
+            {
+                SetMissionBusy(false);
+                return;
+            }
+            _missionBusy = false;   // hand over to the collect call, which takes the busy state again
+            await CollectMissionBarStepAsync(setNumber, steps);
+        }
+
+        private async Task CollectMissionBarStepAsync(int setNumber, List<InAppMissionsMilestoneStep> steps)
+        {
+            if (_missionBusy || steps == null || steps.Count == 0) return;
+            SetMissionBusy(true);
+            var rows = steps.Select(s => s.RowNumber).ToList();
+            try
+            {
+                var response = await Kinoa.Messaging.CollectMissionsMilestonesProgress(Message, setNumber, rows);
+                if (this == null) return;
+                if (response == null || !response.IsSuccessful() || response.Data == null)
+                {
+                    Debug.LogWarning($"[{GetType().Name}] mission bar rows {string.Join(", ", rows)} collect failed: {response?.Error?.Message ?? "no response"}");
+                    SetMissionBusy(false);
+                    return;
+                }
+                foreach (var result in response.Data)
+                {
+                    if (result == null || result.Status != InAppMilestoneStatus.Collected) continue;
+                    _collectedBarRows.Add(result.RowNumber);   // the call returns results, not a refreshed in-app
+                    var step = steps.Find(s => s.RowNumber == result.RowNumber);   // read from the steps captured before the call
+                    if (step?.Button == null) continue;
+                    // %(todo)s apply step.Button.Resources to the player's economy here (same place as KinoaUiService.GrantRewards).
+                }
+                _missionBusy = false;
+                Bind(Message);
+            }
+            catch (Exception e)
+            {
+                // a throwing request must not leave every mission control disabled: warn and re-render from the message
+                Debug.LogWarning($"[{GetType().Name}] mission bar rows {string.Join(", ", rows)} collect failed: {e.Message}");
+                if (this != null) SetMissionBusy(false);
+            }
+        }
+"""
+
+_MISSION_COLLECT_ALL_CS = """
+        private async Task CollectAllMissionsAsync()
+        {
+            var set = _shownSet;
+            var reached = VisibleMissions(set).Where(m => m.Status == InAppMissionStatus.Reached).ToList();
+            if (_missionBusy || set == null || reached.Count == 0) return;
+            SetMissionBusy(true);
+            var response = await Kinoa.Messaging.CollectMissionsProgressAsync(Message, set.SetNumber, reached.Select(m => m.RowNumber).ToList());
+            if (this == null) return;
+            if (response == null || !response.IsSuccessful() || response.Data == null)
+            {
+                Debug.LogWarning($"[{GetType().Name}] collect all (set {set.SetNumber}) failed: {response?.Error?.Message ?? "no response"}");
+                SetMissionBusy(false);
+                return;
+            }
+            // %(todo)s grant only the rows in `reached` that response.Data shows no longer Reached (Collected or removed), as the SDK sample's GetCollectedRows does: for each, route mission.CompletionCta and apply mission.ProcessedResources to the player's economy here.
+            _missionBusy = false;
+            if (!Bind(response.Data)) SetMissionBusy(false);
+        }
+"""
+
+_MISSION_REACH_ALL_CS = """
+        private async Task ReachAllMissionsAsync()
+        {
+            var set = _shownSet;
+            var active = VisibleMissions(set).Where(m => m.Status == InAppMissionStatus.Active).ToList();
+            if (_missionBusy || set == null || active.Count == 0) return;
+            SetMissionBusy(true);
+            var response = await Kinoa.Messaging.ReachMissionsProgress(Message, set.SetNumber, active.Select(m => m.RowNumber).ToList());
+            if (this == null) return;
+            if (response == null || !response.IsSuccessful() || response.Data == null)
+            {
+                Debug.LogWarning($"[{GetType().Name}] reach all (set {set.SetNumber}) failed: {response?.Error?.Message ?? "no response"}");
+                SetMissionBusy(false);
+                return;
+            }
+            _missionBusy = false;
+            if (!Bind(response.Data)) SetMissionBusy(false);
+        }
+"""
+
+_MISSION_COLLECT_ALL_BAR_CS = """
+        private List<InAppMissionsMilestoneStep> ClaimableBarSteps(InAppMissionsProgress state)
+        {
+            var steps = state?.ProgressBarState?.Milestones;
+            if (steps == null) return new List<InAppMissionsMilestoneStep>();
+            return steps.Where(s => s != null && s.Status == InAppMilestoneStatus.Reached && !_collectedBarRows.Contains(s.RowNumber))
+                .OrderBy(s => s.MilestoneNumber).ToList();
+        }
+
+        // As the milestone collect-all: the steps it claims depend on its own click config. A free one takes only the
+        // claimable steps whose own CTA is free too - a paid / ad / link step still needs its own action. A paid / ad /
+        // link one takes every claimable step: its action runs first (RunButtonAction) and gates them all.
+        private List<InAppMissionsMilestoneStep> CollectAllBarSteps(InAppMissionsProgress state, InAppCustomButton slot)
+        {
+            var claimable = ClaimableBarSteps(state);
+            return IsFreeClick(slot?.ClickConfig) ? claimable.Where(s => IsFreeClick(s.Button?.ClickConfig)).ToList() : claimable;
+        }
+
+        private InAppCustomButton MissionSlot(string key)
+        {
+            InAppCustomButton slot = null;
+            Data?.Buttons?.TryGetValue(key, out slot);
+            return slot;
+        }
+
+        private async Task CollectAllMissionBarStepsAsync()
+        {
+            var state = (Data?.Feature as InAppMissionsFeature)?.MissionState;
+            var slot = MissionSlot("%(key)s");
+            var steps = CollectAllBarSteps(state, slot);
+            if (_missionBusy || state?.ActiveSetProgress == null) return;
+            await ClaimMissionBarStepsAsync(slot, state.ActiveSetProgress.SetNumber, steps);
+        }
+"""
+
+# (method block, where its ApplyMissionActionButton call goes, show expression, interactable expression)
+_MISSION_ACTION_PARTS = {
+    "collect_all": (_MISSION_COLLECT_ALL_CS, "set", "missions.Any(m => m.Status == InAppMissionStatus.Reached)",
+                    "!_missionBusy", "CollectAllMissionsAsync"),
+    "reach_all": (_MISSION_REACH_ALL_CS, "set", "missions.Any(m => m.Status == InAppMissionStatus.Active)",
+                  "!_missionBusy", "ReachAllMissionsAsync"),
+    "collect_all_milestones": (_MISSION_COLLECT_ALL_BAR_CS, "bar", "hasBar",
+                               '!_missionBusy && setNumber.HasValue && CollectAllBarSteps(state, MissionSlot("%(key)s")).Count > 0',
+                               "CollectAllMissionBarStepsAsync"),
+}
 
 
 def render_zone_methods(plan):
@@ -2409,19 +4158,48 @@ def render_zone_methods(plan):
         out += _PRICE_CS
     if "ResourceArea" in names:
         out += _RESOURCES_CS
-    if "ResourceArea" in names or "GrandPrizeArea" in names:
-        out += _RESOLVE_ICON_CS   # shared by the resource area and the milestone grand prize
+    if "ResourceArea" in names or "GrandPrizeArea" in names or plan["template"]["feature_type"] == "mission":
+        out += _RESOLVE_ICON_CS   # shared by the resource area, the milestone grand prize and the mission rewards
     return out
 
 
 def render_feature_methods(plan):
     ftype = plan["template"]["feature_type"]
     if ftype == "milestone":
-        return _MILESTONE_CS
-    if ftype == "mission":
-        has_bar = any(n["name"] == "MissionBar" for n in plan["nodes"])
-        return _MISSION_CS % {"todo": TODO, "bar": _MISSION_BAR_CS if has_bar else ""}
-    return ""
+        return render_milestone_methods(plan)
+    if ftype != "mission":
+        return ""
+    if not _mission_plan_current(plan):
+        raise PlanOutdatedError("the mission plan predates the tabs / cards / ladder node tree")
+    has_bar = _mission_has_bar(plan)
+    calls = {"set": "", "bar": ""}
+    busy, methods = "", ""
+    toggles = {c["target_node"]: c["key"] for c in plan["customs"] if c.get("kind") == "boolean" and c.get("target_node")}
+    for node in _mission_action_nodes(plan):
+        block, where, show, interactable, action = _MISSION_ACTION_PARTS[node["feature_action"]]
+        subst = {"todo": TODO, "key": node["key"]}
+        interactable = interactable % subst if "%(" in interactable else interactable
+        if node["name"] in toggles:
+            # every re-render re-shows the button, so the boolean custom mapped onto it is part of its visibility;
+            # the out var is named per button: out vars of one statement block share its scope
+            show += ' && !(TryGetCustom<bool>("%s", out var %sOn) && !%sOn)' % (toggles[node["name"]], node["field"], node["field"])
+        calls[where] += ('            ApplyMissionActionButton(%s, %sLabel, "%s", canBeHidden: %s,\n'
+                         '                show: %s, interactable: %s, action: %s);\n'
+                         % (node["field"], node["field"], node["key"], "true" if node["can_be_hidden"] else "false",
+                            show, interactable, action))
+        busy += "            if (%s != null) %s.interactable = false;\n" % (node["field"], node["field"])
+        methods += block % subst if "%(" in block else block
+    if has_bar:
+        # the ladder's step views expose no interactable setter: disable their (collect) buttons directly
+        busy = ("            foreach (var go in _missionBarSteps)\n"
+                "                if (go != null) foreach (var stepButton in go.GetComponentsInChildren<Button>()) stepButton.interactable = false;\n") + busy
+    out = _MISSION_CS % {"todo": TODO, "bar_call": "            BindMissionBar(state);\n" if has_bar else "",
+                         "set_actions": calls["set"], "busy_extra": busy}
+    if methods:
+        out += _MISSION_ACTION_BUTTON_CS
+    if has_bar:
+        out += _MISSION_BAR_CS % {"todo": TODO, "bar_action": calls["bar"]}
+    return out + methods
 
 
 FORBIDDEN_IN_GENERATED = ("dashboard.kinoa.io", "Bearer", "UnityWebRequest", "Addressables.Load")
@@ -2482,15 +4260,28 @@ def cmd_generate(args):
         _emit({"ok": False, "error": "unreadable_input", "detail": str(exc)})
         return 2
     options = {"facade": args.facade, "facade_namespace": args.facade_namespace, "image_loader": args.image_loader,
-               "price_resolver": args.price_resolver, "resource_icon_resolver": args.resource_icon_resolver}
+               "price_resolver": args.price_resolver, "resource_icon_resolver": args.resource_icon_resolver,
+               "feature_action_runner": args.feature_action_runner}
     for flag, value in (("--image-loader", args.image_loader), ("--price-resolver", args.price_resolver),
-                        ("--resource-icon-resolver", args.resource_icon_resolver)):
+                        ("--resource-icon-resolver", args.resource_icon_resolver),
+                        ("--feature-action-runner", args.feature_action_runner)):
         if value is not None and not _HOOK_METHOD_RE.fullmatch(value):
             _emit({"ok": False, "error": "invalid_hook_method", "flag": flag, "value": value})
             return 2
     plan["view"]["facade"] = args.facade
     plan["view"]["facade_namespace"] = args.facade_namespace if args.facade == "present" else None
-    out = generate_code(plan, options)
+    try:
+        out = generate_code(plan, options)
+    except PlanOutdatedError as exc:
+        if plan["template"].get("feature_type") == "mission":
+            _emit({"ok": False, "error": "mission_plan_outdated",
+                   "detail": "%s was written before the mission tabs / cards / progress ladder; re-run `plan` for this template" % args.plan,
+                   "reason": str(exc)})
+            return 2
+        _emit({"ok": False, "error": "milestone_plan_outdated",
+               "detail": "%s was written before the milestone scroll ladder; re-run `plan` for this template" % args.plan,
+               "reason": str(exc)})
+        return 2
     files = out["files"]
 
     for path, content in files.items():
@@ -2507,8 +4298,11 @@ def cmd_generate(args):
 
     # Fix 1: Compute exact set of user-owned shared files (only these can be skipped)
     out_dir = plan["paths"]["out_dir"].rstrip("/")
-    user_owned = {out_dir + "/Shared/KinoaInAppHooks.cs", out_dir + "/Shared/KinoaInAppItemView.cs"}
+    user_owned = {out_dir + "/Shared/KinoaInAppHooks.cs", out_dir + "/Shared/KinoaInAppItemView.cs",
+                  out_dir + "/Shared/KinoaInAppFeatureHooks.cs", out_dir + "/Shared/KinoaInAppMilestoneStepView.cs",
+                  out_dir + "/Shared/KinoaInAppMissionRowView.cs", out_dir + "/Shared/KinoaInAppTabView.cs"}
     builder_path = out_dir + "/Editor/KinoaInAppPrefabBuilder.cs"
+    menu_path = "%s/Editor/Templates/KinoaInApp%sBuildMenu.cs" % (out_dir, pascal(plan["template"]["key"]))
 
     # Check text-system mismatch only for user-owned files
     expected_alias = "TMPro.TMP_Text" if plan["ui"]["text_system"] == "tmp" else "UnityEngine.UI.Text"
@@ -2528,12 +4322,14 @@ def cmd_generate(args):
         supplied_hooks["price_resolver"] = "--price-resolver"
     if args.resource_icon_resolver:
         supplied_hooks["resource_icon_resolver"] = "--resource-icon-resolver"
+    if args.feature_action_runner:
+        supplied_hooks["feature_action_runner"] = "--feature-action-runner"
 
     for path, content in files.items():
         abs_path = os.path.join(root, path)
 
         # Fix 2: Always write the builder, never skip it
-        if path == builder_path:
+        if path in (builder_path, menu_path):
             os.makedirs(os.path.dirname(abs_path), exist_ok=True)
             with open(abs_path, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write(content)
@@ -2573,9 +4369,14 @@ def cmd_generate(args):
         if "resource_icon_resolver" in supplied_hooks:
             warnings.append("KinoaInAppHooks.cs already exists — --resource-icon-resolver was not applied; assign it in the existing file or re-run with --force-shared")
 
+    feature_hooks_file = out_dir + "/Shared/KinoaInAppFeatureHooks.cs"
+    if feature_hooks_file in skipped and "feature_action_runner" in supplied_hooks:
+        warnings.append("KinoaInAppFeatureHooks.cs already exists — --feature-action-runner was not applied; assign it in the existing file or re-run with --force-shared")
+
     _emit({"ok": True, "written": written, "skipped": skipped, "snippets": out["snippets"],
            "todos": _collect_todos(content_for_todos), "report": out["report"], "prefab_path": plan["paths"]["prefab_path"],
-           "plan_path": plan["paths"]["plan_path"], "menu_item": "Tools/Kinoa/In-Apps/Build Prefabs From Plans",
+           "plan_path": plan["paths"]["plan_path"], "menu_item": MENU_TEMPLATE_ROOT + _menu_label(plan["template"].get("name"), plan["template"]["key"]),
+           "menu_item_all": MENU_ALL,
            "warnings": warnings})
     return 0
 
@@ -2612,6 +4413,8 @@ def main(argv=None):
     p.add_argument("--style", default=None, help="probe-style output.")
     p.add_argument("--image-size", default=None, help="WxH of the mockup/tip image, e.g. 1080x1920.")
     p.add_argument("--out-dir", default=DEFAULT_OUT_DIR, help="Game-project folder the generated files will live in.")
+    p.add_argument("--milestone-cta", choices=("auto", "per_step", "single"), default="auto",
+                   help="Milestone templates: step CTA per milestone step or one main CTA (auto = decide from the template's CTA slots).")
     p.add_argument("--out", default=None, help="Where to write the plan (default <key>.inapp-plan.json).")
     p.set_defaults(func=cmd_plan)
 
@@ -2624,7 +4427,8 @@ def main(argv=None):
     p.add_argument("--image-loader", default=None, help="Fully-qualified static method: Func<string, Task<Sprite>>.")
     p.add_argument("--price-resolver", default=None, help="Fully-qualified static method: Func<InAppStorePackages, bool, string>.")
     p.add_argument("--resource-icon-resolver", default=None, help="Fully-qualified static method: Func<string, Sprite>.")
-    p.add_argument("--force-shared", action="store_true", help="Rewrite the user-owned Shared/ files (KinoaInAppHooks.cs, KinoaInAppItemView.cs) even if present; the Editor builder is always rewritten.")
+    p.add_argument("--feature-action-runner", default=None, help="Fully-qualified static method: Func<InAppMessage, InAppCustomButton, Task<bool>> (milestone and mission-bar paid / ad / link button actions).")
+    p.add_argument("--force-shared", action="store_true", help="Rewrite the user-owned Shared/ files (KinoaInAppHooks.cs, KinoaInAppItemView.cs, KinoaInAppFeatureHooks.cs, KinoaInAppMilestoneStepView.cs, KinoaInAppMissionRowView.cs, KinoaInAppTabView.cs) even if present; the Editor builder is always rewritten.")
     p.add_argument("--overwrite", action="store_true", help="Rewrite the view class if it already exists.")
     p.set_defaults(func=cmd_generate)
 

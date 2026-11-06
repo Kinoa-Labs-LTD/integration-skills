@@ -1,0 +1,808 @@
+{
+  "plan": {
+    "schema_version": "1.0",
+    "template": {
+      "id": "44444444-4444-4444-4444-444444444444",
+      "key": "one_cta_offer",
+      "name": "One CTA Offer",
+      "feature_type": "standard",
+      "images": [
+        {
+          "key": "background_image",
+          "can_be_hidden": true
+        }
+      ],
+      "texts": [
+        {
+          "key": "header",
+          "can_be_hidden": true,
+          "custom_fields": [
+            "text_color"
+          ]
+        },
+        {
+          "key": "upper_text",
+          "can_be_hidden": true,
+          "custom_fields": [
+            "text_color"
+          ]
+        },
+        {
+          "key": "resource_badge",
+          "can_be_hidden": true,
+          "custom_fields": [
+            "text_color",
+            "badge_color"
+          ]
+        },
+        {
+          "key": "price_cut_badge",
+          "can_be_hidden": true,
+          "custom_fields": [
+            "text_color"
+          ]
+        },
+        {
+          "key": "fine_print",
+          "can_be_hidden": true,
+          "custom_fields": [
+            "text_color"
+          ]
+        }
+      ],
+      "buttons": [
+        {
+          "key": "close_button",
+          "can_be_hidden": true,
+          "click_actions": [
+            "close"
+          ],
+          "custom_cta_names": []
+        },
+        {
+          "key": "cta_button",
+          "can_be_hidden": false,
+          "click_actions": [
+            "close",
+            "show_ad",
+            "billing",
+            "collect_resource",
+            "deep_link",
+            "soft_billing"
+          ],
+          "custom_cta_names": []
+        }
+      ],
+      "customs": [
+        {
+          "key": "show_resource_area",
+          "kind": "boolean",
+          "default": false
+        }
+      ]
+    },
+    "ui": {
+      "text_system": "legacy",
+      "font_guid": "e7a63bee4e93df34ca0dd3548b336621",
+      "tmp_font_guid": null,
+      "frame_size": [
+        900.0,
+        1400.0
+      ],
+      "close_sprite_guid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "dimmer_alpha": 0.6,
+      "canvas": {
+        "render_mode": "overlay",
+        "override_sorting": true,
+        "sorting_order": 100,
+        "scale_mode": "scale_with_screen_size",
+        "reference_resolution": [
+          900.0,
+          1400.0
+        ],
+        "match": 0.5,
+        "source": "default"
+      }
+    },
+    "view": {
+      "class_name": "KinoaInAppOneCtaOfferView",
+      "ns": "Kinoa.InApps",
+      "facade": null,
+      "facade_namespace": null
+    },
+    "paths": {
+      "out_dir": "Assets/Kinoa/InApps",
+      "prefab_path": "Assets/Kinoa/InApps/OneCtaOffer/KinoaInApp_OneCtaOffer.prefab",
+      "view_path": "Assets/Kinoa/InApps/OneCtaOffer/KinoaInAppOneCtaOfferView.cs",
+      "plan_path": "Assets/Kinoa/InApps/OneCtaOffer/one_cta_offer.inapp-plan.json"
+    },
+    "nodes": [
+      {
+        "name": "Dimmer",
+        "parent": null,
+        "binding": "dimmer",
+        "components": [
+          "Image"
+        ],
+        "field": "dimmer",
+        "field_type": "Image",
+        "anchor_min": [
+          0.0,
+          0.0
+        ],
+        "anchor_max": [
+          1.0,
+          1.0
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "Frame",
+        "parent": null,
+        "binding": "frame",
+        "components": [],
+        "field": null,
+        "field_type": null,
+        "anchor_min": null,
+        "anchor_max": null,
+        "size": [
+          900.0,
+          1400.0
+        ],
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "Panel",
+        "parent": "Frame",
+        "binding": "panel",
+        "components": [],
+        "field": "panel",
+        "field_type": "RectTransform",
+        "anchor_min": [
+          0.2,
+          0.1
+        ],
+        "anchor_max": [
+          0.84,
+          0.96
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "BackgroundImage",
+        "parent": "Panel",
+        "binding": "image",
+        "components": [
+          "Image"
+        ],
+        "field": "backgroundImage",
+        "field_type": "Image",
+        "anchor_min": [
+          0.0,
+          0.1628
+        ],
+        "anchor_max": [
+          0.8906,
+          0.9767
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": true,
+        "inactive": false,
+        "key": "background_image",
+        "bucket": "images",
+        "role": "background_image",
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "CloseButton",
+        "parent": "Panel",
+        "binding": "button",
+        "components": [
+          "Image",
+          "Button"
+        ],
+        "field": "closeButton",
+        "field_type": "Button",
+        "anchor_min": [
+          0.8125,
+          0.9186
+        ],
+        "anchor_max": [
+          0.9531,
+          1.0
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": true,
+        "inactive": false,
+        "key": "close_button",
+        "bucket": "buttons",
+        "role": "close_button",
+        "click_actions": [
+          "close"
+        ],
+        "custom_cta_names": [],
+        "sprite_guid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "CloseButtonLabel",
+        "parent": "CloseButton",
+        "binding": "button_label",
+        "components": [
+          "Text"
+        ],
+        "field": "closeButtonLabel",
+        "field_type": "Text",
+        "anchor_min": [
+          0.0,
+          0.0
+        ],
+        "anchor_max": [
+          1.0,
+          1.0
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": "close_button",
+        "bucket": "buttons",
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "HeaderText",
+        "parent": "Panel",
+        "binding": "text",
+        "components": [
+          "Text"
+        ],
+        "field": "headerText",
+        "field_type": "Text",
+        "anchor_min": [
+          0.125,
+          0.8605
+        ],
+        "anchor_max": [
+          0.7812,
+          0.9186
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": true,
+        "inactive": false,
+        "key": "header",
+        "bucket": "texts",
+        "role": "header",
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "UpperText",
+        "parent": "Panel",
+        "binding": "text",
+        "components": [
+          "Text"
+        ],
+        "field": "upperText",
+        "field_type": "Text",
+        "anchor_min": [
+          0.2031,
+          0.7907
+        ],
+        "anchor_max": [
+          0.6875,
+          0.8372
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": true,
+        "inactive": false,
+        "key": "upper_text",
+        "bucket": "texts",
+        "role": "upper_text",
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "ResourceBadgeText",
+        "parent": "Panel",
+        "binding": "text",
+        "components": [
+          "Text"
+        ],
+        "field": "resourceBadgeText",
+        "field_type": "Text",
+        "anchor_min": [
+          0.0312,
+          0.3837
+        ],
+        "anchor_max": [
+          0.2812,
+          0.5116
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": true,
+        "inactive": false,
+        "key": "resource_badge",
+        "bucket": "texts",
+        "role": "resource_badge",
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "CtaButton",
+        "parent": "Panel",
+        "binding": "button",
+        "components": [
+          "Image",
+          "Button"
+        ],
+        "field": "ctaButton",
+        "field_type": "Button",
+        "anchor_min": [
+          0.2187,
+          0.1279
+        ],
+        "anchor_max": [
+          0.6719,
+          0.2093
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": "cta_button",
+        "bucket": "buttons",
+        "role": "cta_button",
+        "click_actions": [
+          "close",
+          "show_ad",
+          "billing",
+          "collect_resource",
+          "deep_link",
+          "soft_billing"
+        ],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "CtaButtonLabel",
+        "parent": "CtaButton",
+        "binding": "button_label",
+        "components": [
+          "Text"
+        ],
+        "field": "ctaButtonLabel",
+        "field_type": "Text",
+        "anchor_min": [
+          0.0,
+          0.0
+        ],
+        "anchor_max": [
+          1.0,
+          1.0
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": "cta_button",
+        "bucket": "buttons",
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "PriceCutBadgeText",
+        "parent": "Panel",
+        "binding": "text",
+        "components": [
+          "Text"
+        ],
+        "field": "priceCutBadgeText",
+        "field_type": "Text",
+        "anchor_min": [
+          0.7031,
+          0.1279
+        ],
+        "anchor_max": [
+          1.0,
+          0.1977
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": true,
+        "inactive": false,
+        "key": "price_cut_badge",
+        "bucket": "texts",
+        "role": "price_cut_badge",
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "FinePrintText",
+        "parent": "Panel",
+        "binding": "text",
+        "components": [
+          "Text"
+        ],
+        "field": "finePrintText",
+        "field_type": "Text",
+        "anchor_min": [
+          0.0,
+          0.0
+        ],
+        "anchor_max": [
+          0.8906,
+          0.0465
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": true,
+        "inactive": false,
+        "key": "fine_print",
+        "bucket": "texts",
+        "role": "fine_print",
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "TimerZone",
+        "parent": "Panel",
+        "binding": "zone",
+        "components": [],
+        "field": "timerRoot",
+        "field_type": "GameObject",
+        "anchor_min": [
+          0.3125,
+          0.0581
+        ],
+        "anchor_max": [
+          0.6094,
+          0.093
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": true,
+        "key": null,
+        "bucket": null,
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "TimerText",
+        "parent": "TimerZone",
+        "binding": "text",
+        "components": [
+          "Text"
+        ],
+        "field": "timerText",
+        "field_type": "Text",
+        "anchor_min": [
+          0.0,
+          0.0
+        ],
+        "anchor_max": [
+          1.0,
+          1.0
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "PriceBeforeSaleZone",
+        "parent": "Panel",
+        "binding": "zone",
+        "components": [],
+        "field": "priceBeforeSaleRoot",
+        "field_type": "GameObject",
+        "anchor_min": [
+          0.2031,
+          0.2326
+        ],
+        "anchor_max": [
+          0.6875,
+          0.2791
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": true,
+        "key": null,
+        "bucket": null,
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "PriceBeforeSaleText",
+        "parent": "PriceBeforeSaleZone",
+        "binding": "text",
+        "components": [
+          "Text"
+        ],
+        "field": "priceBeforeSaleText",
+        "field_type": "Text",
+        "anchor_min": [
+          0.0,
+          0.0
+        ],
+        "anchor_max": [
+          1.0,
+          1.0
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "PriceBeforeSaleStrike",
+        "parent": "PriceBeforeSaleZone",
+        "binding": "strike",
+        "components": [
+          "Image"
+        ],
+        "field": null,
+        "field_type": null,
+        "anchor_min": [
+          0.05,
+          0.46
+        ],
+        "anchor_max": [
+          0.95,
+          0.54
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": false,
+        "key": null,
+        "bucket": null,
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "ResourceArea",
+        "parent": "Panel",
+        "binding": "zone",
+        "components": [
+          "HorizontalLayoutGroup"
+        ],
+        "field": "resourceAreaRoot",
+        "field_type": "GameObject",
+        "anchor_min": [
+          0.0781,
+          0.314
+        ],
+        "anchor_max": [
+          0.8281,
+          0.4651
+        ],
+        "size": null,
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": true,
+        "key": null,
+        "bucket": null,
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      },
+      {
+        "name": "ResourceItem",
+        "parent": "ResourceArea",
+        "binding": "item_template",
+        "components": [],
+        "field": "resourceItemTemplate",
+        "field_type": "KinoaInAppItemView",
+        "anchor_min": null,
+        "anchor_max": null,
+        "size": [
+          160.0,
+          160.0
+        ],
+        "placed": true,
+        "can_be_hidden": false,
+        "inactive": true,
+        "key": null,
+        "bucket": null,
+        "role": null,
+        "click_actions": [],
+        "custom_cta_names": [],
+        "sprite_guid": null,
+        "step_button": false,
+        "feature_action": null,
+        "color": null,
+        "scroll_axis": null
+      }
+    ],
+    "customs": [
+      {
+        "key": "show_resource_area",
+        "kind": "boolean",
+        "default": false,
+        "target_node": "ResourceArea",
+        "target_field": "resourceAreaRoot"
+      }
+    ],
+    "report": {
+      "unplaced": [],
+      "estimated_positions": [],
+      "warnings": [],
+      "unmapped_layout": [],
+      "client_zones": [
+        "timer",
+        "price_before_sale",
+        "resource_area"
+      ],
+      "needs_developer": [
+        "the prefab root gets a Canvas, CanvasScaler and GraphicRaycaster (defaults: overlay, sorting order 100, scale with screen size at 900x1400, match 0.5); check and align them with your UI setup, or remove them when the prefab is parented under an existing pop-up canvas",
+        "existing popup base class(es) OfferPopup detected — the generated view derives from MonoBehaviour and exposes a Closed event; adapt/wrap it in your popup manager rather than editing the generated class"
+      ],
+      "layout_source": {
+        "kind": "layout_artifact",
+        "template_key": "one_cta_offer",
+        "sha256": null,
+        "hand_placed": 0,
+        "adjusted": 0
+      },
+      "panel_bbox": {
+        "x": 0.2,
+        "y": 0.04,
+        "w": 0.64,
+        "h": 0.86
+      },
+      "layout_adjustments": [],
+      "overlays": []
+    }
+  },
+  "files_sha256": {
+    "Assets/Kinoa/InApps/Editor/KinoaInAppPrefabBuilder.cs": "98b9cdef5ee0d11933b8039a2899ff55e83cba01642c127eefc6b17619fe7568",
+    "Assets/Kinoa/InApps/Editor/Templates/KinoaInAppOneCtaOfferBuildMenu.cs": "943a1e46736d70ba2202c8fd4ea05374746411c64890f592521794eec265f55c",
+    "Assets/Kinoa/InApps/OneCtaOffer/KinoaInAppOneCtaOfferView.cs": "4d546c92d3204a8a93c9599898fecd9e456b90c563ea0ea342e83d305b6b4967",
+    "Assets/Kinoa/InApps/OneCtaOffer/one_cta_offer.inapp-plan.json": "949557369430634f9e71cbf75d6559107542073f5d689a91272a71d5b1760247",
+    "Assets/Kinoa/InApps/Shared/KinoaInAppFeatureHooks.cs": "699d1221f20cbf6eee47b30e414659f757d32a1f9831f9ccb1aa59e49bb0a8af",
+    "Assets/Kinoa/InApps/Shared/KinoaInAppHooks.cs": "b927d49a5bbd6a4328791570d3a4f740395530d50f905c7d76ede07341881847",
+    "Assets/Kinoa/InApps/Shared/KinoaInAppItemView.cs": "3b804084c1a27e935425e2c586130eb81d1413218e4d1f042edc2b3c978dc527",
+    "Assets/Kinoa/InApps/Shared/KinoaInAppMilestoneStepView.cs": "804ef50f215f66c44e547f76ef1f49b14b0422a719502166ff5c0d8128e6e7bc",
+    "Assets/Kinoa/InApps/Shared/KinoaInAppMissionRowView.cs": "894e91f6d283823c1257108a726abef4a523c1e0acc0305d807076f49a8e09a4",
+    "Assets/Kinoa/InApps/Shared/KinoaInAppTabView.cs": "fc3a4734654c0cb15a8c4ca4f083cd0290e0c3df30d0f78265d267e453e796c8"
+  }
+}

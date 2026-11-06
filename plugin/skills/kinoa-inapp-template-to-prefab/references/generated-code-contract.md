@@ -13,6 +13,7 @@ hand-edit bound fields. Namespace `Kinoa.InApps` (`Kinoa.InApps.Editor` for the 
 | `void Show()` | activates; sends `in_app_impression` once |
 | `void Close()` | sends `in_app_close`, raises `Closed`, destroys |
 | `event Closed`, `event ButtonClicked(view, buttonKey, InAppClickConfiguration)` | integration points for a popup manager / analytics |
+| `event MissionCtaClicked(view, int setNumber, InAppMission, InAppClickConfiguration)` | mission templates only: raised when a mission card's Go is clicked, with the card's set number (see Missions below) |
 | `TryGetCustom<T>(key, out T)`, `GetCustom<T>(key)` | typed access to `customs` values |
 
 Click routing (`OnButtonClicked`): `in_app_click` → `ButtonClicked` → `close`
@@ -32,16 +33,165 @@ is set (text from `ResolveStorePrice(packages, true)`); the resource area lists
 the first item-bearing button's `Resources`; the grand prize echoes the last
 milestone step's rewards.
 
-Features: milestones fill the bar (`Progress / last step Score`), spawn one
-`KinoaInAppItemView` per step, claim `Reached` steps via
-`Kinoa.Messaging.CollectMilestonesAsync` (0-based indexes) and rebind; missions
-spawn one row per `ActiveMissions` entry, claim `Reached` rows via
-`CollectMissionsProgressAsync(message, setNumber, [rowNumber])` and rebind.
-While a claim request is in flight the marker / row button is disabled, and it
-is re-enabled if the request fails. Awarding the reward itself is the game's
-job: the `TODO(kinoa-prefab)` sits where the server confirmed the step
-(`Collected.Contains(index)`) for milestones, and names `mission.ProcessedResources`
-for missions.
+Features: milestones spawn one `KinoaInAppMilestoneStepView` per step into a
+horizontal scroll (per-step fill from `Progress` between the previous and this
+step's `Score`, a locked / collected mark per status), claim `Reached` steps via
+`Kinoa.Messaging.CollectMilestonesAsync` (0-based indexes) and rebind (see
+*Milestone binding* below). Awarding the reward itself is the game's job: the
+`TODO(kinoa-prefab)` sits where the server confirmed the step. Missions are
+described below; their combined progress bar is the same step ladder.
+
+### Missions
+
+The mission view is built from the message's `MissionState`; a template with no
+mission state hides the tabs and the list.
+
+- **Tabs per set.** One tab per mission set that has visible rows: the previous
+  set first, labelled `Set {n} (prev)`, then the active set, `Set {n}`. The
+  selected set stays selected across rebinds while it still has rows; otherwise
+  the active set is shown if it has rows, else the previous set if it has rows
+  (an active set left empty by dismissals never hides a previous set that
+  still has rows), and the empty active set only when no set has any.
+  Switching tabs scrolls the list back to the top.
+- **Cards.** The shown set's missions are ordered Reached, then Active, then
+  Collected, then any other status, and by placement number within a group.
+  They are spawned into a vertical scroll (`MissionList`, the same scroll chain
+  as the milestone ladder with `scroll_axis: "vertical"`).
+  A card shows the placement (`P{n}`), the mission text as-is, the sub-mission
+  number, the status name, current/goal progress with a fill, the rewards
+  (`ProcessedResources`, with icons through `ResolveResourceIcon`), one action
+  button and a dismiss button. Statuses are labelled, never recoloured.
+- **Card action.** A `Reached` mission with a `CompletionCta` shows **Collect**,
+  which calls `Kinoa.Messaging.CollectMissionsProgressAsync(message, setNumber,
+  [rowNumber])` and rebinds with the returned message. An `Active` mission with
+  a `ProgressionCta` shows **Go**, which raises `MissionCtaClicked`. Any other
+  card has no action button. Per-row CTAs are not template buttons, so
+  `KinoaUiService` cannot route them: granting `CompletionCta` /
+  `ProcessedResources` after a collect, and routing `ProgressionCta` after a
+  Go, are each a `TODO(kinoa-prefab)`. The collect TODO grants only when the
+  returned `response.Data` shows the row no longer `Reached` (`Collected` or
+  removed), as the SDK sample's `GetCollectedRows` does. A Go click raises
+  `MissionCtaClicked(view, setNumber, mission, ProgressionCta)` and then always
+  logs a warning (a subscriber does not suppress it); the warning stays until
+  the developer resolves that TODO in the generated view. The TODO names the
+  routing: `deep_link` / `web_link` → the game's router; `show_ad` → after the
+  ad completes, `Kinoa.Messaging.ReachMissionsProgress(Message, setNumber,
+  new List<int> { mission.RowNumber })`, then `Bind(response.Data)`; `close` →
+  `Close()`.
+- **Dismiss ×.** Shown on `Reached` and `Collected` cards. It calls
+  `Kinoa.Messaging.DeleteMissionsProgress(message, setNumber, [rowNumber])`,
+  which **deletes that row's progress on the server**, then hides the row
+  locally (a set left without visible rows loses its tab). Dismissed rows are
+  forgotten when the view binds a different in-app message.
+- **Progress bar as a milestone ladder** (`MissionBarScroll` → `MissionBarViewport`
+  → `MissionBarContent` → `MissionBarStep`, only when the template's
+  `progressBar.display` is not `dont_show_at_all`). One
+  `KinoaInAppMilestoneStepView` per `ProgressBarState.Milestones` step, ordered
+  by `MilestoneNumber`, bound like a milestone step in `per_step` mode:
+  `SetScore` (the score, `0.##`), `SetReward` (first `Button.Resources` entry's
+  icon through `ResolveIcon`, its amount, or `x{n}` for several),
+  `SetProgress` (`TotalScore` between the previous step's score and this one's),
+  `SetStatus` (the step's status; a row collected here shows `Collected`), and
+  `SetCollect` (shown unless collected, interactable only when `Reached`,
+  labelled from the step's button or `Collect`). The ladder scrolls to the first
+  claimable step, else the first locked one, else the last. A step's claim
+  goes through the milestone click resolver on `step.Button` (table below) and
+  claims against the active set with
+  `Kinoa.Messaging.CollectMissionsMilestonesProgress(message, setNumber, [rowNumber])`.
+  That call returns results, not a refreshed message, so collected rows are
+  remembered locally and the view rebinds. Applying `step.Button.Resources` to
+  the player is a `TODO(kinoa-prefab)` at each server-confirmed (`Collected`)
+  result, read from the steps captured before the call.
+- **Feature-action buttons.** A mission template button whose key or name says
+  *reach all*, *collect all* or *collect all milestones* is wired to
+  `ReachMissionsProgress` (every `Active` row of the shown set),
+  `CollectMissionsProgressAsync` (every `Reached` row of the shown set) or the
+  bar's claimable steps. Such a button **bypasses `KinoaUiService`**: a click
+  sends `in_app_click` and raises `ButtonClicked`, then runs the mission call
+  (the button's own `clickActionType` menu is not routed through the facade).
+  Collect all milestones runs the milestone click resolver on its own slot with
+  the milestone collect-all rule: a free button takes the `Reached`, not yet
+  collected steps whose own button is free too; a paid / ad / link button runs
+  `RunButtonAction` first and then takes every such step. So a non-billing (ad
+  or link) collect-all action also gates billing steps — `RunButtonAction`
+  decides — exactly as on a milestone template. It is shown only while
+  there is something to act on — an `Active` row for reach all, a `Reached` row
+  for collect all, a bar for collect all milestones (interactable only while it
+  has a step to claim) — and disabled while a request is in flight. A boolean
+  custom that maps onto the button (the plan's `customs[].target_node`) is part
+  of that visibility, so a `false` value keeps the button hidden across
+  re-renders. Collect all's grant TODO covers only the rows the returned
+  `response.Data` shows as no longer `Reached`. Which buttons were wired is
+  `report.mission_actions` in the plan.
+- **Busy state.** While any mission request or a bar step's `RunButtonAction`
+  is in flight, every tab, card button, bar step button and feature-action
+  button is disabled and taps are ignored; they are re-enabled when the
+  response arrives or the call fails.
+- **Look.** Sizes, positions and colours come from the layout artifact's
+  missions geometry (`feature.parts` / `row_parts` / `style`), with neutral
+  defaults per missing part; none of it is a template slot. `parts.progress_bar`
+  places the ladder's scroll; `style.bar_track` tints the ladder's backdrop and
+  `style.bar_fill` each step's progress fill.
+
+### Milestone binding
+
+- **Step list.** One `KinoaInAppMilestoneStepView` per `InAppMilestoneStep`.
+  The list scrolls to the first `Reached` step, else the first `Closed` one,
+  else the last; the focus is applied after the view becomes active, and the
+  latest `Bind` wins over an older pending focus. The grand prize still echoes
+  the last step's rewards.
+- **Track and score counter** (only when the plan has the nodes, built from
+  the milestone regions; without them the view is unchanged). The total is the
+  last step's `Score`. `MilestoneTrackFill.fillAmount` is
+  `feature.Progress / total`, clamped to 0..1 (0 when the total is 0), and
+  `MilestoneProgressText` shows `progress/total` (`{feature.Progress:0}/{total}`).
+  The track and the score root are shown while the message has a milestones
+  feature and hidden, with the ladder, when it has none. The score icon's
+  sprite is the developer's: the SDK carries no score-icon data.
+- **CTA mode** (from `plan.milestone`). `per_step`: every step carries its own
+  collect button, shown unless the step is `Collected` and interactable only
+  when it is `Reached`; the feature's progress button (`ActiveProgressButton`)
+  goes onto `MilestoneMainButton`, which acts on the `Reached` steps chosen by
+  the feature-button rule below. `single`: steps carry no button; the first
+  `Reached` step's button goes onto the single CTA (the template slot named in
+  `plan.milestone.single_cta`, else `MilestoneMainButton`), and with no
+  `Reached` step it shows `ActiveProgressButton`, or is hidden / keeps its
+  template binding. A collecting button with an empty label shows `Collect`.
+  A feature button kept visible with no slot in this bind loses its previous
+  listener and is not interactable.
+- **Collect-all.** The template button matched by `plan.milestone.collect_all`
+  is bound to the feature and claims the `Reached` steps chosen by the
+  feature-button rule in one `CollectMilestonesAsync` call; it is interactable
+  only while that list is not empty.
+- **Steps a feature button acts on** (`MilestoneMainButton` in `per_step`, and
+  collect-all) depend on the button's own `ClickConfig`. A free button (none,
+  `collect_resource`, `promise_rewards`) takes only the `Reached` steps whose
+  own button is free too: a step that must be bought, watched or opened is left
+  for its own button. A paid / ad / link button takes every `Reached` step,
+  because its own action runs first (`RunButtonAction`) and gates them all. The
+  single CTA always carries the first `Reached` step's own button.
+- **In-flight guard.** While a collect request or `RunButtonAction` is running,
+  every milestone button ignores taps, including a feature button whose action
+  is `close`. The template's own close button is unaffected. This is why
+  `KinoaInAppFeatureHooks.RunButtonAction` must always complete (return `false`
+  on cancel or failure): a task that never finishes leaves the milestone
+  buttons inert.
+
+Click resolution for a milestone feature button (step, single CTA, collect-all
+or main button) — and, with `CollectMissionsMilestonesProgress` as the collect
+call, for a mission progress-bar step and Collect all milestones:
+
+| Button's `ClickConfig` | Result |
+|---|---|
+| `close` | closes the view |
+| none, `collect_resource` or `promise_rewards` | collects the step(s) via `CollectMilestonesAsync` |
+| any other action (billing, soft billing, ad, link, ...) and `KinoaInAppFeatureHooks.RunButtonAction` assigned | runs the hook; collects the step(s) only when it returns `true` (a throw or `false` collects nothing) |
+| any other action and the hook **not** assigned | one `WarnMissing` warning; nothing is collected |
+
+Every accepted tap also sends `in_app_click` and raises `ButtonClicked`. The
+server response is the source of truth: a fresh `InApp` in it rebinds the view,
+else collected steps are marked collected locally. A failed or throwing request
+logs a warning and rebinds the unchanged message.
 
 ## `KinoaInAppHooks` (shared, static)
 
@@ -49,20 +199,77 @@ for missions.
 |---|---|---|
 | `LoadSpriteFromUrl` | `Func<string, Task<Sprite>>` | `WebUrl` images |
 | `ResolveStorePrice` | `Func<InAppStorePackages, bool usePreSalePackage, string>` | CTA price (`false`), struck pre-sale price (`true`) |
-| `ResolveResourceIcon` | `Func<string resourceKey, Sprite>` | resource area, grand prize, markers |
+| `ResolveResourceIcon` | `Func<string resourceKey, Sprite>` | resource area, grand prize, mission card rewards, ladder step rewards |
 
 Unassigned delegates log one warning per use (`WarnMissing`). The skill wires
 an existing game method when the developer names one; it never writes one.
+
+## `KinoaInAppFeatureHooks` (shared, static)
+
+| Delegate | Signature | Used for |
+|---|---|---|
+| `RunButtonAction` | `Func<InAppMessage, InAppCustomButton, Task<bool>>` | a milestone (or mission progress-bar) button's paid / ad / link action; return `true` once it completed so the step is collected. Always complete: return `false` on cancel or failure (milestone buttons ignore taps while it runs). Never grant the reward here: the view collects through Kinoa |
+
+Unassigned: one warning per use and nothing collected for such a button. It
+is a separate file from `KinoaInAppHooks` on purpose (see the compatibility
+rule below). Emitted for every plan (written only when absent), because the Editor builder needs the step
+view type in any project; milestone views and mission views with a progress
+bar call it, standard views never do.
 
 ## `KinoaInAppItemView` (shared)
 
 `SetLabel`, `SetValue` (hides when empty), `SetIcon` (hides when null),
 `SetFill(0..1)`, `SetButton(interactable, UnityAction)`. Built by the Editor
 builder with children `Icon`, `Label`, `Value`, `Fill` and a root `Button`.
+Used by resource items and the rewards on a mission card.
+
+## `KinoaInAppMilestoneStepView` (shared)
+
+One step of a milestone ladder (a milestone template's steps, or a mission
+template's `ProgressBarState` steps): `SetScore`, `SetReward(icon, amount)`,
+`SetProgress(0..1)`, `SetStatus(InAppMilestoneStatus)` (locked mark for
+`Closed` / `Unknown`, collected mark for `Collected`) and
+`SetCollect(visible, interactable, label, onClick)`. Built by the Editor
+builder with children `Score`, `RewardIcon`, `RewardAmount`, `Progress`,
+`LockedMark`, `CollectedMark` and, in `per_step` mode (always for the mission
+ladder), `CollectButton` / `CollectLabel`. A step node's plan `color` tints its
+`Progress` fill.
+
+## `KinoaInAppMissionRowView` and `KinoaInAppTabView` (shared)
+
+Dumb views the builder fills from the plan's `role` assignments; only the
+generated template view knows the SDK types. They are emitted for every
+template (written only when absent; the Editor builder references them) and only mission templates use them.
+
+`KinoaInAppMissionRowView` (one mission card): `SetPlacement(int)`,
+`SetTitle(string)`, `SetSubMission(int?)` (hides when null), `SetStatus(string)`,
+`SetProgress(decimal current, decimal goal)` (text `current/goal`, each
+formatted `0.##` with the invariant culture: `5/10`, `2.5/10`), `AddReward(Sprite, string amount)`,
+`ClearRewards()`, `SetAction(string label, UnityAction)` (hides the button when
+the label is null), `SetDismiss(bool visible, UnityAction)` (default label `×`),
+`SetInteractable(bool)`.
+
+`KinoaInAppTabView` (one mission-set tab): `Setup(int setNumber, string text,
+bool selected, UnityAction onClick)`, `SetSelected(bool)`,
+`SetInteractable(bool)`, `SetNumber`.
+
+## `KinoaInApp<Pascal>BuildMenu` (Editor, per template)
+
+`Assets/Kinoa/InApps/Editor/Templates/KinoaInApp<Pascal>BuildMenu.cs` —
+**tool-owned**, rewritten by every `generate` (like the builder; never skipped,
+`--force-shared` not needed). It adds one menu item,
+`Tools/Kinoa/In-Apps/Build Prefab/<template name> (<key>)` (just `<key>` when
+the record has no name or it equals the key), that calls
+`KinoaInAppPrefabBuilder.BuildPlanMenu` on that template's plan. The label drops
+`"`, `%`, `#`, `&` (and a leading `_`), and turns `/` and `\` into `-`. The item is greyed out
+when the plan file is gone. The plan JSON is unchanged; the label is computed
+from the record.
 
 ## `KinoaInAppPrefabBuilder` (Editor)
 
-Menu `Tools/Kinoa/In-Apps/Build Prefabs From Plans` → `BuildAll()`; per plan a
+Menu `Tools/Kinoa/In-Apps/Build All Prefabs From Plans` → `BuildAll()` (every
+plan); `BuildPlanMenu(planPath)` builds one plan and logs
+`<plan path>: built` / `: failed — <first error>`. Per plan a
 `<key>.build-report.json` (`ok`, `nodes_built`, `fields_assigned`,
 `fields_missing`, `errors`) beside the plan. Idempotent: rebuilding overwrites
 the prefab from the plan (hand edits to the prefab are lost).
@@ -83,13 +290,31 @@ runtime. A plan written before these settings existed gets the defaults.
 |---|---|---|
 | `<Pascal>/KinoaInApp<Pascal>View.cs`, plan copy | tool | every run (view needs `--overwrite` when it exists) |
 | `Editor/KinoaInAppPrefabBuilder.cs` | tool | **always refreshed** |
-| `Shared/KinoaInAppHooks.cs`, `Shared/KinoaInAppItemView.cs` | user | only when absent; `--force-shared` rewrites them |
+| `Shared/KinoaInAppHooks.cs`, `Shared/KinoaInAppItemView.cs`, `Shared/KinoaInAppFeatureHooks.cs`, `Shared/KinoaInAppMilestoneStepView.cs`, `Shared/KinoaInAppMissionRowView.cs`, `Shared/KinoaInAppTabView.cs` | user | only when absent; `--force-shared` rewrites them |
+
+**Compatibility rule.** An existing user-owned Shared file is never required
+to change for a newer release: a new feature that needs a new delegate or view
+gets a **new file** (this is why `RunButtonAction` lives in
+`KinoaInAppFeatureHooks`, not in `KinoaInAppHooks`, and why the mission ladder
+reuses `KinoaInAppMilestoneStepView` unchanged). A re-run on a project from
+an earlier release therefore only **adds** the new Shared files;
+`KinoaInAppHooks.cs` and `KinoaInAppItemView.cs` are never touched. All six are
+emitted for every plan (written only when absent; the always-refreshed builder references their types)
+and all six go through the `shared_text_system_mismatch` guard. A milestone plan
+must come from this version: `generate` refuses one without the `milestone`
+block / `MilestoneScroll` node (written before the scroll ladder) with
+`milestone_plan_outdated` and writes nothing — re-run `plan` for the template.
+A mission plan from before the tabs / cards / progress-bar ladder tree is
+refused the same way with `mission_plan_outdated`.
+`generate` takes `--feature-action-runner Ns.Class.Method` for
+`RunButtonAction`; like the other hook options it is not applied when the
+existing file is kept, and says so in `warnings`.
 
 `generate` prints one JSON object: `written`, `skipped`, `warnings` (e.g. a
 hook option not applied because the existing hooks file was kept), `snippets`
 (`constant`, `allowlist_arm`, `create_game_inapp`), `todos` (every
 `TODO(kinoa-prefab)` with `path:line`, built from what is **on disk** — including
-kept shared files), `prefab_path`, `plan_path`, `menu_item`.
+kept shared files), `prefab_path`, `plan_path`, `menu_item` (this template's own item), `menu_item_all` (build every plan).
 
 ## Markers and guarantees
 

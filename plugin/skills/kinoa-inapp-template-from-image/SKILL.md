@@ -202,6 +202,14 @@ nowhere on the canvas. They become `unsupported` entries without a `bbox`.
 For `milestone` count the markers into `feature.detected.milestone_count`; for
 `mission` count the rows into `mission_count` and the groups into `set_count`.
 
+For `mission` also bound, when visible, the tab strip and one tab, the task
+list, **one representative card** (the first fully visible one) and the
+combined bar — with its step markers and rewards, the whole progress area: the
+prefab skill renders it as a ladder of step cards — into `detected.parts`. Bound that same card's inner parts into
+`detected.row_parts`, and sample their colours as `#RRGGBB` into
+`detected.style`. Omit anything not visible; never invent. These are geometry
+for the prefab skill, never template elements.
+
 **Read the progression CTAs off the art too, when they are legible** — these
 feed the feature's CTA menus, and anything you cannot read is simply omitted
 (never guess a menu): a task's claim/buy control wording → mission
@@ -421,7 +429,9 @@ configuration**:
    transports came up empty — is the ONLY case that means the record has no tip
    image: then ask the developer for the mockup the template was built from. No
    image at all → stop and say so; a layout is never invented.
-3. Run the Phase 2 vision analysis on that image (same rules, same schema).
+3. Run the Phase 2 vision analysis on that image (same rules, same schema;
+   includes the missions geometry above — the prefab skill builds the missions
+   UI from it).
 4. Gate the pair:
 
    ```bash
@@ -431,7 +441,9 @@ configuration**:
 
    `remap` matches every detected element onto the record's declared slots. It
    fails closed (`ok: false`) only on a feature-type mismatch — surface the
-   reason and stop. Element-level disagreements in either direction land in
+   reason and stop. Element-level disagreements in either direction (and, on
+   a mission record, a progress-bar disagreement with the template:
+   `progress_bar_missing` / `progress_bar_unexpected`) land in
    `report.mismatch` and the page renders them as a warning banner: the
    developer updates the tip image on the dashboard, places the missing
    elements by hand, or lets them ship without coordinates (`bbox: null` +
@@ -439,11 +451,33 @@ configuration**:
 5. On success the output is build-result-shaped — run Phase 4 on it unchanged
    (`generate_confirm_page.py --build build_for_page.json --image <tip image>`).
    The keys on the page are the record's own; tell the developer not to rename
-   them — the layout must join the dashboard record 1:1.
+   them — the layout must join the dashboard record 1:1. The page labels
+   the overlay boxes of feature-tagged client-rendered regions `milestone: <role>`
+   / `mission: <role>`, and its mismatch banner also lists the progress-bar
+   mismatches.
 6. From the confirmed envelope, produce the artifact exactly as in Phase 4
    (`layout --envelope … --analysis tip_analysis.json --out <template_key>.layout.json`),
    then cross-check against the record:
    `validate --payload record.json --layout <template_key>.layout.json`.
+
+On a **milestone** record, tip-image visuals the template has no slot for
+(`bar_image`, `score_icon_image`, `prize_image`) are not mismatches: `remap`
+reports them, with `grand_prize_area`, as client-rendered regions tagged
+`feature: "milestone"`, and they travel into the layout artifact for the prefab
+skill to place the milestone UI from. They are never template elements.
+
+On a **mission** record, `remap` bounds the missions area (`area_bbox`, else
+the union of the detected `parts`) and reports it as a client-rendered
+`mission_area` region tagged `feature: "mission"`, plus `mission_progress_bar`
+when the **template** shows the combined bar (`progressBar.display` is not
+`dont_show_at_all` — the image never decides). Elements inside the area — a
+card's Claim button, task text, reward art — are absorbed (enclosing chrome such
+as a full-image background is not)
+(`report.mission_feature.absorbed`), never matched onto slots or reported as
+unslotted; a template slot that does sit inside the area shows as unmatched for
+the developer to place. A bar the template shows but the image lacks is
+`mismatch.progress_bar_missing`; a bar on the image the template hides is
+`mismatch.progress_bar_unexpected` (likely a stale tip image) — relay both.
 
 No create, no update — path B is read-only against the dashboard.
 

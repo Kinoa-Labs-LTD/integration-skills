@@ -342,6 +342,31 @@ CLIENT_RENDERED = {
     "grand_prize_area": "Milestone only: the client shows the final milestone reward in its own area.",
 }
 
+# Milestone visuals that a template may have no slot for: the game client draws
+# the ladder, the score area and each step's reward itself. Path B (`remap`)
+# reports them as client-rendered regions tagged `feature: "milestone"` instead
+# of "unslotted" — the prefab skill places the milestone UI from them. Never
+# template elements.
+MILESTONE_FEATURE_REGIONS = {
+    "bar_image": "Milestone feature: the progress-bar artwork. The client draws the milestone ladder here.",
+    "score_icon_image": "Milestone feature: the score icon at the start of the bar. The client shows the player's progress here.",
+    "prize_image": "Milestone feature: a step's reward art on the bar. The client draws each step's reward here.",
+    "grand_prize_area": CLIENT_RENDERED["grand_prize_area"],
+}
+
+# The missions UI on a mission template's tip image: the game client draws the
+# tabs, the task cards and (when the template shows it) the combined progress
+# bar itself. Path B (`remap`) reports the area — and the bar, when the
+# template shows one — as client-rendered regions tagged `feature: "mission"`,
+# and absorbs whatever the vision pass listed inside them (a card's Claim
+# button, task text, reward art) instead of matching it onto template slots.
+MISSION_FEATURE_REGIONS = {
+    "mission_area": "Mission feature: the missions UI (tabs, task cards and, when the template shows it, the combined progress bar). The client draws it here.",
+    "mission_progress_bar": "Mission feature: the combined milestone progress bar across all sets. The client draws it here; it exists only when the template's progressBar.display shows it.",
+}
+# An element at least this share inside the missions area is mission content.
+MISSION_ABSORB_SHARE = 0.8
+
 # Text elements carry a colour knob in every production template; Resource
 # Badge additionally carries its background colour.
 TEXT_DEFAULT_FIELDS = {
@@ -1047,7 +1072,24 @@ def match_templates(analysis, templates):
 # them without ever turning them into slots. Boxes express layout intent
 # (anchoring, proportions, relative placement), not pixel-perfect UI.
 
-LAYOUT_SCHEMA_VERSION = "1.0"
+LAYOUT_SCHEMA_VERSION = "1.1"
+# Schema majors this validator accepts without a warning: 1.1 only adds the
+# optional mission feature.parts / row_parts / style, so 1.0 artifacts stay valid.
+LAYOUT_ACCEPTED_VERSIONS = ("1.0", "1.1")
+
+# Mission geometry (all advisory, never template elements — like area_bbox).
+# `parts` bounds the screen-level pieces, `row_parts` the inner pieces of ONE
+# representative card (parts.row), `style` samples that card's colours.
+MISSION_PARTS = ("tabs", "tab", "task_list", "row", "progress_bar")
+MISSION_ROW_PARTS = (
+    "placement_badge", "title", "sub_mission", "status", "progress_track",
+    "progress_text", "rewards", "action_button", "dismiss_button",
+)
+MISSION_STYLE_KEYS = (
+    "card", "card_text", "accent", "progress_track", "progress_fill", "action",
+    "dismiss", "tab_text", "tab_selected", "bar_track", "bar_fill",
+)
+_HEX_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$")
 
 
 def _bbox_problems(bbox, where):
@@ -1073,13 +1115,73 @@ def _layout_bbox(bbox):
     return {field: float(bbox[field]) for field in ("x", "y", "w", "h")}
 
 
+def _bbox_block(block, allowed, where, warnings):
+    """Validated {name: bbox} copy of an analysis block; anything invalid is
+    dropped with a warning naming it (advisory, like feature.area_bbox)."""
+    out = {}
+    if not isinstance(block, dict):
+        warnings.append(f"{where} dropped — must be an object of name -> bbox")
+        return out
+    for name, bbox in block.items():
+        if name not in allowed:
+            warnings.append(f"{where}.{name} dropped — unknown key (allowed: {', '.join(allowed)})")
+            continue
+        errs, warns = _bbox_problems(bbox, f"{where}.{name}")
+        if errs:
+            warnings.extend(errs)
+            warnings.append(f"{where}.{name} dropped — invalid bbox")
+            continue
+        warnings.extend(warns)
+        out[name] = _layout_bbox(bbox)
+    return out
+
+
+def _mission_geometry(detected, warnings):
+    """The mission-only `parts` / `row_parts` / `style` feature blocks, each
+    present only when non-empty after validation."""
+    out = {}
+    parts = detected.get("parts")
+    if parts is not None:
+        clean = _bbox_block(parts, MISSION_PARTS, "feature.parts", warnings)
+        if clean:
+            out["parts"] = clean
+    row_parts = detected.get("row_parts")
+    if row_parts is not None:
+        if "row" not in out.get("parts", {}):
+            warnings.append("feature.row_parts dropped — no valid parts.row to anchor the card's inner parts")
+        else:
+            clean = _bbox_block(row_parts, MISSION_ROW_PARTS, "feature.row_parts", warnings)
+            if clean:
+                out["row_parts"] = clean
+    style = detected.get("style")
+    if style is not None:
+        if not isinstance(style, dict):
+            warnings.append("feature.style dropped — must be an object of name -> #RRGGBB")
+        else:
+            clean = {}
+            for name, color in style.items():
+                if name not in MISSION_STYLE_KEYS:
+                    warnings.append(
+                        f"feature.style.{name} dropped — unknown key (allowed: {', '.join(MISSION_STYLE_KEYS)})"
+                    )
+                elif not (isinstance(color, str) and _HEX_COLOR.match(color)):
+                    warnings.append(f"feature.style.{name} dropped — {color!r} is not #RRGGBB or #RRGGBBAA")
+                else:
+                    clean[name] = color
+            if clean:
+                out["style"] = clean
+    return out
+
+
 def build_layout(payload, geometry, analysis=None):
     """Join a (confirmed) payload with its geometry into the layout artifact.
 
     `geometry` is the page hand-back's `geometry` block: `source_image`
     (fingerprint), `elements` ([{key, bucket, bbox|null, role, ...}]) and
     `client_rendered`. `analysis` is optional and only fills what geometry
-    cannot know: the source image path/size and `feature.detected.area_bbox`.
+    cannot know: the source image path/size, `feature.detected.area_bbox` and,
+    for mission templates, the `feature.detected.parts` / `row_parts` / `style`
+    geometry (artifact 1.1).
     """
     errors, warnings, unplaced = [], [], []
     geometry = geometry or {}
@@ -1161,7 +1263,18 @@ def build_layout(payload, geometry, analysis=None):
             # Advisory zones: a bad box degrades to null, never fails the build.
             warnings.extend(errs + warns)
             cbox = None if errs else _layout_bbox(c["bbox"])
-        client_rendered.append({"role": c.get("role") or "", "bbox": cbox})
+        entry = {"role": c.get("role") or "", "bbox": cbox}
+        if c.get("feature") == "milestone" or (
+            payload.get("featureType") == "milestone"
+            and entry["role"] in MILESTONE_FEATURE_REGIONS
+        ):
+            entry["feature"] = "milestone"
+        elif c.get("feature") == "mission" or (
+            payload.get("featureType") == "mission"
+            and entry["role"] in MISSION_FEATURE_REGIONS
+        ):
+            entry["feature"] = "mission"
+        client_rendered.append(entry)
 
     feature = {"type": payload.get("featureType") or "standard"}
     area = ((analysis.get("feature") or {}).get("detected") or {}).get("area_bbox")
@@ -1173,6 +1286,39 @@ def build_layout(payload, geometry, analysis=None):
         else:
             warnings.extend(warns)
             feature["area_bbox"] = _layout_bbox(area)
+    if feature["type"] == "mission":
+        # Path B: the remap's mission_area region IS the missions area — it
+        # equals detected.area_bbox unless remap narrowed it to leave out a
+        # progress bar the template hides, and it fills in when the analysis
+        # has no area_bbox at all.
+        region = next(
+            (c for c in client_rendered
+             if c["role"] == "mission_area" and c.get("feature") == "mission" and c["bbox"]),
+            None,
+        )
+        if region:
+            feature["area_bbox"] = dict(region["bbox"])
+
+    detected = (analysis.get("feature") or {}).get("detected") or {}
+    if feature["type"] == "mission":
+        feature.update(_mission_geometry(detected, warnings))
+        parts = feature.get("parts") or {}
+        if "progress_bar" in parts and not _mission_bar_display(payload)[0]:
+            # The template does not render the combined bar: no consumer may place one.
+            del parts["progress_bar"]
+            warnings.append(
+                "feature.parts.progress_bar dropped — the template hides the combined progress bar "
+                "(progressBar.display dont_show_at_all)"
+            )
+            if not parts:
+                del feature["parts"]
+    else:
+        present = [k for k in ("parts", "row_parts", "style") if detected.get(k)]
+        if present:
+            warnings.append(
+                "feature.detected." + "/".join(present)
+                + " ignored — mission geometry applies only to mission templates"
+            )
 
     layout = {
         "schema_version": LAYOUT_SCHEMA_VERSION,
@@ -1191,9 +1337,9 @@ def validate_layout(layout, payload=None):
     errors, warnings = [], []
     if not isinstance(layout, dict):
         return {"ok": False, "errors": ["layout must be a JSON object"], "warnings": []}
-    if layout.get("schema_version") != LAYOUT_SCHEMA_VERSION:
+    if layout.get("schema_version") not in LAYOUT_ACCEPTED_VERSIONS:
         warnings.append(
-            f"layout schema_version {layout.get('schema_version')!r} != {LAYOUT_SCHEMA_VERSION!r}"
+            f"layout schema_version {layout.get('schema_version')!r} not in {list(LAYOUT_ACCEPTED_VERSIONS)!r}"
         )
     coords = layout.get("coordinates") or {}
     if coords.get("space") != "normalized" or coords.get("origin") != "top-left":
@@ -1273,11 +1419,155 @@ def _record_payload(record):
     return payload
 
 
+def _mission_bar_display(payload):
+    """(shown, display) for a mission template's combined progress bar: shown
+    unless progressBar.display is dont_show_at_all. The template decides, never
+    the image (the prefab skill's _mission_bar_shown applies the same rule)."""
+    mission = (payload.get("features") or {}).get("mission")
+    bar = mission.get("progressBar") if isinstance(mission, dict) else None
+    display = bar.get("display") if isinstance(bar, dict) else None
+    return display != "dont_show_at_all", display
+
+
+def _valid_box(bbox):
+    """A normalized copy of a usable bbox, else None."""
+    if not bbox:
+        return None
+    errs, _warns = _bbox_problems(bbox, "bbox")
+    return None if errs else _layout_bbox(bbox)
+
+
+def _union_box(boxes):
+    x0 = min(b["x"] for b in boxes)
+    y0 = min(b["y"] for b in boxes)
+    x1 = max(b["x"] + b["w"] for b in boxes)
+    y1 = max(b["y"] + b["h"] for b in boxes)
+    return {"x": round(x0, 6), "y": round(y0, 6), "w": round(x1 - x0, 6), "h": round(y1 - y0, 6)}
+
+
+def _share_inside(box, region):
+    """Overlap area / box area."""
+    w = min(box["x"] + box["w"], region["x"] + region["w"]) - max(box["x"], region["x"])
+    h = min(box["y"] + box["h"], region["y"] + region["h"]) - max(box["y"], region["y"])
+    if w <= 0 or h <= 0:
+        return 0.0
+    return (w * h) / (box["w"] * box["h"])
+
+
+def _absorbs(region, box):
+    """True when `box` is mission content of `region`: at least
+    MISSION_ABSORB_SHARE inside it, and not enclosing chrome — an element at
+    least as large as the region, or containing it (a full-image background, a
+    frame around the missions UI), is never content."""
+    if box["w"] * box["h"] >= region["w"] * region["h"]:
+        return False
+    if (box["x"] <= region["x"] and box["y"] <= region["y"]
+            and box["x"] + box["w"] >= region["x"] + region["w"]
+            and box["y"] + box["h"] >= region["y"] + region["h"]):
+        return False
+    return _share_inside(box, region) >= MISSION_ABSORB_SHARE
+
+
+def _mission_area(payload, analysis):
+    """Path B on a mission record: bound the missions area on the tip image and
+    absorb what lies inside it, so the matcher never sees a card's Claim button,
+    task text or reward art as a template element.
+
+    Returns the analysis copy the matcher gets plus the regions, mismatches,
+    warnings and the report.mission_feature summary."""
+    shown, display = _mission_bar_display(payload)
+    detected = (analysis.get("feature") or {}).get("detected") or {}
+    if not isinstance(detected, dict):
+        detected = {}
+    raw_parts = detected.get("parts") if isinstance(detected.get("parts"), dict) else {}
+    parts = {}
+    for name in MISSION_PARTS:
+        box = _valid_box(raw_parts.get(name))
+        if box:
+            parts[name] = box
+    if detected.get("progress_bar") is False:
+        # The flag wins: a bar box next to "no bar" is treated as absent everywhere.
+        parts.pop("progress_bar", None)
+    bar_box = parts.get("progress_bar")
+    bar_on_image = bool(bar_box) or detected.get("progress_bar") is True
+
+    warnings = []
+    body = [parts[n] for n in ("tabs", "tab", "task_list", "row") if n in parts]
+    area = _valid_box(detected.get("area_bbox"))
+    source = "area_bbox" if area else None
+    if area is None:
+        boxes = body + ([bar_box] if shown and bar_box else [])
+        if boxes:
+            area, source = _union_box(boxes), "parts"
+    elif not shown and bar_box and body:
+        area, source = _union_box(body), "parts"
+        warnings.append(
+            "mission area narrowed to the tabs and task cards to leave out the combined progress bar "
+            "the template hides (progressBar.display dont_show_at_all)"
+        )
+    if area is None:
+        warnings.append(
+            "mission area not detected on the tip image — the prefab places the missions UI on default geometry"
+        )
+
+    kept, absorbed = [], []
+    for el in analysis.get("elements") or []:
+        role = el.get("role")
+        box = None if role in CLIENT_RENDERED else _valid_box(el.get("bbox"))
+        inside = False
+        if box:
+            if not shown and bar_box and _share_inside(box, bar_box) >= MISSION_ABSORB_SHARE:
+                inside = False  # a bar the template hides: its art surfaces as unslotted
+            elif area and _absorbs(area, box):
+                inside = True
+            elif shown and bar_box and _absorbs(bar_box, box):
+                inside = True
+        if inside:
+            absorbed.append({"role": role or "",
+                             "bucket": el.get("bucket") or (ROLES.get(role) or {}).get("bucket") or "",
+                             "observed_text": el.get("observed_text") or ""})
+        else:
+            kept.append(el)
+
+    regions = []
+    if area:
+        regions.append({"role": "mission_area", "reason": MISSION_FEATURE_REGIONS["mission_area"],
+                        "bbox": area, "feature": "mission"})
+    if shown and bar_box:
+        regions.append({"role": "mission_progress_bar", "reason": MISSION_FEATURE_REGIONS["mission_progress_bar"],
+                        "bbox": bar_box, "feature": "mission"})
+    mismatch = {}
+    if shown and not bar_on_image:
+        mismatch["progress_bar_missing"] = (
+            f"the template shows the combined progress bar (progressBar.display {display or '<unset>'}) "
+            "but the tip image has none"
+        )
+    if not shown and bar_on_image:
+        mismatch["progress_bar_unexpected"] = (
+            "the tip image shows a combined progress bar but the template hides it "
+            "(progressBar.display dont_show_at_all) — likely a stale tip image"
+        )
+    summary = {
+        "area_bbox": area or None,
+        "area_source": source,
+        "progress_bar": {"template": "shown" if shown else "hidden", "display": display,
+                         "on_image": bar_on_image},
+        "absorbed": absorbed,
+    }
+    return {"analysis": dict(analysis, elements=kept), "regions": regions, "mismatch": mismatch,
+            "warnings": warnings, "summary": summary}
+
+
 def remap_record(record, analysis):
     """Match a tip-image analysis onto the record's own slots and synthesize a
     build-result-shaped object the confirmation page renders unchanged — trace
     bboxes from the analysis, keys strictly the record's (never minted)."""
     payload = _record_payload(record)
+    mission = None
+    if payload["featureType"] == "mission":
+        # The matcher (unchanged) only ever sees what lies outside the missions area.
+        mission = _mission_area(payload, analysis)
+        analysis = mission["analysis"]
     match = match_templates(analysis, [record])
     entry = match["results"][0] if match["results"] else None
     if entry is None:
@@ -1287,10 +1577,19 @@ def remap_record(record, analysis):
         return {"ok": False, "reason": entry.get("reason") or f"verdict {entry['verdict']!r}", "match": entry}
 
     needs, _skipped = _analysis_needs(analysis)
+    is_milestone = payload["featureType"] == "milestone"
     unslotted = []
+    milestone_regions = []
     for m in entry.get("missing") or []:
         need = needs[m["need_index"]]
-        unslotted.append({"bucket": m["bucket"], "role": need.get("role") or "",
+        role = need.get("role") or ""
+        if is_milestone and role in MILESTONE_FEATURE_REGIONS and role != "grand_prize_area":
+            milestone_regions.append(
+                {"role": role, "reason": MILESTONE_FEATURE_REGIONS[role],
+                 "bbox": need.get("bbox"), "feature": "milestone"}
+            )
+            continue
+        unslotted.append({"bucket": m["bucket"], "role": role,
                           "observed_text": need.get("observed_text") or ""})
     slot_index = {}
     for bucket in BUCKETS:
@@ -1342,12 +1641,23 @@ def remap_record(record, analysis):
         mismatch["unmatched_slots"] = unmatched
     if unslotted:
         mismatch["unslotted_elements"] = unslotted
+    if mission:
+        warnings.extend(mission["warnings"])
+        warnings.extend(mission["mismatch"].values())
+        mismatch.update(mission["mismatch"])
 
     client_rendered = [
         {"role": el.get("role"), "reason": CLIENT_RENDERED[el.get("role")], "bbox": el.get("bbox")}
         for el in (analysis.get("elements") or [])
         if el.get("role") in CLIENT_RENDERED
     ]
+    if is_milestone:
+        for c in client_rendered:
+            if c["role"] in MILESTONE_FEATURE_REGIONS:
+                c["feature"] = "milestone"
+        client_rendered.extend(milestone_regions)
+    if mission:
+        client_rendered.extend(mission["regions"])
     unsupported = [
         {"what": item["what"], "why": item.get("why") or "", "bbox": item.get("bbox")}
         for item in (analysis.get("unsupported") or [])
@@ -1367,6 +1677,8 @@ def remap_record(record, analysis):
         "source_image": analysis.get("source_image") or {},
         "mismatch": mismatch,
     }
+    if mission:
+        report["mission_feature"] = mission["summary"]
     return {
         "ok": True,
         "mode": "remap",
@@ -1456,6 +1768,9 @@ def cmd_schema(args):
                         "main_actions": "milestone: actions readable on the bar's main CTA during progression ('custom' is not accepted in milestone menus)",
                         "milestone_actions": "milestone: actions readable on marker/claim buttons ('custom' is not accepted in milestone menus)",
                         "area_bbox": "optional, mission/milestone: bbox of the region the progression UI (task list / progress bar) occupies",
+                        "parts": "optional, mission only: {tabs, tab, task_list, row, progress_bar} -> bbox; row = ONE representative card (the first fully visible one). Geometry for the prefab skill, never template elements",
+                        "row_parts": "optional, mission only, needs parts.row: {placement_badge, title, sub_mission, status, progress_track, progress_text, rewards, action_button, dismiss_button} -> bbox of that same card's inner parts",
+                        "style": "optional, mission only: {card, card_text, accent, progress_track, progress_fill, action, dismiss, tab_text, tab_selected, bar_track, bar_fill} -> sampled colour '#RRGGBB' or '#RRGGBBAA'",
                     },
                 },
                 "elements": [
@@ -1492,6 +1807,8 @@ def cmd_schema(args):
                 "detected.*_count rather than fabricate a number — the builder defaults sanely.",
                 "detected.area_bbox never affects the payload — it feeds the layout artifact "
                 "(`layout` subcommand), marking where the progression UI sits on the mockup.",
+                "detected.parts / row_parts / style (mission only) are advisory the same way: an "
+                "invalid bbox, colour or unknown key is dropped with a warning, never fails the build.",
             ],
         }
     )
@@ -1660,7 +1977,7 @@ def main(argv=None):
     src = p_layout.add_mutually_exclusive_group(required=True)
     src.add_argument("--envelope", help="Confirmed page hand-back ({payload, geometry, ...}) — the normal input.")
     src.add_argument("--build", help="Pre-confirmation build result — geometry is the raw vision pass.")
-    p_layout.add_argument("--analysis", help="Optional analysis JSON: fills source-image path/size and feature.detected.area_bbox.")
+    p_layout.add_argument("--analysis", help="Optional analysis JSON: fills source-image path/size, feature.detected.area_bbox and, for mission templates, the feature.parts / row_parts / style geometry.")
     p_layout.add_argument("--out", help="Write the bare layout artifact here (<template_key>.layout.json).")
     p_layout.set_defaults(func=cmd_layout)
 

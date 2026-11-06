@@ -1,0 +1,117 @@
+{
+  "layout": {
+    "schema_version": "1.1",
+    "template_key": "t",
+    "source_image": {
+      "width": 720,
+      "height": 960,
+      "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "path": "tip.png"
+    },
+    "coordinates": {
+      "space": "normalized",
+      "origin": "top-left"
+    },
+    "elements": [
+      {
+        "key": "background_image",
+        "bucket": "images",
+        "index": 0,
+        "role": "",
+        "bbox": null,
+        "unplaced": true
+      },
+      {
+        "key": "close_button",
+        "bucket": "buttons",
+        "index": 1,
+        "role": "",
+        "bbox": null,
+        "unplaced": true
+      },
+      {
+        "key": "header",
+        "bucket": "texts",
+        "index": 2,
+        "role": "header",
+        "bbox": {
+          "x": 0.2,
+          "y": 0.05,
+          "w": 0.6,
+          "h": 0.06
+        }
+      },
+      {
+        "key": "collect_all",
+        "bucket": "buttons",
+        "index": 3,
+        "role": "",
+        "bbox": null,
+        "unplaced": true
+      }
+    ],
+    "client_rendered": [
+      {
+        "role": "timer",
+        "bbox": {
+          "x": 0.4,
+          "y": 0.81,
+          "w": 0.2,
+          "h": 0.03
+        }
+      }
+    ],
+    "feature": {
+      "type": "mission",
+      "area_bbox": {
+        "x": 0.05,
+        "y": 0.16,
+        "w": 0.9,
+        "h": 0.66
+      },
+      "parts": {
+        "tabs": {
+          "x": 0.06,
+          "y": 0.17,
+          "w": 0.88,
+          "h": 0.05
+        },
+        "tab": {
+          "x": 0.06,
+          "y": 0.17,
+          "w": 0.28,
+          "h": 0.05
+        },
+        "task_list": {
+          "x": 0.06,
+          "y": 0.23,
+          "w": 0.88,
+          "h": 0.46
+        },
+        "row": {
+          "x": 0.06,
+          "y": 0.23,
+          "w": 0.88,
+          "h": 0.1
+        },
+        "progress_bar": {
+          "x": 0.06,
+          "y": 0.7,
+          "w": 0.88,
+          "h": 0.1
+        }
+      }
+    }
+  },
+  "report": {
+    "errors": [],
+    "warnings": [
+      "elements with no confirmed position ship with bbox null: images.background_image, buttons.close_button, buttons.collect_all"
+    ],
+    "unplaced": [
+      "images.background_image",
+      "buttons.close_button",
+      "buttons.collect_all"
+    ]
+  }
+}
